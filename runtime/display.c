@@ -402,7 +402,7 @@ int display_init(void) {
     load_settings();
     int cw, ch;
     content_size(&cw, &ch);
-    if (!SDL_CreateWindowAndRenderer("Egg of Time", cw * WINDOW_SCALE, ch * WINDOW_SCALE, SDL_WINDOW_RESIZABLE, &win, &ren)) {
+    if (!SDL_CreateWindowAndRenderer("Egg of Time", cw * WINDOW_SCALE, ch * WINDOW_SCALE, SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE, &win, &ren)) {
         fprintf(stderr, "SDL_CreateWindowAndRenderer: %s\n", SDL_GetError());
         return 0;
     }
