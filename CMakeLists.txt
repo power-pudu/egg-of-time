@@ -91,6 +91,11 @@ target_link_libraries(eggoftime PRIVATE SDL3::SDL3 ${FFMPEG_LIBRARIES})
 if(UNIX)
     target_link_libraries(eggoftime PRIVATE m)
 endif()
+if(UNIX AND NOT APPLE)
+    set_target_properties(eggoftime PROPERTIES
+        BUILD_RPATH   "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN")
+endif()
 
 if(WIN32 AND TARGET SDL3::SDL3-shared)
     add_custom_command(TARGET eggoftime POST_BUILD
