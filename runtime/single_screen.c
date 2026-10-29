@@ -49,6 +49,11 @@
  *   - Its Bestiary page: the monster and its panel on the top screen, the tabs, a list of four (number, name) and
  *     the count discovered on the bottom one. The main screen shows the top screen with the tabs over its title,
  *     and under the monster the list as lines of text, the selected one framed, then the count.
+ *   - Shops (ov012): each member's sprite, name and attack and defense (now and with the item highlighted) on the
+ *     top screen; Buy / Sell / Equip, the categories, the gold, the item's panel, the list or the quantity on the
+ *     bottom one, whose help bar stays empty. The main screen shows the bottom screen moved up into the gap
+ *     under the tabs and, in place of the help bar, every member's name and the stat the item changes as lines
+ *     of text, three to a line. Equip opens the Equipment page.
  *   - Widescreen (the top screen with its margins): the field, and the warp through a time gate (ov010): an
  *     affine BG with wraparound, whose margins the renderer draws as they are, under a star of sprites that
  *     covers the DS screen exactly, stretched across the margins (video.c); and the world map (ov002), whose
@@ -63,7 +68,7 @@
 #include "ui_font.h"
 #include "video.h"
 
-enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE };
+enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP };
 typedef struct Scene { int kind; uint32_t obj; } Scene;
 static uint32_t title_held; /* keys held since before the title started: not a press */
 #define TITLE_STATE 0x4a  /* title scene: current state (halfword); +0x48 holds the requested one */
@@ -118,6 +123,7 @@ static Scene current(void) {
         if (page >> 24 == 0x02 && rt_r32(page) == MENU_PARTY) sc.kind = SCENE_PARTY;
         if (page >> 24 == 0x02 && rt_r32(page) == MENU_SAVE) sc.kind = SCENE_SAVE;
     }
+    if (vt == 0x021575f0u && rt_overlay_resident(12)) sc.kind = SCENE_SHOP; /* ov012: a shop */
     if (vt == 0x0219fc8cu && rt_overlay_resident(18)) sc.kind = SCENE_BESTIARY; /* ov018: the menu's Bestiary */
     if (vt == 0x02115558u && rt_overlay_resident(0)) sc.kind = SCENE_FIELD; /* ov000: towns, maps, battles */
     if (vt == 0x0212535cu && rt_overlay_resident(10)) sc.kind = SCENE_WARP;  /* ov010: travel through a time gate */
@@ -794,6 +800,75 @@ static void compose_bestiary(uint32_t *main, const uint32_t *top, const uint32_t
     blit_bestiary_text(main, 84, 182, bottom, 176, 176, 36, 8); /* n % */
 }
 
+/* Shops (see the top). Top screen: title rows 0-23, the members in two columns of 128 (the party at the left, the
+ * others at the right), a member every 40 rows from row 24: the sprite x 16-31, the name x 40-67 at rows 10-17 of
+ * the member's 40, then two lines of text (9 rows from row 21: attack, from row 31: defense): the icon x 40-48,
+ * the value right-aligned at x 80, and for a member who can use the item highlighted an arrow x 91-97 and the
+ * value with it from x 104 (blue: higher, red: lower). Text and icons are white, black or coloured on a dark
+ * backdrop (never black, no channel above 80; its tint follows the menu colour). Bottom screen: tabs rows 0-23,
+ * backdrop rows 24-37, everything else in rows 38-167, the help bar (empty) from row 168. Main screen: tabs, the
+ * bottom screen from row 38 at row 24, then the members as lines of text in a 3 x 3 grid (the party on the first
+ * line): the name and the stat the item changes (defense if only defense values are coloured, else attack), these
+ * spans of its line packed. */
+#define SHOP_SHIFT 14
+#define SHOP_GRID_Y 154
+#define SHOP_LINE_H 11
+static const struct { uint8_t x, w; } SHOP_SPANS[] = {{40, 9}, {66, 15}, {91, 7}, {104, 16}};
+
+static int shop_fg(uint32_t p) {
+    return p == BLACK || (p & 0xFF) > 80 || ((p >> 8) & 0xFF) > 80 || ((p >> 16) & 0xFF) > 80;
+}
+
+static void blit_shop_fg(uint32_t *main, int dx, int dy, const uint32_t *top, int sx, int sy, int w, int h) {
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            uint32_t p = top[(sy + y) * SCREEN_W + sx + x];
+            if (shop_fg(p)) main[(dy + y) * SCREEN_W + dx + x] = p;
+        }
+    }
+}
+
+/* Whether any member's line (from row 21: attack, 31: defense) has a value with the item in colour. */
+static int shop_changed(const uint32_t *top, int line) {
+    for (int m = 0; m < 8; m++) {
+        for (int y = 0; y < 7; y++) {
+            const uint32_t *row = &top[(24 + 40 * (m & 3) + line + y) * SCREEN_W + 128 * (m >> 2)];
+            for (int x = 104; x < 120; x++) {
+                int r = row[x] & 0xFF, g = (row[x] >> 8) & 0xFF, b = (row[x] >> 16) & 0xFF;
+                if (SDL_max(r, b) >= 200 && SDL_min(r, g) <= 100) return 1; /* red or blue text, not the backdrop */
+            }
+        }
+    }
+    return 0;
+}
+
+static void compose_shop(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    memcpy(main, bottom, 24 * SCREEN_W * 4);
+    memcpy(&main[24 * SCREEN_W], &bottom[(24 + SHOP_SHIFT) * SCREEN_W], (SHOP_GRID_Y - 24) * SCREEN_W * 4);
+    for (int y = SHOP_GRID_Y; y < SCREEN_H; y += SHOP_SHIFT) /* the backdrop the shift left out */
+        memcpy(&main[y * SCREEN_W], &bottom[24 * SCREEN_W], (size_t)SDL_min(SHOP_SHIFT, SCREEN_H - y) * SCREEN_W * 4);
+    int line = shop_changed(top, 21) || !shop_changed(top, 31) ? 21 : 31;
+    for (int m = 0, n = 0; m < 8; m++) { /* the party (three at most), then the others */
+        int sx = 128 * (m >> 2), sy = 24 + 40 * (m & 3);
+        int named = 0; /* a name: text in its place */
+        for (int y = sy + 10; y < sy + 17 && m != 3; y++) {
+            for (int x = sx + 40; x < sx + 68; x++) named |= top[y * SCREEN_W + x] == 0xFFFFFFFFu;
+        }
+        if (!named) {
+            if (m < 3) n = 3; /* the party ends: the others from the second line */
+            continue;
+        }
+        int x = 85 * (n % 3) + 2, y = SHOP_GRID_Y + 3 + SHOP_LINE_H * (n / 3);
+        n++;
+        blit_shop_fg(main, x, y, top, sx + 40, sy + 9, 28, 9); /* the name */
+        x += 29;
+        for (size_t k = 0; k < SDL_arraysize(SHOP_SPANS); k++) {
+            blit_shop_fg(main, x, y, top, sx + SHOP_SPANS[k].x, sy + line, SHOP_SPANS[k].w, 9);
+            x += SHOP_SPANS[k].w + 1;
+        }
+    }
+}
+
 /* Whether a screen is one plain colour. */
 static int blank(const uint32_t *px) {
     for (int i = 1; i < SCREEN_W * SCREEN_H; i++) {
@@ -874,6 +949,9 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
         break;
     case SCENE_SAVE:
         compose_save(main, top, bottom);
+        break;
+    case SCENE_SHOP:
+        compose_shop(main, top, bottom);
         break;
     case SCENE_BESTIARY:
         compose_bestiary(main, top, bottom);

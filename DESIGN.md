@@ -220,6 +220,12 @@ original bytes, and caches the result per region until the region is written.
     the scene's state: 0 while the character, the floor and the keyboard fade in, 1 entering the name, 2 after
     START (the keyboard and floor fade out while the character animates). The main screen shows the bottom
     screen in state 1, the top screen otherwise.
+  - Shops (ov012, vtable 0x021575f0): every member's attack and defense (now and with the highlighted item) on
+    the top screen (the party at the left, the others at the right, up to four each), everything else on the
+    bottom one, whose help bar stays empty. The main screen shows the bottom screen moved up into the gap under
+    the tabs and, in place of the help bar, a 3 x 3 grid of text lines (the party first): each member's name and
+    only the stat the item changes (defense when only defense values are coloured, else attack), old -> new.
+    The shop's Equip opens the field menu's Equipment page.
   - Classic battles by default, below.
 - **Classic mode default** (single screen mode): the game's own "Game Mode: DS / Classic" option (New Game
   settings scene, ov007) defaults to Classic. `func_ov007_0212a3f0`, which resets the options when the scene opens and on
