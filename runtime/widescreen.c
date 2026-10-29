@@ -280,3 +280,25 @@ void ws_fill_margins(int margin) {
         }
     }
 }
+
+/* The game's software HDMA (the HBlank handler, ITCM 0x01ff8580): channels of 0x28 bytes from 0x027e0068 up to
+ * *(0x02057944): +0 flags (bit 0 on, bit 1 words, bit 3 no source step per line), +4 source, +8 destination,
+ * +0x14 source step per line, +0x1c units, +0x20 / +0x24 first / last line. Before each line it copies the line's
+ * entry to the destination. Battle effects drawn with the windows (the rays of Lightning II...) use one with
+ * WIN0H/WIN1H as one word a line. */
+#define HDMA_CHANNELS 0x027e0068u
+#define HDMA_END 0x02057944u
+
+int ws_window_lines(uint32_t h[SCREEN_H]) {
+    uint32_t end = rt_r32(HDMA_END);
+    if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * 32) return 0;
+    for (uint32_t c = HDMA_CHANNELS; c < end; c += 0x28) {
+        uint32_t flags = rt_r32(c), src = rt_r32(c + 4);
+        if ((flags & 0xB) != 3 || rt_r32(c + 8) != 0x04000040u || rt_r32(c + 0x14) != 4 || rt_r32(c + 0x1c) != 1 ||
+            rt_r32(c + 0x20) != 0 || rt_r32(c + 0x24) < SCREEN_H - 1 || !ram_ptr(src))
+            continue;
+        for (int y = 0; y < SCREEN_H; y++) h[y] = rt_r32(src + 4u * (uint32_t)y);
+        return 1;
+    }
+    return 0;
+}

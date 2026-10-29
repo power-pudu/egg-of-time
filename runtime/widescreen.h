@@ -9,6 +9,9 @@ void ws_fill_margins(int margin);
 int ws_sprite_origin(void);
 /* The field camera's position in the room (pixels); 0 outside the field. */
 int ws_camera(int *x, int *y);
+/* The window positions of each line of the coming frame (WIN0H | WIN1H << 16), when the game's software HDMA
+ * sets them line by line (battle effects); else 0. */
+int ws_window_lines(uint32_t h[192]);
 /* Save states: the copy of the room map battles use (an optional block). */
 typedef struct RtStateIO RtStateIO;
 void ws_state(RtStateIO *s);

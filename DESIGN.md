@@ -88,9 +88,11 @@ original bytes, and caches the result per region until the region is written.
 - **Widescreen** (Aspect ratio: Original (4:3), 16:9 (the default), Ultrawide (21:9), Fit screen = the window's shape): shows
   more of the world instead of stretching. The display asks the renderer for margins (`video_set_wide_margin`,
   up to 96 columns a side: 16:9 = 340 columns, 21:9 = 448); the top screen's engine draws text and affine BGs,
-  sprites (X wraps at 512: beyond the left margin is the right one) and windows (their edge columns extended)
-  across them. Single screen mode uses the wide picture in the field only (current scene: ov000 vtable
-  0x02115558); other scenes stay 4:3, centred.
+  sprites (X wraps at 512: beyond the left margin is the right one) and windows (their edge columns extended;
+  edges the game sets line by line through its software HDMA, such as the rays of Lightning II, carried on along
+  their slope, or drawn from the two straight edges fitted to the window where it is a ray shape; their bolts, a
+  256-wide SNES picture, reflected at the screen sides) across them. Single screen mode uses the wide picture in
+  the field only (current scene: ov000 vtable 0x02115558); other scenes stay 4:3, centred.
   - The field keeps each BG in a 512x256 map used as a ring and only keeps the 34 columns around the 4:3 view
     current (scroll handler ov004 0x0213bcb0: per layer, generator 0x02137144 / 0x02137734 / 0x02137c4c into a
     staging buffer, uploaded into the ring at origin-1 / origin+32 by ov004 0x02137e2c and main 0x02046754).

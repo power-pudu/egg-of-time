@@ -109,6 +109,7 @@ typedef struct Engine {
     uint8_t follows[128]; /* by OAM slot: the sprite moves with the camera */
     uint16_t frame_bg[4][3]; /* widescreen: BGxCNT, HOFS, VOFS as the frame started, and its blending: */
     uint16_t frame_bld[2];   /* BLDCNT, BLDALPHA (see margin_bg) */
+    uint8_t mirror_bg;       /* widescreen: text BGs whose margins show the screen reflected (see picture_256) */
 } Engine;
 
 static Engine engines[2];
@@ -224,11 +225,33 @@ static void bg_text_cols(const Engine *e, int bg, int y, uint32_t dispcnt, uint1
     }
 }
 
+/* Widescreen: a 512-wide map holding a picture in its left 256 columns only, the rest one entry throughout, shown
+ * unscrolled: a SNES screen drawn by the game (the lightning bolts of Lightning II, drawn into tiles). Its margins
+ * would be empty, so they show the screen reflected at its sides, and what reaches a side goes on. Checked while a
+ * battle effect sets the windows line by line (ws_window_lines), so menus and other layers are left alone. */
+static int picture_256(const Engine *e, int bg, uint32_t dispcnt) {
+    uint16_t cnt = reg16(e, 0x08 + 2 * bg);
+    if ((cnt & 0x4000) == 0 || (reg16(e, 0x10 + 4 * bg) & 0x1FF)) return 0;
+    uint32_t scr = ((cnt >> 8) & 0x1F) * 0x800u + (e->id ? 0 : ((dispcnt >> 27) & 7) * 0x10000u);
+    int blocks = (cnt & 0x8000) ? 2 : 1, drawn = 0;
+    uint16_t blank = vr16(e->bg, e->bg_mask, scr + 0x800);
+    for (int b = 0; b < blocks; b++) {
+        for (uint32_t i = 0; i < 0x800; i += 2) {
+            if (vr16(e->bg, e->bg_mask, scr + (2u * b + 1) * 0x800 + i) != blank) return 0;
+            drawn |= vr16(e->bg, e->bg_mask, scr + 2u * b * 0x800 + i) != blank;
+        }
+    }
+    return drawn;
+}
+
 static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *out) {
     int m = e->margin;
     uint16_t cnt = reg16(e, 0x08 + 2 * bg), hofs = reg16(e, 0x10 + 4 * bg), vofs = reg16(e, 0x12 + 4 * bg);
     if (!m || (cnt & 0x4000)) {
         bg_text_cols(e, bg, y, dispcnt, cnt, hofs, vofs, -m, SCREEN_W + m, out);
+        if (m && (e->mirror_bg >> bg & 1) && !(hofs & 0x1FF)) {
+            for (int k = 0; k < m; k++) out[m - 1 - k] = out[m + k], out[m + SCREEN_W + k] = out[m + SCREEN_W - 1 - k];
+        }
         return;
     }
     bg_text_cols(e, bg, y, dispcnt, cnt, hofs, vofs, 0, SCREEN_W, out);
@@ -475,6 +498,238 @@ static inline uint32_t to_rgba(uint16_t c) {
     return 0xFF000000u | b << 16 | g << 8 | r;
 }
 
+/* Widescreen: a window that reaches a screen side is cut there (its 8-bit positions stop at 0 and 255). When the
+ * game sets the windows line by line from a table (ws_window_lines), the frame's lines are known before it is
+ * drawn, so such an edge is carried into the margin along its slope on the lines next to where it left the screen
+ * (the rays of Lightning II), also on the lines next to them where the shape is off the screen altogether; the
+ * other side's estimate too where the shape comes back, the nearer edge of the two (convex). A cut edge with no
+ * line beside it that has that side on screen (a window as wide as the screen) covers the margin; one beside lines
+ * that do not lean out (the steps the game leaves under the battle menu) stops at the screen side. */
+enum { EDGE_RUN = 8 }; /* lines the slope is measured over */
+static uint32_t win_lines[SCREEN_H]; /* WIN0H | WIN1H << 16 by line, as the frame started */
+static int16_t win_ext[SCREEN_H][2][2]; /* by line, window: first column in it, first after it (screen columns) */
+static int win_ext_on;
+/* Lines before win_top are left out: in battles the game blanks the table's lines under the menu (2-45) but leaves
+ * its first lines with leftovers, which the menu hides on the 4:3 screen. */
+enum { WIN_LEFTOVERS_MAX = 4 };
+static int win_top;
+
+/* Window w's columns on line y (1), or 0 when it is empty, -1 when it wraps; a cut side as -1 / SCREEN_W. */
+static int win_span(int y, int w, int *x1, int *x2) {
+    if (y < win_top) return 0;
+    uint32_t h = win_lines[y] >> (16 * w);
+    *x1 = (h >> 8) & 0xFF, *x2 = h & 0xFF;
+    if (*x2 == 0xFF || (*x2 == 0 && *x1 > 0)) *x2 = SCREEN_W;
+    if (*x1 > *x2) return -1;
+    if (*x1 == *x2) return 0;
+    if (*x1 == 0) *x1 = -1;
+    return 1;
+}
+
+/* Side s of window w at line y, along its slope on up to EDGE_RUN lines from line `from` on in direction dir where
+ * the window has that side on screen: 1, or 0 when there are not two or the side does not move toward side
+ * `toward` (0 left, 1 right) going to y, -1 when there are none. */
+static int edge_at(int y, int from, int w, int s, int dir, int toward, int *at) {
+    int x[2], n = 0, x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    for (int i = from; i >= 0 && i < SCREEN_H && n < EDGE_RUN && win_span(i, w, &x[0], &x[1]) > 0 && x[s] >= 0 && x[s] < SCREEN_W;
+         i += dir, n++) {
+        if (!n) x0 = x[s], y0 = i;
+        x1 = x[s], y1 = i;
+    }
+    if (!n) return -1;
+    if (n < 2 || (toward ? x0 - x1 : x1 - x0) <= 0) return 0;
+    *at = x0 + (x0 - x1) * (y - y0) / (y0 - y1);
+    return 1;
+}
+
+/* The first line from y on in direction dir where window w is not cut at side s (or SCREEN_H / -1). */
+static int past_cut(int y, int w, int s, int dir) {
+    int x[2];
+    while (y >= 0 && y < SCREEN_H && win_span(y, w, &x[0], &x[1]) > 0 && (x[s] < 0 || x[s] >= SCREEN_W)) y += dir;
+    return y;
+}
+
+/* Ray shapes: a window drawn from two straight edges A and B (through the rays' centre) shows, on each line, the
+ * part between them, or the part left or right of both (the game picks one a line: a DS window has one span).
+ * Such a window is drawn in the margins from the edges, each line as its own part, so a ray keeps its form beyond
+ * the screen, also on the lines behind the battle menu when it reaches the menu (they take the part of the first
+ * line below it, the first line either window is on) and on
+ * lines where it is off the screen altogether (the part of the nearest line on the same side of the centre, when
+ * it is wholly in the margins).
+ * The edges are found among the window's on-screen edge points (RANSAC: the line through two points that most
+ * others lie on, then refined by least squares); one edge alone is A = B. A window whose lines mostly fit no part
+ * keeps the estimates above. */
+enum { FIT_MIN_POINTS = 12, FIT_TOLERANCE = 2 };
+typedef struct EdgeLine { float x0, dx; } EdgeLine; /* x = x0 + dx * y */
+
+static int fit_edge(const int *py, const int *px, int n, const uint8_t *taken, EdgeLine *l, uint8_t *mark) {
+    int best = 0, step = SDL_max(1, n / 32);
+    EdgeLine bl = {0, 0};
+    for (int i = 0; i < n; i += step) {
+        if (taken[i]) continue;
+        for (int j = i + 1; j < n; j += step) {
+            if (taken[j] || SDL_abs(py[j] - py[i]) < 8) continue;
+            float dx = (float)(px[j] - px[i]) / (float)(py[j] - py[i]), x0 = (float)px[i] - dx * (float)py[i];
+            int c = 0;
+            for (int k = 0; k < n; k++) c += !taken[k] && SDL_fabsf(x0 + dx * (float)py[k] - (float)px[k]) <= 1.5f;
+            if (c > best) best = c, bl = (EdgeLine){x0, dx};
+        }
+    }
+    if (best < FIT_MIN_POINTS) return 0;
+    double sy = 0, sx = 0, syy = 0, sxy = 0;
+    int c = 0;
+    for (int k = 0; k < n; k++) {
+        mark[k] = !taken[k] && SDL_fabsf(bl.x0 + bl.dx * (float)py[k] - (float)px[k]) <= 1.5f;
+        if (!mark[k]) continue;
+        sy += py[k], sx += px[k], syy += (double)py[k] * py[k], sxy += (double)py[k] * px[k], c++;
+    }
+    double d = c * syy - sy * sy;
+    if (d > 0) bl.dx = (float)((c * sxy - sy * sx) / d), bl.x0 = (float)((sx - bl.dx * sy) / c);
+    *l = bl;
+    return 1;
+}
+
+/* Part k of line y (0 between the edges, 1 left of both, 2 right of both), unbounded. */
+static void ray_span(const EdgeLine *a, const EdgeLine *b, int k, int y, float *lo, float *hi) {
+    float xa = a->x0 + a->dx * (float)y, xb = b->x0 + b->dx * (float)y;
+    float mn = SDL_min(xa, xb), mx = SDL_max(xa, xb);
+    *lo = k == 1 ? -1e6f : k == 2 ? mx : mn;
+    *hi = k == 1 ? mn : k == 2 ? 1e6f : mx;
+}
+
+/* Part k of line y as the screen shows it: 0 when that is nothing. */
+static int ray_on_screen(const EdgeLine *a, const EdgeLine *b, int k, int y, float *e1, float *e2) {
+    float lo, hi;
+    ray_span(a, b, k, y, &lo, &hi);
+    *e1 = SDL_max(lo, 0.0f), *e2 = SDL_min(hi, (float)SCREEN_W);
+    return *e2 - *e1 >= 1.0f;
+}
+
+static int fit_rays(int w, int below_menu) {
+    int py[2 * SCREEN_H], px[2 * SCREEN_H], n = 0, x[2], first = -1;
+    uint8_t taken[2 * SCREEN_H] = {0}, mark[2 * SCREEN_H];
+    for (int y = win_top; y < SCREEN_H; y++) {
+        if (win_span(y, w, &x[0], &x[1]) <= 0) continue;
+        if (first < 0) first = y;
+        if (x[0] >= 0) py[n] = y, px[n++] = x[0];
+        if (x[1] < SCREEN_W) py[n] = y, px[n++] = x[1];
+    }
+    EdgeLine a, b;
+    if (n < FIT_MIN_POINTS || !fit_edge(py, px, n, taken, &a, mark)) return 0;
+    for (int k = 0; k < n; k++) taken[k] = mark[k];
+    if (!fit_edge(py, px, n, taken, &b, mark)) b = a;
+    /* The part of each line with the window on it (-1: none fits, -2: empty). */
+    int8_t part[SCREEN_H];
+    int lines = 0, fitted = 0;
+    for (int y = 0; y < SCREEN_H; y++) {
+        int span = y < win_top ? 0 : win_span(y, w, &x[0], &x[1]);
+        part[y] = span ? -1 : -2;
+        if (span <= 0) continue;
+        lines++;
+        for (int k = 0; k < 3 && part[y] == -1; k++) {
+            float e1, e2;
+            if (ray_on_screen(&a, &b, k, y, &e1, &e2) && SDL_fabsf((float)SDL_max(x[0], 0) - e1) <= FIT_TOLERANCE &&
+                SDL_fabsf((float)x[1] - e2) <= FIT_TOLERANCE)
+                part[y] = (int8_t)k;
+        }
+        fitted += part[y] >= 0;
+    }
+    if (!lines || fitted * 10 < lines * 9) return 0;
+    float cross = a.dx != b.dx ? (b.x0 - a.x0) / (a.dx - b.dx) : 1e6f; /* where the edges meet: the rays' centre */
+    for (int y = 0; y < SCREEN_H; y++) {
+        int k = part[y];
+        if (k == -1) continue; /* keeps its estimate */
+        if (k == -2) {
+            win_ext[y][w][0] = win_ext[y][w][1] = 0;
+            int near = -1;
+            for (int d = 1; d < SCREEN_H && near < 0; d++) {
+                if (y + d < SCREEN_H && part[y + d] >= 0) near = y + d;
+                else if (y - d >= 0 && part[y - d] >= 0) near = y - d;
+            }
+            if (near < 0 || ((float)y < cross) != ((float)near < cross)) continue; /* another ray */
+            float e1, e2;
+            int behind_menu = y < first && near == first && first == below_menu;
+            if (!behind_menu && ray_on_screen(&a, &b, part[near], y, &e1, &e2)) continue; /* it would show here */
+            k = part[near];
+        }
+        float lo, hi;
+        ray_span(&a, &b, k, y, &lo, &hi);
+        win_ext[y][w][0] = (int16_t)SDL_clamp(SDL_lroundf(lo), -0x7FFF, 0x7FFF);
+        win_ext[y][w][1] = (int16_t)SDL_clamp(SDL_lroundf(hi), -0x7FFF, 0x7FFF);
+    }
+    return 1;
+}
+
+static void window_margins(void) {
+    int x[2];
+    win_top = 0;
+    for (int y = 0; y < WIN_LEFTOVERS_MAX; y++) {
+        if (!win_span(y, 0, &x[0], &x[1]) && !win_span(y, 1, &x[0], &x[1])) {
+            win_top = y;
+            break;
+        }
+    }
+    for (int y = 0; y < SCREEN_H; y++) {
+        for (int w = 0; w < 2; w++) {
+            int16_t *ext = win_ext[y][w];
+            if (y < win_top) { /* as the registers have it on the screen, nothing in the margins */
+                uint32_t h = win_lines[y] >> (16 * w);
+                int x1 = (h >> 8) & 0xFF, x2 = h & 0xFF;
+                if (x2 == 0 && x1 > 0) x2 = SCREEN_W;
+                ext[0] = (int16_t)x1, ext[1] = (int16_t)SDL_max(x1, x2);
+                continue;
+            }
+            int span = win_span(y, w, &x[0], &x[1]);
+            ext[0] = ext[1] = 0;
+            if (span < 0) {
+                ext[0] = 1; /* wraps: as the registers have it */
+                continue;
+            }
+            if (span) {
+                for (int s = 0; s < 2; s++) {
+                    int out = x[s], a, b, ha, hb;
+                    if (x[s] < 0 || x[s] >= SCREEN_W) {
+                        ha = edge_at(y, past_cut(y, w, s, -1), w, s, -1, s, &a);
+                        hb = edge_at(y, past_cut(y, w, s, 1), w, s, 1, s, &b);
+                        out = ha < 0 && hb < 0 ? (s ? 0x7FFF : -0x7FFF) : s ? SCREEN_W : 0;
+                        if (ha > 0 && hb > 0) out = s ? SDL_min(a, b) : SDL_max(a, b);
+                        else if (ha > 0 || hb > 0) out = ha > 0 ? a : b;
+                        out = s ? SDL_max(out, SCREEN_W) : SDL_min(out, 0);
+                    }
+                    ext[s] = (int16_t)out;
+                }
+                continue;
+            }
+            /* Empty on screen: the part of a shape that left the screen past a side on a nearby line (the far edge
+             * of a ray), the other side carried on along its slope while it is still within the margins. */
+            for (int dir = -1; dir <= 1; dir += 2) {
+                int b = y + dir;
+                while (b >= 0 && b < SCREEN_H && !win_span(b, w, &x[0], &x[1])) b += dir;
+                if (b < 0 || b >= SCREEN_H || win_span(b, w, &x[0], &x[1]) < 0) continue;
+                for (int s = 0; s < 2; s++) {
+                    int o = !s, at;
+                    if ((x[s] >= 0 && x[s] < SCREEN_W) || x[o] < 0 || x[o] >= SCREEN_W) continue;
+                    if (edge_at(y, b, w, o, dir, s, &at) <= 0) continue;
+                    if (s ? at >= SCREEN_W + VIDEO_MARGIN_MAX : at < -VIDEO_MARGIN_MAX) continue;
+                    ext[o] = (int16_t)(s ? SDL_max(at, SCREEN_W) : SDL_min(at, 0));
+                    ext[s] = (int16_t)(s ? 0x7FFF : -0x7FFF);
+                }
+            }
+        }
+    }
+    int below_menu = win_top;
+    while (below_menu < SCREEN_H && !win_span(below_menu, 0, &x[0], &x[1]) && !win_span(below_menu, 1, &x[0], &x[1])) below_menu++;
+    fit_rays(0, below_menu);
+    fit_rays(1, below_menu);
+}
+
+/* Screen column sx (wx: it clamped to the screen) in a window with positions h (ext: its span carried into the
+ * margins, or NULL). With ext, a window cut at the right side also takes the screen's last column. */
+static inline int in_window(int sx, int wx, uint16_t h, const int16_t *ext) {
+    if (sx == wx) return in_range(wx, h >> 8, ext && (h & 0xFF) == 0xFF ? SCREEN_W : h & 0xFF);
+    return ext && ext[0] <= ext[1] ? sx >= ext[0] && sx < ext[1] : in_range(wx, h >> 8, h & 0xFF);
+}
+
 static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
     if (y == 0) {
@@ -491,6 +746,10 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         e->frame_bld[0] = reg16(e, 0x50), e->frame_bld[1] = reg16(e, 0x52);
         if (e->id == !a_top) {
             ws_fill_margins(e->margin);
+            win_ext_on = e->margin && ws_window_lines(win_lines);
+            if (win_ext_on) window_margins();
+            e->mirror_bg = 0;
+            for (int bg = 0; bg < 4 && win_ext_on; bg++) e->mirror_bg |= (uint8_t)(picture_256(e, bg, dispcnt) << bg);
             e->obj_origin = ws_sprite_origin(); /* sprites placed from the left margin (widened view) */
             e->obj_stretch = e->margin && ss_in_warp();
             int cx = 0, cy = 0, known = ws_camera(&cx, &cy); /* camera motion into this frame (camera smoothing) */
@@ -583,6 +842,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         uint16_t winin = reg16(e, 0x48), winout = reg16(e, 0x4A);
         uint16_t w0h = reg16(e, 0x40), w1h = reg16(e, 0x42), w0v = reg16(e, 0x44), w1v = reg16(e, 0x46);
         int in_w0y = win0 && in_range(y, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(y, w1v >> 8, w1v & 0xFF);
+        int ext = m && win_ext_on && win_lines[y] == ((uint32_t)w1h << 16 | w0h); /* the line as the table has it */
+        const int16_t *ext0 = ext ? win_ext[y][0] : NULL, *ext1 = ext ? win_ext[y][1] : NULL;
 
         /* Pass 0: the picture (without the party when it has its own layer); pass 1: the party layer, the party's
          * pixels where a party sprite ends up on top (scenery in front of it still covers it), else transparent. */
@@ -600,8 +861,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             uint16_t bldcnt = bld[side][0], bldalpha = bld[side][1];
             int eva = SDL_min(bldalpha & 31, 16), evb = SDL_min((bldalpha >> 8) & 31, 16), effect = (bldcnt >> 6) & 3;
             if (win0 || win1 || winobj) {
-                if (in_w0y && in_range(wx, w0h >> 8, w0h & 0xFF)) ctl = winin & 0x3F;
-                else if (in_w1y && in_range(wx, w1h >> 8, w1h & 0xFF)) ctl = (winin >> 8) & 0x3F;
+                if (in_w0y && in_window(x - m, wx, w0h, ext0)) ctl = winin & 0x3F;
+                else if (in_w1y && in_window(x - m, wx, w1h, ext1)) ctl = (winin >> 8) & 0x3F;
                 else if (winobj && o->win[x]) ctl = (winout >> 8) & 0x3F;
                 else ctl = winout & 0x3F;
             }
