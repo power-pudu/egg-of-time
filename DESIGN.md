@@ -320,7 +320,7 @@ original bytes, and caches the result per region until the region is written.
 - `-DEGG_RUNTIME_ONLY=ON` builds only the executable, with `-Werror`, without the ROM-derived inputs; CI uses it
   (`.github/workflows/runtime.yml`, Linux and macOS; `release.yml`, Windows), because CI machines must not hold
   ROM-derived data.
-- **Release builds** (Windows): the release holds the executable and `kit/`, and builds the game library on the
+- **Release builds** (Windows, Linux): the release holds the executable and `kit/`, and builds the game library on the
   player's machine from their ROM on the first start (`runtime/game_build.c`): it finds `rom/CT.nds` or asks for
   the ROM (a file dialog; copied to `rom/CT.nds`), checks its SHA-1, then runs `kit/dsd/dsd.exe rom extract`,
   `kit/python/python.exe kit/recomp/recomp.py kit <gen> --no-comments --extract <dir>` (no capstone needed
@@ -332,7 +332,13 @@ original bytes, and caches the result per region until the region is written.
   `scripts/package.py` assembles the release: the runtime build, the recompiler and `config/`, dsd, embeddable
   CPython 3.11, and the part of llvm-mingw the build needs (found by asking clang for the headers and lld for
   the libraries it reads: 50 files), third-party licenses; it refuses generated code, extracts, ROMs and saves.
-  `.github/workflows/release.yml` builds and publishes it for a `v*` tag. Measured: zip 125 MB (FFmpeg 112 MB
+  `.github/workflows/release.yml` builds and publishes it for a `v*` tag. The Linux release (built on Ubuntu 22.04
+  for glibc 2.35) bundles only dsd in the kit and uses the system's `python3` and `cc`/`clang`/`gcc` from `PATH`
+  (a screen names the packages when one is missing): bundling clang would still need the distro's libc headers
+  and crt files. The game library is compiled with `-fPIC` and linked without an import library, its runtime
+  symbols resolved from the executable (`ENABLE_EXPORTS`, i.e. `-rdynamic`). SDL3 is linked statically and
+  BtbN's FFmpeg shared libraries sit next to the executable (RPATH `$ORIGIN` only); the package is a `.tar.gz`
+  so the executable bits survive. Measured in WSL Ubuntu 24.04: 66 MB download, first start 120 s. Measured: zip 125 MB (FFmpeg 112 MB
   of DLLs, the kit 171 MB unpacked), first start about 3 minutes on this machine, later starts 2 s. Zig as the
   bundled compiler was dropped: `zig cc` compiles at -O2 with debug info for the host CPU, and took 21 minutes
   (0.14.1) / 8 minutes (0.17.0) for the largest file, against 106 s with llvm-mingw's clang 23.

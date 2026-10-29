@@ -1,7 +1,7 @@
-# Windows release: the runtime executable and the kit that builds the game from the player's ROM on its first start
-# (runtime/game_build.c, scripts/package.py). Nothing here touches a ROM or ROM-derived data: the runtime is built
-# with EGG_RUNTIME_ONLY, and the package script refuses generated code, extracted files, ROMs and saves.
-# A pushed tag v* publishes a GitHub release; a manual run uploads the zip as a workflow artifact.
+# Windows and Linux releases: the runtime executable and the kit that builds the game from the player's ROM on its
+# first start (runtime/game_build.c, scripts/package.py). Nothing here touches a ROM or ROM-derived data: the runtime
+# is built with EGG_RUNTIME_ONLY, and the package script refuses generated code, extracted files, ROMs and saves.
+# A pushed tag v* publishes a GitHub release with both packages; a manual run uploads them as workflow artifacts.
 name: release
 
 on:
@@ -16,6 +16,7 @@ env:
   LLVM: llvm-mingw-20261020-ucrt-x86_64
   SDL: SDL3-3.4.18
   FFMPEG: ffmpeg-n8.1-latest-win64-lgpl-shared-8.1
+  FFMPEG_LINUX: ffmpeg-n8.1-latest-linux64-lgpl-shared-8.1
 
 jobs:
   windows:
@@ -53,15 +54,57 @@ jobs:
             --dsd deps/dsd.exe --dsd-license deps/dsd-LICENSE.txt --sdl deps/$SDL --ffmpeg deps/$FFMPEG \
             --out "dist/Egg of Time" --zip "dist/EggOfTime-${GITHUB_REF_NAME}-windows-x64.zip"
 
-      - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "Egg of Time $GITHUB_REF_NAME" --notes-file res/release/README.txt
-
       - name: Upload the package
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
           name: EggOfTime-windows-x64
           path: dist/*.zip
+
+  # The oldest supported Ubuntu, so the executable runs on distros with glibc 2.35 or newer. SDL3 is built from
+  # source and linked in statically; FFmpeg's shared libraries go next to the executable (RPATH $ORIGIN).
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev             libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl1-mesa-dev             libgl1-mesa-dev libdrm-dev libgbm-dev libudev-dev libdbus-1-dev libasound2-dev libpulse-dev
+          mkdir -p deps && cd deps
+          curl -sSLfo ffmpeg.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FFMPEG_LINUX.tar.xz
+          curl -sSLfo dsd https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-linux-x86_64
+          curl -sSLfo dsd-LICENSE.txt https://raw.githubusercontent.com/AetiasHax/ds-decomp/v0.12.1/LICENSE
+          tar xf ffmpeg.tar.xz
+
+      - name: Build the runtime
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Release -DEGG_RUNTIME_ONLY=ON             -DCMAKE_PREFIX_PATH="$PWD/deps/$FFMPEG_LINUX" -DFETCHCONTENT_BASE_DIR="$PWD/deps/fetch"
+          cmake --build build
+
+      - name: Package
+        run: |
+          python3 -I scripts/package.py --build build --dsd deps/dsd --dsd-license deps/dsd-LICENSE.txt             --sdl deps/fetch/sdl3-src --ffmpeg deps/$FFMPEG_LINUX             --out "dist/Egg of Time" --tar "dist/EggOfTime-${GITHUB_REF_NAME}-linux-x64.tar.gz"
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: EggOfTime-linux-x64
+          path: dist/*.tar.gz
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Egg of Time $GITHUB_REF_NAME" --notes-file res/release/README.txt

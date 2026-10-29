@@ -92,8 +92,9 @@ if(UNIX)
     target_link_libraries(eggoftime PRIVATE m)
 endif()
 if(UNIX AND NOT APPLE)
+    # Only $ORIGIN, not the build machine's library folders: the Linux release keeps FFmpeg next to the executable.
     set_target_properties(eggoftime PROPERTIES
-        BUILD_RPATH   "$ORIGIN"
+        BUILD_WITH_INSTALL_RPATH ON
         INSTALL_RPATH "$ORIGIN")
 endif()
 

@@ -55,12 +55,23 @@ and mods.
 > **Updating:** unzip the new version over the old folder. Your ROM, saves and settings are kept. If the new
 > version changed the recompiler, the game is built again on its first start.
 
-## Playing on Linux and macOS
+## Playing on Linux
+
+1. Install Python 3 and a C compiler if you don't have them. The first-start build uses your system's
+   `python3` and `cc` (or `clang` / `gcc`):
+   - Debian/Ubuntu: `sudo apt install python3 build-essential`
+   - Fedora: `sudo dnf install python3 gcc`
+   - Arch: `sudo pacman -S python gcc`
+2. Download the latest `EggOfTime-<version>-linux-x64.tar.gz` from the
+   [Releases page](https://github.com/power-pudu/egg-of-time/releases) and extract it:
+   `tar xzf EggOfTime-*-linux-x64.tar.gz`.
+3. Start `Egg of Time` in the extracted folder and choose your ROM, or pass it: `"./Egg of Time" path/to/rom.nds`.
+4. Wait for the first-start build (about two minutes), as on Windows. Your files go in the same places, with `/`.
 
 > [!NOTE]
-> There is no ready-made download yet: build it from source (see [Building from source](#building-from-source)).
-> Linux (gcc, Ubuntu 24.04) is tested. On macOS the runtime compiles, but a full game build has not been tested
-> yet.
+> The download runs on x86-64 distros with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later).
+> The file dialog needs xdg-desktop-portal or zenity. On other systems, and on macOS (the runtime compiles there,
+> but a full game build is untested), build from source (see [Building from source](#building-from-source)).
 
 ## Your ROM
 
@@ -220,8 +231,8 @@ For development, or to play on Linux and macOS.
 
 ### Making a release
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`. It builds the runtime, packages it with the toolkit
-(`scripts/package.py`) and publishes the zip. The packager refuses ROMs, extracted files and generated code.
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It builds the runtime for Windows and Linux, packages
+each with the toolkit (`scripts/package.py`) and publishes the Windows zip and the Linux tar.gz. The packager refuses ROMs, extracted files and generated code.
 
 ## Credits
 

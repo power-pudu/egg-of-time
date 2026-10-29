@@ -1,4 +1,4 @@
-"""Assembles the Windows release: the runtime and the kit that builds the game on the player's machine.
+"""Assembles the Windows or Linux release: the runtime and the kit that builds the game on the player's machine.
 
 The release holds no game code or data: runtime/game_build.c makes the game library from the player's ROM with
 the tools in kit/ (see DESIGN.md, "Release builds"). This script copies
@@ -13,8 +13,14 @@ the tools in kit/ (see DESIGN.md, "Release builds"). This script copies
 
 and writes kit/kit.id, a hash of what decides the generated code, so a release with other code rebuilds it.
 
+The Linux release (made on Linux) holds "Egg of Time" (SDL3 linked in statically), the FFmpeg shared libraries it
+finds next to itself (RPATH $ORIGIN), kit/include, kit/recomp, kit/config and kit/dsd: the player's python3 and C
+compiler do the rest, and the game library needs no import library. It is a .tar.gz, which keeps the executable bits.
+
 Usage: python -I scripts/package.py --build <dir> --llvm <llvm-mingw dir> --python-embed <python-*-embed-amd64.zip>
            --dsd <dsd.exe> --dsd-license <file> --sdl <SDL3 dir> --ffmpeg <FFmpeg dir> --out <dir> [--zip <file>]
+       python3 -I scripts/package.py --build <dir> --dsd <dsd> --dsd-license <file> --sdl <SDL3 source dir>
+           --ffmpeg <FFmpeg shared build dir> --out <dir> [--tar <file.tar.gz>]
 """
 
 import argparse
@@ -25,9 +31,11 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import zipfile
 
+WINDOWS = sys.platform == "win32"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FORBIDDEN = re.compile(r"(^|/)(gen|extract|asm|ghidra)/|\.(nds|sav|state)$", re.I)
 
@@ -78,6 +86,16 @@ def llvm_subset(llvm, kit_include, implib):
     return sorted(files)
 
 
+def anonymous(info):
+    """A tar entry without the packager's user and group, executable only where it runs (copies from a Windows
+    drive are all 0777)."""
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    name = os.path.basename(info.name)
+    info.mode = 0o755 if info.isdir() or name in ("Egg of Time", "dsd") or ".so." in name else 0o644
+    return info
+
+
 def kit_id(kit):
     """Hash of everything that decides the game library's code."""
     h = hashlib.sha1()
@@ -92,9 +110,12 @@ def kit_id(kit):
 
 def main():
     ap = argparse.ArgumentParser()
-    for a in ("build", "llvm", "python-embed", "dsd", "dsd-license", "sdl", "ffmpeg", "out"):
+    for a in ("build", "dsd", "dsd-license", "sdl", "ffmpeg", "out"):
         ap.add_argument("--" + a, required=True)
+    for a in ("llvm", "python-embed"):
+        ap.add_argument("--" + a, required=WINDOWS)
     ap.add_argument("--zip")
+    ap.add_argument("--tar")
     args = ap.parse_args()
     out = os.path.abspath(args.out)
     if os.path.exists(out):
@@ -102,16 +123,26 @@ def main():
     kit = os.path.join(out, "kit")
 
     # The runtime.
-    for pattern in ("Egg of Time.exe", "SDL3.dll", "av*.dll", "sw*.dll"):
-        for f in glob.glob(os.path.join(args.build, pattern)):
-            copy(f, os.path.join(out, os.path.basename(f)))
-    if not os.path.exists(os.path.join(out, "Egg of Time.exe")):
-        sys.exit("no 'Egg of Time.exe' in " + args.build)
+    exe = "Egg of Time.exe" if WINDOWS else "Egg of Time"
+    if WINDOWS:
+        for pattern in (exe, "SDL3.dll", "av*.dll", "sw*.dll"):
+            for f in glob.glob(os.path.join(args.build, pattern)):
+                copy(f, os.path.join(out, os.path.basename(f)))
+    else:
+        copy(os.path.join(args.build, exe), os.path.join(out, exe))
+        # Each library under its soname (libavcodec.so.62), the name the executable asks for.
+        for f in glob.glob(os.path.join(args.ffmpeg, "lib", "lib*.so.*")):
+            if re.search(r"/lib(avformat|avcodec|avutil|swscale|swresample)\.so\.\d+$", f.replace("\\", "/")):
+                copy(os.path.realpath(f), os.path.join(out, os.path.basename(f)))
+    if not os.path.exists(os.path.join(out, exe)):
+        sys.exit(f"no '{exe}' in " + args.build)
     for d in ("cutscenes", "music"):
         copy(os.path.join(ROOT, "res", "mods", d, "readme.txt"), os.path.join(out, "mods", d, "readme.txt"))
-    copy(os.path.join(ROOT, "res", "release", "README.txt"), os.path.join(out, "README.txt"))
+    readme = "README.txt" if WINDOWS else "README-linux.txt"
+    copy(os.path.join(ROOT, "res", "release", readme), os.path.join(out, "README.txt"))
     implib = os.path.join(args.build, "libeggoftime.a")
-    copy(implib, os.path.join(kit, "lib", "libeggoftime.a"))
+    if WINDOWS:
+        copy(implib, os.path.join(kit, "lib", "libeggoftime.a"))
 
     # The recompiler and its inputs.
     for h in ("recomp.h", "dispatch.h"):
@@ -123,15 +154,17 @@ def main():
     copy_tree(os.path.join(ROOT, "config"), os.path.join(kit, "config"), "**/*.yaml")
 
     # The tools.
-    copy(args.dsd, os.path.join(kit, "dsd", "dsd.exe"))
-    with zipfile.ZipFile(args.python_embed) as z:
-        z.extractall(os.path.join(kit, "python"))
-    for rel in llvm_subset(args.llvm, os.path.join(kit, "include"), implib):
-        copy(os.path.join(args.llvm, rel), os.path.join(kit, "llvm", rel))
-
+    copy(args.dsd, os.path.join(kit, "dsd", "dsd" + (".exe" if WINDOWS else "")))
     lic = os.path.join(kit, "licenses")
-    copy(os.path.join(args.llvm, "LICENSE.TXT"), os.path.join(lic, "llvm-mingw.txt"))
-    copy(os.path.join(kit, "python", "LICENSE.txt"), os.path.join(lic, "python.txt"))
+    if WINDOWS:
+        with zipfile.ZipFile(args.python_embed) as z:
+            z.extractall(os.path.join(kit, "python"))
+        for rel in llvm_subset(args.llvm, os.path.join(kit, "include"), implib):
+            copy(os.path.join(args.llvm, rel), os.path.join(kit, "llvm", rel))
+        copy(os.path.join(args.llvm, "LICENSE.TXT"), os.path.join(lic, "llvm-mingw.txt"))
+        copy(os.path.join(kit, "python", "LICENSE.txt"), os.path.join(lic, "python.txt"))
+    else:
+        os.chmod(os.path.join(kit, "dsd", "dsd"), 0o755)
     copy(args.dsd_license, os.path.join(lic, "dsd.txt"))
     copy(os.path.join(args.sdl, "LICENSE.txt"), os.path.join(lic, "SDL3.txt"))
     copy(os.path.join(args.ffmpeg, "LICENSE.txt"), os.path.join(lic, "FFmpeg.txt"))
@@ -154,6 +187,10 @@ def main():
                 if os.path.isfile(f):
                     z.write(f, os.path.join("Egg of Time", os.path.relpath(f, out)))
         print(f"{args.zip}: {os.path.getsize(args.zip) / 1e6:.0f} MB")
+    if args.tar:
+        with tarfile.open(args.tar, "w:gz", compresslevel=9) as t:
+            t.add(out, "Egg of Time", filter=anonymous)
+        print(f"{args.tar}: {os.path.getsize(args.tar) / 1e6:.0f} MB")
 
 
 if __name__ == "__main__":

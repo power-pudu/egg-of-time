@@ -10,6 +10,9 @@
  *   4. kit/llvm/bin/clang.exe, one process per core -> game/build/obj, then linked against kit/lib/libeggoftime.a
  *      (the executable's import library) into game/eggoftime_game.dll.
  *   5. game/build.id records what it was built from (kit/kit.id and the ROM's SHA-1); game/build/ is deleted.
+ * The Linux release bundles only dsd (kit/dsd/dsd): Python and the C compiler are the system's (python3, and cc,
+ * clang or gcc, found in PATH), and the library links against nothing, its runtime symbols resolved from the
+ * executable (-rdynamic) when it is loaded.
  * A later start loads the library when game/build.id still matches, else builds it again (a new release whose
  * recompiler or runtime interface changed). The tools' output goes to game/build.log.
  * Developer builds have no kit/: CMake builds the library, and this only loads it. */
@@ -18,6 +21,9 @@
 #include <string.h>
 
 #include <SDL3/SDL.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "dispatch.h"
 #include "display.h"
@@ -210,7 +216,41 @@ static struct {
     int source_count;
     SDL_AtomicInt next, compiled, failed, cancel, done;
     char rom[1024];
+    char python[1024], cc[1024]; /* the tools that translate and compile the game's code */
 } b;
+
+/* Finds the tools: the kit's on Windows, the system's on Linux; 0 (and tells the player) if one is missing. */
+static int find_tools(void) {
+#ifdef _WIN32
+    path(b.python, sizeof b.python, "kit/python/python.exe");
+    path(b.cc, sizeof b.cc, "kit/llvm/bin/clang.exe");
+    return 1;
+#else
+    static const char *const pythons[] = {"python3", NULL}, *const compilers[] = {"cc", "clang", "gcc", NULL};
+    const char *const *want[2] = {pythons, compilers};
+    char *found[2] = {b.python, b.cc};
+    const char *dirs = getenv("PATH");
+    for (int t = 0; t < 2; t++) {
+        found[t][0] = 0;
+        for (int i = 0; want[t][i] && !found[t][0]; i++) {
+            for (const char *d = dirs ? dirs : "/usr/bin"; *d && !found[t][0]; d += strcspn(d, ":"), d += *d == ':') {
+                int n = (int)strcspn(d, ":");
+                snprintf(found[t], 1024, "%.*s/%s", n, d, want[t][i]);
+                if (!n || access(found[t], X_OK)) found[t][0] = 0;
+            }
+        }
+    }
+    if (b.python[0] && b.cc[0]) return 1;
+    static const char *const missing[] = {"Python 3 and a C compiler are needed",
+                                          "The first start builds the game with them.",
+                                          "Debian/Ubuntu: sudo apt install python3 build-essential",
+                                          "Fedora: sudo dnf install python3 gcc", "Arch: sudo pacman -S python gcc",
+                                          "Press a key to quit."};
+    rt_log("build: %s not found in PATH", b.python[0] ? "cc, clang or gcc" : "python3");
+    wait_key(missing, 6);
+    return 0;
+#endif
+}
 
 static void log_text(const char *s, size_t n) {
     SDL_LockMutex(b.lock);
@@ -265,8 +305,7 @@ static void set_step(const char *s) {
 /* One compiler process at a time per worker, until the sources run out. */
 static int SDLCALL compile_worker(void *slot_ptr) {
     int slot = (int)(intptr_t)slot_ptr;
-    char cc[1024], inc[1024], gen[1024], src[1024], obj[1024];
-    path(cc, sizeof cc, "kit/llvm/bin/clang" EXE);
+    char inc[1024], gen[1024], src[1024], obj[1024];
     path(inc, sizeof inc, "kit/include");
     path(gen, sizeof gen, "game/build/gen");
     for (int i; !SDL_GetAtomicInt(&b.failed) && (i = SDL_AddAtomicInt(&b.next, 1)) < b.source_count;) {
@@ -274,8 +313,12 @@ static int SDLCALL compile_worker(void *slot_ptr) {
         path(obj, sizeof obj, "game/build/obj/");
         snprintf(obj + strlen(obj), sizeof obj - strlen(obj), "%.*s.o", (int)strlen(b.sources[i]) - 2, b.sources[i]);
         /* The flags of the developer build's game library (CMakeLists.txt), without debug info. */
-        const char *args[] = {cc, "-std=c11", "-O1", "-w", "-fwrapv", "-DNDEBUG", "-DEGG_SINGLE_SCREEN=1",
-                              "-DRT_GAME_LIB", "-I", inc, "-I", gen, "-c", src, "-o", obj, NULL};
+        const char *args[] = {b.cc, "-std=c11", "-O1", "-w", "-fwrapv", "-DNDEBUG", "-DEGG_SINGLE_SCREEN=1",
+                              "-DRT_GAME_LIB", "-I", inc, "-I", gen, "-c", src, "-o", obj,
+#ifndef _WIN32
+                              "-fPIC",
+#endif
+                              NULL};
         if (run(args, slot)) SDL_SetAtomicInt(&b.failed, 1);
         else SDL_AddAtomicInt(&b.compiled, 1);
     }
@@ -302,9 +345,8 @@ static void remove_tree(const char *dir) {
 /* The whole build (its own thread); sets b.failed or writes the library. */
 static int SDLCALL build_thread(void *unused) {
     (void)unused;
-    char dsd[1024], py[1024], recomp[1024], kit[1024], work[1024], extract[1024], gen[1024], obj[1024];
+    char dsd[1024], recomp[1024], kit[1024], work[1024], extract[1024], gen[1024], obj[1024];
     path(dsd, sizeof dsd, "kit/dsd/dsd" EXE);
-    path(py, sizeof py, "kit/python/python" EXE);
     path(recomp, sizeof recomp, "kit/recomp/recomp.py");
     path(kit, sizeof kit, "kit");
     path(work, sizeof work, "game/build");
@@ -318,7 +360,7 @@ static int SDLCALL build_thread(void *unused) {
     const char *ex[] = {dsd, "rom", "extract", "--rom", b.rom, "--output-path", extract, NULL};
     if (run(ex, 0)) goto fail;
     set_step("Translating the game's code to C");
-    const char *rc[] = {py, "-I", recomp, kit, gen, "--no-comments", "--extract", extract, NULL};
+    const char *rc[] = {b.python, "-I", recomp, kit, gen, "--no-comments", "--extract", extract, NULL};
     if (run(rc, 0)) goto fail;
 
     set_step("Compiling the game");
@@ -331,20 +373,21 @@ static int SDLCALL build_thread(void *unused) {
     if (SDL_GetAtomicInt(&b.failed)) goto fail;
 
     set_step("Linking the game");
-    char lib[1024], implib[1024];
+    char lib[1024];
     path(lib, sizeof lib, GAME_LIBRARY);
-    path(implib, sizeof implib, "kit/lib/libeggoftime.a");
     const char **link = SDL_calloc((size_t)b.source_count + 8, sizeof *link);
     char (*objs)[1024] = SDL_calloc((size_t)b.source_count, sizeof *objs);
-    char cc[1024];
-    path(cc, sizeof cc, "kit/llvm/bin/clang" EXE);
     int k = 0;
-    link[k++] = cc, link[k++] = "-shared", link[k++] = "-o", link[k++] = lib;
+    link[k++] = b.cc, link[k++] = "-shared", link[k++] = "-o", link[k++] = lib;
     for (int i = 0; i < b.source_count; i++) {
         snprintf(objs[i], sizeof objs[i], "%s/%.*s.o", obj, (int)strlen(b.sources[i]) - 2, b.sources[i]);
         link[k++] = objs[i];
     }
+#ifdef _WIN32
+    char implib[1024];
+    path(implib, sizeof implib, "kit/lib/libeggoftime.a");
     link[k++] = implib;
+#endif
     int linked = run(link, 0) == 0;
     SDL_free(link), SDL_free(objs);
     if (!linked) goto fail;
@@ -360,6 +403,7 @@ fail:
 /* Builds the game library with a progress screen; 1 when built, 0 if it failed (told) or the player quit. */
 static int build(const char *log_path) {
     memset(&b, 0, sizeof b);
+    if (!find_tools()) return 0;
     b.lock = SDL_CreateMutex();
     char game_dir[1024];
     path(game_dir, sizeof game_dir, "game");
