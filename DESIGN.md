@@ -85,9 +85,9 @@ original bytes, and caches the result per region until the region is written.
   multiplied in: Gigaherz's lcd3x shader, public domain, whose factors depend only on the place within a screen
   pixel, so one pixel's worth at the internal scale is a small texture tiled over each screen with
   SDL_BLENDMODE_MOD; no shader pipeline needed, and the GPU does it on any renderer).
-- **Widescreen** (Aspect ratio: Original (4:3), 16:9 (the default), Ultrawide (21:9), Fit screen = the window's shape): shows
+- **Widescreen** (Aspect ratio: Original (4:3), 5:3, 16:9 (the default), Ultrawide (21:9), Fit screen = the window's shape): shows
   more of the world instead of stretching. The display asks the renderer for margins (`video_set_wide_margin`,
-  up to 96 columns a side: 16:9 = 340 columns, 21:9 = 448); the top screen's engine draws text and affine BGs,
+  up to 96 columns a side: 5:3 = 320 columns, 16:9 = 340, 21:9 = 448); the top screen's engine draws text and affine BGs,
   sprites (X wraps at 512: beyond the left margin is the right one) and windows (their edge columns extended;
   edges the game sets line by line through its software HDMA, such as the rays of Lightning II, carried on along
   their slope, or drawn from the two straight edges fitted to the window where it is a ray shape; their bolts, a

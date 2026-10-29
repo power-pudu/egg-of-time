@@ -6,7 +6,7 @@
  * screen of single screen mode (single_screen.c), which lays the boot and title screens out on one screen;
  * the other layouts show both DS screens as they are.
  *
- * Aspect ratio is widescreen, not stretching: 16:9, 21:9 or the window's own shape ("Fit screen") ask the
+ * Aspect ratio is widescreen, not stretching: 5:3, 16:9, 21:9 or the window's own shape ("Fit screen") ask the
  * renderer (video_set_wide_margin) to draw the top screen wider, showing more of the world where single
  * screen mode allows it (the field); the main screen then arrives wider than 256 columns. Other scenes, and
  * Original, stay 4:3. Pixels keep their shape everywhere.
@@ -40,7 +40,7 @@
 enum { LAYOUT_TOP, LAYOUT_STACKED, LAYOUT_SIDE, LAYOUT_COUNT };
 enum { WINDOW_WINDOWED, WINDOW_BORDERLESS, WINDOW_FULLSCREEN };
 enum { FILTER_PIXEL, FILTER_SHARP, FILTER_SMOOTH, FILTER_LCD };
-enum { ASPECT_ORIGINAL, ASPECT_16_9 };
+enum { ASPECT_ORIGINAL, ASPECT_5_3, ASPECT_16_9 };
 static const char *const layout_names[LAYOUT_COUNT] = {"top", "stacked", "side"};
 static const char *const layout_labels[LAYOUT_COUNT] = {"Top screen only", "Screens stacked", "Screens side by side"};
 
@@ -56,9 +56,9 @@ typedef struct Setting {
 static const char *const window_names[] = {"windowed", "borderless", "fullscreen"};
 static const char *const window_labels[] = {"Windowed", "Borderless windowed", "Fullscreen"};
 static const char *const res_names[RES_MAX + 1] = {"auto", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"};
-static const char *const aspect_names[] = {"original", "16x9", "ultrawide", "fit"};
-static const char *const aspect_labels[] = {"Original (4:3)", "16:9", "Ultrawide (21:9)", "Fit screen"};
-static const float aspect_ratios[] = {4.0f / 3, 16.0f / 9, 21.0f / 9, 0}; /* 0: the window's */
+static const char *const aspect_names[] = {"original", "5x3", "16x9", "ultrawide", "fit"};
+static const char *const aspect_labels[] = {"Original (4:3)", "5:3", "16:9", "Ultrawide (21:9)", "Fit screen"};
+static const float aspect_ratios[] = {4.0f / 3, 5.0f / 3, 16.0f / 9, 21.0f / 9, 0}; /* 0: the window's */
 static const char *const fps_names[] = {"30", "60", "90", "120", "144", "unlimited"};
 static const char *const fps_labels[] = {"30", "60", "90", "120", "144", "Unlimited"};
 static const int fps_values[] = {30, 60, 90, 120, 144, 0};
@@ -75,7 +75,7 @@ static const float color_exponents[] = {1.0f, 1.1f, 1.2f, 1.4f};
 static Setting settings[SET_COUNT] = {
     [SET_WINDOW] = {"window", "Window mode", 3, WINDOW_BORDERLESS, window_names, window_labels},
     [SET_RESOLUTION] = {"resolution", "Internal resolution", RES_MAX + 1, 0, res_names, NULL},
-    [SET_ASPECT] = {"aspect", "Aspect ratio", 4, ASPECT_16_9, aspect_names, aspect_labels},
+    [SET_ASPECT] = {"aspect", "Aspect ratio", 5, ASPECT_16_9, aspect_names, aspect_labels},
     [SET_FRAMERATE] = {"framerate", "Framerate", 6, 1, fps_names, fps_labels},
     [SET_VSYNC] = {"vsync", "V-Sync", 2, 1, onoff_names, onoff_labels},
     [SET_FILTER] = {"filter", "Graphics filter", 4, FILTER_SHARP, filter_names, filter_labels},
