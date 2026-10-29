@@ -264,6 +264,25 @@ void sched_update(void) {
     pxi_update(now);
 }
 
+static SDL_AtomicInt quit; /* 1: the host asks the game thread to stop, 2: it has stopped */
+
+/* The game thread waits here for the process to end once the host quits, so SDL_Quit does not free the audio
+ * stream and the rest under it. Polls run between the game's instructions, never inside a save or state write. */
+static void park_on_quit(void) {
+    if (SDL_GetAtomicInt(&quit) != 1) return;
+    SDL_SetAtomicInt(&quit, 2);
+    for (;;) SDL_Delay(1000);
+}
+
+int rt_stop_game(uint32_t timeout_ms) {
+    SDL_SetAtomicInt(&quit, 1);
+    rt_poll_pending = 1;
+    for (Uint64 end = SDL_GetTicks() + timeout_ms; SDL_GetAtomicInt(&quit) != 2; SDL_Delay(1)) {
+        if (SDL_GetTicks() >= end) return 0;
+    }
+    return 1;
+}
+
 /* Requests a poll every 0.5 ms so long-running game code still sees interrupts and video timing. */
 static int SDLCALL poll_ticker(void *arg) {
     (void)arg;
@@ -292,6 +311,7 @@ void sched_init(void) {
 void rt_poll(CPU *cpu) {
     rt_poll_pending = 0;
     if (rt_state_request) rt_state_poll(cpu);
+    park_on_quit();
     sched_update();
     /* Like hardware, re-enter the handler while interrupts remain pending: the SDK handler services one
      * source per entry (the lowest bit), so a frequent source such as HBlank must not starve the rest. */
@@ -313,6 +333,7 @@ static uint64_t next_event_delay(void) {
 
 void rt_halt(CPU *cpu) {
     for (;;) {
+        park_on_quit();
         sched_update();
         if (irq_wanted()) break;
         uint64_t cycles = next_event_delay();

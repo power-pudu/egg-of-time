@@ -63,6 +63,7 @@ void dma_control_written(int ch, uint32_t old_cnt);
 void dma_trigger(int start_mode);
 void rt_halt(CPU *cpu);                          /* wait until IE & IF != 0, then deliver */
 void rt_intr_wait(CPU *cpu, int discard, uint32_t mask);
+int rt_stop_game(uint32_t timeout_ms); /* host: park the game thread at its next poll; 0 if it did not get there */
 extern uint64_t rt_frame_count;                  /* VBlanks since boot */
 
 /* ---- pxi.c: IPC with the (high-level emulated) ARM7 ---- */

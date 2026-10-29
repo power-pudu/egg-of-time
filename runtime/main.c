@@ -370,6 +370,8 @@ int main(int argc, char **argv) {
             }
         }
     }
-    SDL_Quit();
+    /* SDL_Quit frees what the game thread uses (the audio stream, ...): stop it first. If it does not stop
+     * (code that never polls), the end of the process cleans up instead. */
+    if (SDL_GetAtomicInt(&game_finished) || rt_stop_game(1000)) SDL_Quit();
     return 0;
 }
