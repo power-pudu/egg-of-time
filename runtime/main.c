@@ -228,11 +228,18 @@ int main(int argc, char **argv) {
     /* Holding Escape for EXIT_HOLD_MS quits; the message shows while it is held. */
     enum { EXIT_HOLD_MS = 1000 };
     Uint64 esc_since = 0;
+    /* The mouse cursor hides after CURSOR_HIDE_MS without mouse use, and shows again when the mouse moves. */
+    enum { CURSOR_HIDE_MS = 2000 };
+    Uint64 mouse_used = SDL_GetTicks();
     while (running && !SDL_GetAtomicInt(&game_finished)) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_QUIT) running = 0;
-            else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && display_key(e.key.scancode)) {
+            else if (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                     e.type == SDL_EVENT_MOUSE_WHEEL) {
+                mouse_used = SDL_GetTicks();
+                if (!SDL_CursorVisible()) SDL_ShowCursor();
+            } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && display_key(e.key.scancode)) {
                 continue;
             } else if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F5 && !e.key.repeat) {
                 rt_state_request = RT_STATE_SAVE;
@@ -274,6 +281,8 @@ int main(int argc, char **argv) {
             rt_touch_x = tx_;
             rt_touch_y = ty_;
         }
+        if (mb) mouse_used = SDL_GetTicks(); /* not while a button is held (touching the bottom screen) */
+        if (SDL_CursorVisible() && SDL_GetTicks() - mouse_used >= CURSOR_HIDE_MS) SDL_HideCursor();
         if (auto_keys(SDL_GetTicks()) & AUTO_TOUCH) {
             int tx = SCREEN_W / 2, ty = SCREEN_H / 2;
             /* EGG_TOUCH_POS="x,y[;x,y...]": the n-th TOUCH entry of EGG_AUTOKEYS uses the n-th position. */
