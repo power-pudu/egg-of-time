@@ -62,11 +62,14 @@ and mods.
    - Debian/Ubuntu: `sudo apt install python3 build-essential`
    - Fedora: `sudo dnf install python3 gcc`
    - Arch: `sudo pacman -S python gcc`
-2. Download the latest `EggOfTime-<version>-linux-x64.tar.gz` from the
-   [Releases page](https://github.com/power-pudu/egg-of-time/releases) and extract it:
-   `tar xzf EggOfTime-*-linux-x64.tar.gz`.
-3. Start `Egg of Time` in the extracted folder and choose your ROM, or pass it: `"./Egg of Time" path/to/rom.nds`.
-4. Wait for the first-start build (about two minutes), as on Windows. Your files go in the same places, with `/`.
+2. Download the latest release from the [Releases page](https://github.com/power-pudu/egg-of-time/releases), either:
+   - `EggOfTime-<version>-x86_64.AppImage`: make it executable (`chmod +x EggOfTime-*.AppImage`) and start it.
+     The AppImage is read-only, so your ROM, game build, saves, settings and mods go in
+     `~/.local/share/EggOfTime/` (or `$XDG_DATA_HOME/EggOfTime/`) instead of next to it.
+   - `EggOfTime-<version>-linux-x64.tar.gz`: extract it (`tar xzf EggOfTime-*-linux-x64.tar.gz`) and start
+     `Egg of Time` in the extracted folder. Your files go in the same places as on Windows, with `/`.
+3. Choose your ROM, or pass it: `"./Egg of Time" path/to/rom.nds` (or `./EggOfTime-*.AppImage path/to/rom.nds`).
+4. Wait for the first-start build (about two minutes), as on Windows.
 
 > [!NOTE]
 > The download runs on x86-64 distros with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later).

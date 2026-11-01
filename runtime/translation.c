@@ -91,8 +91,8 @@ static int compare_names(const void *a, const void *b) {
 }
 
 /* The bundled tool when the release has one, else xdelta3 from PATH (a source build). */
-static void find_xdelta(char *out, size_t n, const char *base) {
-    snprintf(out, n, "%s%s", base, XDELTA_TOOL);
+static void find_xdelta(char *out, size_t n) {
+    snprintf(out, n, "%s%s", rt_install_dir(), XDELTA_TOOL);
     SDL_PathInfo info;
     if (!SDL_GetPathInfo(out, &info)) snprintf(out, n, "%s", XDELTA_NAME);
 }
@@ -168,11 +168,10 @@ static int run_tool(const char *const *args, int quiet, char *err, size_t err_si
 }
 
 /* The Python that runs the kit's scripts: the kit's on Windows, python3 from PATH elsewhere. */
-static void find_python(char *out, size_t n, const char *base) {
+static void find_python(char *out, size_t n) {
 #ifdef _WIN32
-    snprintf(out, n, "%s%s", base, PYTHON_TOOL);
+    snprintf(out, n, "%s%s", rt_install_dir(), PYTHON_TOOL);
 #else
-    (void)base;
     snprintf(out, n, "%s", PYTHON_TOOL);
 #endif
 }
@@ -186,10 +185,9 @@ typedef struct PatchedRom {
 } PatchedRom;
 
 /* Applies the listed patches to rom in order; 0, or -1 with a message in err. */
-static int apply_patches(const char *base, const char *dir, const PatchList *list, PatchedRom *rom, char *err,
-                         size_t err_size) {
+static int apply_patches(const char *dir, const PatchList *list, PatchedRom *rom, char *err, size_t err_size) {
     char tool[1024] = "", python[1024] = "", script[1024], game_dir[1024], src_tmp[1024], dst_tmp[1024];
-    snprintf(game_dir, sizeof game_dir, "%sgame", base);
+    snprintf(game_dir, sizeof game_dir, "%sgame", rt_data_dir());
     snprintf(src_tmp, sizeof src_tmp, "%s/.translation-source.nds", game_dir);
     snprintf(dst_tmp, sizeof dst_tmp, "%s/.translation-target.nds", game_dir);
     for (int i = 0; i < list->count; i++) {
@@ -214,10 +212,10 @@ static int apply_patches(const char *base, const char *dir, const PatchList *lis
             }
         } else if (format == ROM_PATCH_XDELTA || format == ROM_PATCH_XDELTA1) {
             SDL_free(patch);
-            if (format == ROM_PATCH_XDELTA && !tool[0]) find_xdelta(tool, sizeof tool, base);
+            if (format == ROM_PATCH_XDELTA && !tool[0]) find_xdelta(tool, sizeof tool);
             if (format == ROM_PATCH_XDELTA1 && !python[0]) {
-                find_python(python, sizeof python, base);
-                snprintf(script, sizeof script, "%s%s", base, XDELTA1_SCRIPT);
+                find_python(python, sizeof python);
+                snprintf(script, sizeof script, "%s%s", rt_install_dir(), XDELTA1_SCRIPT);
             }
             SDL_CreateDirectory(game_dir);
             const char *source = rom->file;
@@ -236,8 +234,8 @@ static int apply_patches(const char *base, const char *dir, const PatchList *lis
             if (!ok && format == ROM_PATCH_XDELTA) {
                 /* Made from an ndstool-repacked dump, or no xdelta3: kit/recomp/vcdiff.py tries both. */
                 char vcdiff[1024], why2[700];
-                if (!python[0]) find_python(python, sizeof python, base);
-                snprintf(vcdiff, sizeof vcdiff, "%s%s", base, VCDIFF_SCRIPT);
+                if (!python[0]) find_python(python, sizeof python);
+                snprintf(vcdiff, sizeof vcdiff, "%s%s", rt_install_dir(), VCDIFF_SCRIPT);
                 const char *vcdiff_args[] = {python, "-I", vcdiff, path, source, dst_tmp, NULL};
                 SDL_RemovePath(dst_tmp);
                 ok = run_tool(vcdiff_args, 1, why2, sizeof why2);
@@ -274,11 +272,11 @@ static int apply_patches(const char *base, const char *dir, const PatchList *lis
 
 /* Carries the patched other version (rom, made from the dump at original) over to the verified ROM with
  * kit/recomp/retarget.py; its result replaces rt_rom.data. 0, or -1 with a message in err. */
-static int retarget(const char *base, const char *original, const PatchedRom *rom, char *err, size_t err_size) {
+static int retarget(const char *original, const PatchedRom *rom, char *err, size_t err_size) {
     char python[1024], script[1024], game_dir[1024], src_tmp[1024], dst_tmp[1024], why[700];
-    find_python(python, sizeof python, base);
-    snprintf(script, sizeof script, "%s%s", base, RETARGET_SCRIPT);
-    snprintf(game_dir, sizeof game_dir, "%sgame", base);
+    find_python(python, sizeof python);
+    snprintf(script, sizeof script, "%s%s", rt_install_dir(), RETARGET_SCRIPT);
+    snprintf(game_dir, sizeof game_dir, "%sgame", rt_data_dir());
     SDL_CreateDirectory(game_dir);
     snprintf(src_tmp, sizeof src_tmp, "%s/.translation-source.nds", game_dir);
     snprintf(dst_tmp, sizeof dst_tmp, "%s/.translation-target.nds", game_dir);
@@ -304,9 +302,9 @@ static int retarget(const char *base, const char *original, const PatchedRom *ro
     return 0;
 }
 
-int translation_apply(const char *base, char *err, size_t err_size) {
+int translation_apply(char *err, size_t err_size) {
     char dir[1024];
-    snprintf(dir, sizeof dir, "%s%s", base, PATCH_DIR);
+    snprintf(dir, sizeof dir, "%s%s", rt_data_dir(), PATCH_DIR);
     SDL_PathInfo info;
     if (!SDL_GetPathInfo(dir, &info) || info.type != SDL_PATHTYPE_DIRECTORY) return 0;
 
@@ -347,9 +345,9 @@ int translation_apply(const char *base, char *err, size_t err_size) {
             rt_log("translation: patching %s (%.4s)", found.roms.names[0], (const char *)data + 0xC);
         }
     }
-    result = apply_patches(base, dir, &found.patches, &rom, err, err_size);
+    result = apply_patches(dir, &found.patches, &rom, err, err_size);
     if (original[0]) {
-        if (!result) result = retarget(base, original, &rom, err, err_size);
+        if (!result) result = retarget(original, &rom, err, err_size);
         free(rom.data);
     } else {
         rt_rom.data = rom.data;

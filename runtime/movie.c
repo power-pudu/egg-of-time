@@ -392,8 +392,7 @@ static int replacement(uint32_t path, char *out, size_t n) {
     const char *base = strrchr(name, '/') ? strrchr(name, '/') + 1 : name;
     char *dot = strrchr(name, '.');
     if (dot && dot > base) *dot = 0;
-    const char *dir = SDL_GetBasePath();
-    snprintf(out, n, "%smods/cutscenes/%s.mp4", dir ? dir : "", base);
+    snprintf(out, n, "%smods/cutscenes/%s.mp4", rt_data_dir(), base);
     SDL_PathInfo info;
     return SDL_GetPathInfo(out, &info) && info.type == SDL_PATHTYPE_FILE;
 }

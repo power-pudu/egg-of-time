@@ -25,6 +25,9 @@ The file dialog needs xdg-desktop-portal or zenity; without one, pass the ROM on
 Your saves (rom/CT.sav), save states (rom/CT.state, F5 / F7) and settings (eggoftime.ini) stay in
 this folder. To update, extract the new version over this one.
 
+The AppImage (EggOfTime-*-x86_64.AppImage) is the same program in one read-only file: chmod +x it and
+start it. It keeps rom/, game/, eggoftime.ini and mods/ in ~/.local/share/EggOfTime/ instead.
+
 Controls: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Backspace = Select,
 F2 layout, F3 swap screens, F4 filter, F11 fullscreen, hold Esc to quit. Gamepads work too.
 Mods: replacement cutscenes and music go in mods/cutscenes and mods/music, and translation patches

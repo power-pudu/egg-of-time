@@ -371,7 +371,12 @@ original bytes, and caches the result per region until the region is written.
   and crt files. The game library is compiled with `-fPIC` and linked without an import library, its runtime
   symbols resolved from the executable (`ENABLE_EXPORTS`, i.e. `-rdynamic`). SDL3 is linked statically and
   BtbN's FFmpeg shared libraries sit next to the executable (RPATH `$ORIGIN` only); the package is a `.tar.gz`
-  so the executable bits survive. Measured in WSL Ubuntu 24.04: 66 MB download, first start 120 s. Measured: zip 125 MB (FFmpeg 112 MB
+  so the executable bits survive. The same files also go out as an AppImage (`--appimage`: AppRun, a `.desktop`
+  file and `res/icon.png` added, packed by appimagetool 1.9.1 with the static type 2 runtime, so players need no
+  FUSE 2). An AppImage is mounted read-only, so when the executable runs under `$APPDIR` the runtime splits its
+  folders (`rt_install_dir`/`rt_data_dir`, `runtime/main.c`): `kit/` stays in the mount, while `rom/`, `game/`,
+  `eggoftime.ini` and `mods/` go to `SDL_GetPrefPath` (`$XDG_DATA_HOME/EggOfTime/`), whose `mods/` folders and
+  readme files are made on the first start. Elsewhere both are the executable's folder. Measured in WSL Ubuntu 24.04: 66 MB download, first start 120 s. Measured: zip 125 MB (FFmpeg 112 MB
   of DLLs, the kit 171 MB unpacked), first start about 3 minutes on this machine, later starts 2 s. Zig as the
   bundled compiler was dropped: `zig cc` compiles at -O2 with debug info for the host CPU, and took 21 minutes
   (0.14.1) / 8 minutes (0.17.0) for the largest file, against 106 s with llvm-mingw's clang 23.

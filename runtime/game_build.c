@@ -1,9 +1,9 @@
 /* The game library and the ROM, ready before the game starts.
  *
- * The recompiled game code is a library of its own (game/eggoftime_game.dll next to the executable), because it is a
+ * The recompiled game code is a library of its own (game/eggoftime_game.dll in the data folder), because it is a
  * translation of the game's code and must not be distributed: a release holds the runtime and the tools to make it
  * (kit/), and builds it on the player's machine from their ROM on the first start:
- *   1. ROM: rom/CT.nds next to the executable, or one the player picks (copied there, so saves stay beside it);
+ *   1. ROM: rom/CT.nds in the data folder, or one the player picks (copied there, so saves stay beside it);
  *      its SHA-1 must be the one the recompiler's config was made from.
  *   2. kit/dsd/dsd.exe rom extract                -> game/build/extract (ARM9 binaries, overlays)
  *   3. kit/python/python.exe kit/recomp/recomp.py  -> game/build/gen (C sources)
@@ -43,12 +43,15 @@
 #define EXE ""
 #endif
 
-static char base[1024];    /* the executable's folder, with its separator */
 static char rom_sha[41];   /* the loaded ROM's SHA-1 (releases) */
 
-static void path(char *out, size_t n, const char *rel) {
-    if ((size_t)snprintf(out, n, "%s%s", base, rel) >= n) out[0] = 0; /* too long: no such file */
+static void join(char *out, size_t n, const char *dir, const char *rel) {
+    if ((size_t)snprintf(out, n, "%s%s", dir, rel) >= n) out[0] = 0; /* too long: no such file */
 }
+
+/* kit/ is part of the install; rom/ and game/ are written, so they are in the data folder (rt.h). */
+static void kit_path(char *out, size_t n, const char *rel) { join(out, n, rt_install_dir(), rel); }
+static void data_path(char *out, size_t n, const char *rel) { join(out, n, rt_data_dir(), rel); }
 
 /* ---- SHA-1 ---- */
 
@@ -165,7 +168,7 @@ static int pick_rom(void) {
 /* Loads the ROM (and in a release makes sure it is the right one, kept as rom/CT.nds); 0 if the player quit. */
 static int load_rom(const char *rom_arg, int release) {
     char rom[1024];
-    path(rom, sizeof rom, DEFAULT_ROM);
+    data_path(rom, sizeof rom, DEFAULT_ROM);
     if (rom_arg) snprintf(rom, sizeof rom, "%s", rom_arg);
     int ok = rt_load_rom(rom) || (!rom_arg && rt_load_rom(DEFAULT_ROM));
     if (!release) {
@@ -188,11 +191,11 @@ static int load_rom(const char *rom_arg, int release) {
         if (!wait_key(wrong, 4)) return 0;
         ok = 0;
     }
-    /* Keep a copy in rom/ next to the executable, so it is found next time and the saves stay beside it. */
+    /* Keep a copy in rom/ in the data folder, so it is found next time and the saves stay beside it. */
     char kept[1024], dir[1024];
-    path(kept, sizeof kept, DEFAULT_ROM);
+    data_path(kept, sizeof kept, DEFAULT_ROM);
     if (strcmp(rt_rom.path, kept) != 0) {
-        path(dir, sizeof dir, "rom");
+        data_path(dir, sizeof dir, "rom");
         SDL_CreateDirectory(dir);
         if (SDL_SaveFile(kept, rt_rom.data, rt_rom.size)) {
             free(rt_rom.data);
@@ -223,8 +226,8 @@ static struct {
 /* Finds the tools: the kit's on Windows, the system's on Linux; 0 (and tells the player) if one is missing. */
 static int find_tools(void) {
 #ifdef _WIN32
-    path(b.python, sizeof b.python, "kit/python/python.exe");
-    path(b.cc, sizeof b.cc, "kit/llvm/bin/clang.exe");
+    kit_path(b.python, sizeof b.python, "kit/python/python.exe");
+    kit_path(b.cc, sizeof b.cc, "kit/llvm/bin/clang.exe");
     return 1;
 #else
     static const char *const pythons[] = {"python3", NULL}, *const compilers[] = {"cc", "clang", "gcc", NULL};
@@ -307,11 +310,11 @@ static void set_step(const char *s) {
 static int SDLCALL compile_worker(void *slot_ptr) {
     int slot = (int)(intptr_t)slot_ptr;
     char inc[1024], gen[1024], src[1024], obj[1024];
-    path(inc, sizeof inc, "kit/include");
-    path(gen, sizeof gen, "game/build/gen");
+    kit_path(inc, sizeof inc, "kit/include");
+    data_path(gen, sizeof gen, "game/build/gen");
     for (int i; !SDL_GetAtomicInt(&b.failed) && (i = SDL_AddAtomicInt(&b.next, 1)) < b.source_count;) {
         snprintf(src, sizeof src, "%s/%s", gen, b.sources[i]);
-        path(obj, sizeof obj, "game/build/obj/");
+        data_path(obj, sizeof obj, "game/build/obj/");
         snprintf(obj + strlen(obj), sizeof obj - strlen(obj), "%.*s.o", (int)strlen(b.sources[i]) - 2, b.sources[i]);
         /* The flags of the developer build's game library (CMakeLists.txt), without debug info. */
         const char *args[] = {b.cc, "-std=c11", "-O1", "-w", "-fwrapv", "-DNDEBUG", "-DEGG_SINGLE_SCREEN=1",
@@ -347,13 +350,13 @@ static void remove_tree(const char *dir) {
 static int SDLCALL build_thread(void *unused) {
     (void)unused;
     char dsd[1024], recomp[1024], kit[1024], work[1024], extract[1024], gen[1024], obj[1024];
-    path(dsd, sizeof dsd, "kit/dsd/dsd" EXE);
-    path(recomp, sizeof recomp, "kit/recomp/recomp.py");
-    path(kit, sizeof kit, "kit");
-    path(work, sizeof work, "game/build");
-    path(extract, sizeof extract, "game/build/extract");
-    path(gen, sizeof gen, "game/build/gen");
-    path(obj, sizeof obj, "game/build/obj");
+    kit_path(dsd, sizeof dsd, "kit/dsd/dsd" EXE);
+    kit_path(recomp, sizeof recomp, "kit/recomp/recomp.py");
+    kit_path(kit, sizeof kit, "kit");
+    data_path(work, sizeof work, "game/build");
+    data_path(extract, sizeof extract, "game/build/extract");
+    data_path(gen, sizeof gen, "game/build/gen");
+    data_path(obj, sizeof obj, "game/build/obj");
     remove_tree(work);
     SDL_CreateDirectory(obj);
 
@@ -375,7 +378,7 @@ static int SDLCALL build_thread(void *unused) {
 
     set_step("Linking the game");
     char lib[1024];
-    path(lib, sizeof lib, GAME_LIBRARY);
+    data_path(lib, sizeof lib, GAME_LIBRARY);
     const char **link = SDL_calloc((size_t)b.source_count + 8, sizeof *link);
     char (*objs)[1024] = SDL_calloc((size_t)b.source_count, sizeof *objs);
     int k = 0;
@@ -386,7 +389,7 @@ static int SDLCALL build_thread(void *unused) {
     }
 #ifdef _WIN32
     char implib[1024];
-    path(implib, sizeof implib, "kit/lib/libeggoftime.a");
+    kit_path(implib, sizeof implib, "kit/lib/libeggoftime.a");
     link[k++] = implib;
 #endif
     int linked = run(link, 0) == 0;
@@ -407,7 +410,7 @@ static int build(const char *log_path, const char *rom_path) {
     if (!find_tools()) return 0;
     b.lock = SDL_CreateMutex();
     char game_dir[1024];
-    path(game_dir, sizeof game_dir, "game");
+    data_path(game_dir, sizeof game_dir, "game");
     SDL_CreateDirectory(game_dir);
     b.log = SDL_IOFromFile(log_path, "w");
     Uint64 start = SDL_GetTicks();
@@ -458,13 +461,11 @@ static int build(const char *log_path, const char *rom_path) {
 /* ---- entry ---- */
 
 int game_build_prepare(const char *rom_arg) {
-    const char *bp = SDL_GetBasePath();
-    snprintf(base, sizeof base, "%s", bp ? bp : "");
     char kit_id_path[1024], lib[1024], id_path[1024], log_path[1024];
-    path(kit_id_path, sizeof kit_id_path, "kit/kit.id");
-    path(lib, sizeof lib, GAME_LIBRARY);
-    path(id_path, sizeof id_path, "game/build.id");
-    path(log_path, sizeof log_path, "game/build.log");
+    kit_path(kit_id_path, sizeof kit_id_path, "kit/kit.id");
+    data_path(lib, sizeof lib, GAME_LIBRARY);
+    data_path(id_path, sizeof id_path, "game/build.id");
+    data_path(log_path, sizeof log_path, "game/build.log");
     size_t kit_len = 0;
     char *kit_id = SDL_LoadFile(kit_id_path, &kit_len); /* a release: the kit's id */
     if (!load_rom(rom_arg, kit_id != NULL)) {
@@ -474,7 +475,7 @@ int game_build_prepare(const char *rom_arg) {
     if (kit_id) {
         /* Translation mods patch the verified ROM in memory; rom/CT.nds stays the unmodified dump. */
         char err[700];
-        int translated = translation_apply(base, err, sizeof err);
+        int translated = translation_apply(err, sizeof err);
         if (translated < 0) {
             SDL_free(kit_id);
             char msg[1600];
@@ -503,9 +504,9 @@ int game_build_prepare(const char *rom_arg) {
             const char *rom_file = rt_rom.path;
             if (translated) {
                 char game_dir[1024];
-                path(game_dir, sizeof game_dir, "game");
+                data_path(game_dir, sizeof game_dir, "game");
                 SDL_CreateDirectory(game_dir);
-                path(patched_file, sizeof patched_file, "game/translation.nds");
+                data_path(patched_file, sizeof patched_file, "game/translation.nds");
                 if (!SDL_SaveFile(patched_file, rt_rom.data, rt_rom.size)) {
                     char msg[1400];
                     snprintf(msg, sizeof msg, "Cannot write %s: %s", patched_file, SDL_GetError());

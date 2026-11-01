@@ -24,6 +24,7 @@
 #include <libswresample/swresample.h>
 
 #include "display.h"
+#include "rt.h"
 #include "sound.h"
 
 #define PLAYERS 16
@@ -262,10 +263,10 @@ void music_prepare(int pno, uint32_t seq_data) {
     if (pno < 0 || pno >= PLAYERS || !display_setting_get(SET_MODS)) return;
     const Bgm *b = identify(seq_data);
     if (!b) return;
-    const char *base = SDL_GetBasePath();
+    const char *base = rt_data_dir();
     for (size_t i = 0; i < SDL_arraysize(extensions); i++) {
         char path[1024];
-        snprintf(path, sizeof path, "%smods/music/%s.%s", base ? base : "", b->name, extensions[i]);
+        snprintf(path, sizeof path, "%smods/music/%s.%s", base, b->name, extensions[i]);
         SDL_PathInfo info;
         if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) continue;
         Source *s = open_source(path, !strcmp(extensions[i], "pcm"));

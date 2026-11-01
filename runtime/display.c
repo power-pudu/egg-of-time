@@ -29,6 +29,7 @@
 
 #include "display.h"
 #include "movie.h"
+#include "rt.h"
 #include "single_screen.h"
 #include "video.h"
 
@@ -397,8 +398,7 @@ static void draw_screens(void) {
 /* ---- interface ---- */
 
 int display_init(void) {
-    const char *base = SDL_GetBasePath();
-    snprintf(ini_path, sizeof ini_path, "%seggoftime.ini", base ? base : "");
+    snprintf(ini_path, sizeof ini_path, "%seggoftime.ini", rt_data_dir());
     load_settings();
     int cw, ch;
     content_size(&cw, &ch);

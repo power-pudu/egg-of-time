@@ -13,6 +13,13 @@
 _Noreturn void rt_fatal(CPU *cpu, const char *fmt, ...) RT_PRINTF(2, 3);
 void rt_log(const char *fmt, ...) RT_PRINTF(1, 2);
 
+/* Folders, each with its trailing separator. The install folder holds the executable and kit/; the data folder
+ * holds what the runtime writes or the player adds: rom/ (ROM, saves, save states), game/, eggoftime.ini and mods/.
+ * They are the same folder, except in an AppImage, which is read-only: there the data folder is
+ * $XDG_DATA_HOME/EggOfTime/ (~/.local/share/EggOfTime/), with mods/ made on the first start. */
+const char *rt_install_dir(void);
+const char *rt_data_dir(void);
+
 /* ---- memory.c ---- */
 #define RT_SHARED_WRAM_SIZE 0x8000u
 #define RT_PALETTE_SIZE 0x800u

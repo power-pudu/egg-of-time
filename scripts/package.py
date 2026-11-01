@@ -16,13 +16,17 @@ and writes kit/kit.id, a hash of what decides the generated code, so a release w
 
 The Linux release (made on Linux) holds "Egg of Time" (SDL3 linked in statically), the FFmpeg shared libraries it
 finds next to itself (RPATH $ORIGIN), kit/include, kit/recomp, kit/config and kit/dsd: the player's python3 and C
-compiler do the rest, and the game library needs no import library. It is a .tar.gz, which keeps the executable bits.
+compiler do the rest, and the game library needs no import library. It is a .tar.gz, which keeps the executable bits,
+and (--appimage) the same files as an AppImage: AppRun, a .desktop file and the icon added, packed by appimagetool
+with the given type 2 runtime. The AppImage is read-only, so there the runtime keeps its data in
+~/.local/share/EggOfTime/ (rt_data_dir, runtime/main.c).
 
 Usage: python -I scripts/package.py --build <dir> --llvm <llvm-mingw dir> --python-embed <python-*-embed-amd64.zip>
            --dsd <dsd.exe> --dsd-license <file> --sdl <SDL3 dir> --ffmpeg <FFmpeg dir> --out <dir> [--zip <file>]
            [--xdelta <xdelta3.exe> --xdelta-license <file>]
        python3 -I scripts/package.py --build <dir> --dsd <dsd> --dsd-license <file> --sdl <SDL3 source dir>
            --ffmpeg <FFmpeg shared build dir> --out <dir> [--tar <file.tar.gz>] [--xdelta <xdelta3> --xdelta-license <file>]
+           [--appimage <file.AppImage> --appimagetool <appimagetool> --appimage-runtime <runtime-x86_64>]
 """
 
 import argparse
@@ -88,14 +92,51 @@ def llvm_subset(llvm, kit_include, implib):
     return sorted(files)
 
 
+def mode(name, isdir):
+    """Executable only where it runs (copies from a Windows drive are all 0777)."""
+    return 0o755 if isdir or name in ("Egg of Time", "dsd", "xdelta3", "AppRun") or ".so." in name else 0o644
+
+
 def anonymous(info):
-    """A tar entry without the packager's user and group, executable only where it runs (copies from a Windows
-    drive are all 0777)."""
+    """A tar entry without the packager's user and group."""
     info.uid = info.gid = 0
     info.uname = info.gname = ""
-    name = os.path.basename(info.name)
-    info.mode = 0o755 if info.isdir() or name in ("Egg of Time", "dsd", "xdelta3") or ".so." in name else 0o644
+    info.mode = mode(os.path.basename(info.name), info.isdir())
     return info
+
+
+APP_RUN = """#!/bin/sh
+here="$(dirname "$(readlink -f "$0")")"
+exec "$here/Egg of Time" "$@"
+"""
+
+DESKTOP = """[Desktop Entry]
+Type=Application
+Name=Egg of Time
+Comment=Native PC port of Chrono Trigger (Nintendo DS)
+Exec=eggoftime %f
+Icon=eggoftime
+Categories=Game;RolePlaying;
+Terminal=false
+"""
+
+
+def appimage(out, target, tool, runtime):
+    """Packs the release folder as an AppImage."""
+    with tempfile.TemporaryDirectory() as tmp:
+        appdir = os.path.join(tmp, "EggOfTime.AppDir")
+        shutil.copytree(out, appdir)
+        for name, text in (("AppRun", APP_RUN), ("eggoftime.desktop", DESKTOP)):
+            with open(os.path.join(appdir, name), "w", newline="\n") as f:
+                f.write(text)
+        copy(os.path.join(ROOT, "res", "icon.png"), os.path.join(appdir, "eggoftime.png"))
+        copy(os.path.join(ROOT, "res", "icon.png"), os.path.join(appdir, ".DirIcon"))
+        for d, dirs, files in os.walk(appdir):
+            for n in dirs + files:
+                os.chmod(os.path.join(d, n), mode(n, n in dirs))
+        # appimagetool is itself an AppImage: extracting it avoids needing FUSE on the build machine.
+        env = dict(os.environ, ARCH="x86_64", APPIMAGE_EXTRACT_AND_RUN="1")
+        subprocess.run([tool, "--no-appstream", "--runtime-file", runtime, appdir, target], check=True, env=env)
 
 
 def kit_id(kit):
@@ -120,6 +161,8 @@ def main():
     ap.add_argument("--xdelta-license")
     ap.add_argument("--zip")
     ap.add_argument("--tar")
+    for a in ("appimage", "appimagetool", "appimage-runtime"):
+        ap.add_argument("--" + a)
     args = ap.parse_args()
     out = os.path.abspath(args.out)
     if os.path.exists(out):
@@ -207,6 +250,9 @@ def main():
         with tarfile.open(args.tar, "w:gz", compresslevel=9) as t:
             t.add(out, "Egg of Time", filter=anonymous)
         print(f"{args.tar}: {os.path.getsize(args.tar) / 1e6:.0f} MB")
+    if args.appimage:
+        appimage(out, os.path.abspath(args.appimage), args.appimagetool, args.appimage_runtime)
+        print(f"{args.appimage}: {os.path.getsize(args.appimage) / 1e6:.0f} MB")
 
 
 if __name__ == "__main__":

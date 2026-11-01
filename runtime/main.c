@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -20,6 +21,54 @@ void rt_log(const char *fmt, ...) {
     va_start(ap, fmt);
     SDL_LogMessageV(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO, fmt, ap);
     va_end(ap);
+}
+
+static char install_dir[1024], data_dir[1024];
+
+/* The AppImage's data folder starts with the mod folders and their readme files, so the player finds where mods go. */
+static void make_mod_folders(void) {
+    static const char *const mods[] = {"cutscenes", "music", "translation"};
+    for (size_t i = 0; i < SDL_arraysize(mods); i++) {
+        char from[1024], to[1024];
+        snprintf(to, sizeof to, "%smods/%s", data_dir, mods[i]);
+        SDL_CreateDirectory(to);
+        snprintf(to, sizeof to, "%smods/%s/readme.txt", data_dir, mods[i]);
+        snprintf(from, sizeof from, "%smods/%s/readme.txt", install_dir, mods[i]);
+        SDL_PathInfo info;
+        size_t size = 0;
+        void *text = SDL_GetPathInfo(to, &info) ? NULL : SDL_LoadFile(from, &size);
+        if (text) SDL_SaveFile(to, text, size);
+        SDL_free(text);
+    }
+}
+
+static void find_dirs(void) {
+    const char *base = SDL_GetBasePath();
+    snprintf(install_dir, sizeof install_dir, "%s", base ? base : "");
+    snprintf(data_dir, sizeof data_dir, "%s", install_dir);
+    /* An AppImage runs mounted at $APPDIR (read-only); APPDIR alone could be inherited from another AppImage. */
+    const char *appdir = getenv("APPDIR");
+    size_t n = appdir ? strlen(appdir) : 0;
+    if (!n || strncmp(install_dir, appdir, n) != 0 || (install_dir[n] != '/' && install_dir[n] != 0)) return;
+    char *pref = SDL_GetPrefPath("", "EggOfTime");
+    if (!pref) {
+        rt_log("no data folder: %s", SDL_GetError());
+        return;
+    }
+    snprintf(data_dir, sizeof data_dir, "%s", pref);
+    SDL_free(pref);
+    make_mod_folders();
+    rt_log("data folder: %s", data_dir);
+}
+
+const char *rt_install_dir(void) {
+    if (!install_dir[0]) find_dirs();
+    return install_dir;
+}
+
+const char *rt_data_dir(void) {
+    if (!install_dir[0]) find_dirs();
+    return data_dir;
 }
 
 _Noreturn void rt_fatal(CPU *cpu, const char *fmt, ...) {
