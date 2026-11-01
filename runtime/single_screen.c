@@ -434,7 +434,13 @@ static void menu_card(uint32_t *main, const uint32_t *top, int py, int cx, int c
     for (int y = 4; y < CARD_H - 4; y++) {
         const uint32_t *row = &top[(py + y + 2) * SCREEN_W + SX];
         for (int x = 0; x < IN; x++) { /* a text pixel takes the stone 8 columns left (glyphs are narrower) */
-            stone[x] = text_px(row[x]) ? (x >= 8 ? stone[x - 8] : row[x - 8]) : row[x];
+            if (!text_px(row[x])) stone[x] = row[x];
+            else if (x >= 8) stone[x] = stone[x - 8];
+            else { /* left of SX is the portrait: the nearest stone 8, 16... columns right, in the dither's phase */
+                int k = x + 8;
+                while (k + 8 < IN && text_px(row[k])) k += 8;
+                stone[x] = row[k];
+            }
         }
         memcpy(&main[(cy + y) * SCREEN_W + cx + 4], stone, sizeof stone);
     }
@@ -447,10 +453,10 @@ static void menu_card(uint32_t *main, const uint32_t *top, int py, int cx, int c
         blit(main, cx + CARD_W - 4, cy + y, top, 123, py + y + 2, 4, 1);
     }
     blit(main, cx + 3, cy + 4, top, 12, py + 6, 16, 34);       /* portrait, on its own rows */
-    blit_text(main, cx + 20, cy + 5, top, 33, py + 9, 33, 7);  /* name */
-    blit_text(main, cx + 55, cy + 5, top, 33, py + 21, 26, 7); /* LV n */
-    blit_text(main, cx + 20, cy + 16, top, 60, py + 21, 61, 7); /* HP n/ n */
-    blit_text(main, cx + 20, cy + 26, top, 60, py + 31, 61, 7); /* MP n/ n */
+    blit_text(main, cx + 20, cy + 5, top, 33, py + 9, 32, 7);  /* name */
+    blit_text(main, cx + 53, cy + 5, top, 33, py + 21, 28, 7); /* LV n (99 shows as two stars, up to x 60) */
+    blit_text(main, cx + 21, cy + 16, top, 61, py + 21, 60, 7); /* HP n/ n */
+    blit_text(main, cx + 21, cy + 26, top, 61, py + 31, 60, 7); /* MP n/ n */
 }
 
 /* Columns of the outlined text in rows [y0, y0 + h) of the top screen between x0 and x1 (lit glyph pixels: text
