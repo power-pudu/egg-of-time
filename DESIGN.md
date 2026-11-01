@@ -185,7 +185,10 @@ original bytes, and caches the result per region until the region is written.
     sprite counts as followed when, matched to the previous frame's OAM (same tile and palette, shape and size,
     nearest), its screen step is smaller than its step in the room (screen step plus camera step). The renderer
     leaves those out of the field picture and composes them a second time into a transparent layer (only where
-    they win the top layer, so backgrounds in front still cover them), and the host draws it over the slid
+    they win the top layer, so backgrounds in front still cover them, or are seen blended under a translucent
+    top layer: dark rooms lay a darkness BG0 at priority 0 over
+    everything, alpha-blended, and without this the party vanished whenever it counted as followed while
+    running), and the host draws it over the slid
     picture without the slide (`video_copy_frame`'s party output). The text box is screen-fixed too: on its
     lines (BG0/BG1 switched to one-screen maps, see Text boxes) its pixels go to the party layer, and the slid
     picture shows the room under it (those layers as the frame started), so the box holds still while walking

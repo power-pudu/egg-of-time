@@ -849,7 +849,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         const int16_t *ext0 = ext ? win_ext[y][0] : NULL, *ext1 = ext ? win_ext[y][1] : NULL;
 
         /* Pass 0: the picture (without the party when it has its own layer); pass 1: the party layer, the party's
-         * pixels where a party sprite ends up on top (scenery in front of it still covers it), else transparent. */
+         * pixels where a party sprite ends up on top or blended under a translucent layer on top (the darkness
+         * overlay of dark rooms, BG0 at priority 0), else transparent (scenery in front of it still covers it). */
         for (int pass = 0; pass < (e->party ? 2 : 1); pass++) {
         const ObjLine *o = pass ? &ol_all : &ol;
         uint32_t *dst = pass ? &party_frame[y * VIDEO_LINE_MAX] : out;
@@ -885,15 +886,16 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             }
             uint16_t c = col[0];
             int first = (bldcnt >> layer[0]) & 1, second = (bldcnt >> (8 + layer[1])) & 1;
+            int sprite_shows = layer[0] == 4; /* the sprite on top, or seen through a translucent layer on top */
             if (layer[0] == 4 && o->alpha[x] != 0xFF && second) {
                 if (o->alpha[x] == 0xFE) c = blend(col[0], col[1], eva, evb);
                 else c = blend(col[0], col[1], o->alpha[x], 16 - o->alpha[x]);
             } else if ((ctl & 0x20) && first) {
-                if (effect == 1 && second) c = blend(col[0], col[1], eva, evb);
+                if (effect == 1 && second) c = blend(col[0], col[1], eva, evb), sprite_shows |= layer[1] == 4;
                 else if (effect == 2) c = brighten(c, evy, 1);
                 else if (effect == 3) c = brighten(c, evy, 0);
             }
-            dst[x] = pass && !(layer[0] == 4 && o->party[x]) && !still ? 0 : to_rgba(c);
+            dst[x] = pass && !(sprite_shows && o->party[x]) && !still ? 0 : to_rgba(c);
         }
         }
     }
