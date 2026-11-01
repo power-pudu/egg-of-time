@@ -54,6 +54,10 @@
  *     bottom one, whose help bar stays empty. The main screen shows the bottom screen moved up into the gap
  *     under the tabs and, in place of the help bar, every member's name and the stat the item changes as lines
  *     of text, three to a line. Equip opens the Equipment page.
+ *   - Age selector (ov012, time travel): the chosen age's map on the top screen, the ring of ages with the age's
+ *     name, A Warp and B on the bottom one. The main screen shows the bottom screen with the ring and name moved
+ *     left (a second picture of the bottom screen, swirl and buttons in place) and the map at half size beside the
+ *     ring, centred together (compose_ages).
  *   - Widescreen (the top screen with its margins): the field, and the warp through a time gate (ov010): an
  *     affine BG with wraparound, whose margins the renderer draws as they are, under a star of sprites that
  *     covers the DS screen exactly, stretched across the margins (video.c); and the world map (ov002), whose
@@ -70,7 +74,7 @@
 #include "ui_font.h"
 #include "video.h"
 
-enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE };
+enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES };
 typedef struct Scene { int kind; uint32_t obj; } Scene;
 static uint32_t title_held; /* keys held since before the title started: not a press */
 #define TITLE_STATE 0x4a  /* title scene: current state (halfword); +0x48 holds the requested one */
@@ -131,6 +135,7 @@ static Scene current(void) {
     if (vt == 0x0212535cu && rt_overlay_resident(10)) sc.kind = SCENE_WARP;  /* ov010: travel through a time gate */
     if (vt == 0x02120a68u && rt_overlay_resident(2)) sc.kind = SCENE_OVERWORLD; /* ov002: the world map */
     if (vt == 0x02148574u && rt_overlay_resident(11)) sc.kind = SCENE_RACE; /* ov011: the race against Johnny (Lab 32) */
+    if (vt == 0x02158290u && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
     return sc;
 }
 
@@ -872,6 +877,41 @@ static void compose_shop(uint32_t *main, const uint32_t *top, const uint32_t *bo
     }
 }
 
+/* The age selector: the map of the chosen age on the top screen; the selector on the bottom one, sprites over
+ * the swirl of an affine BG: the ring (64x64 + 64x32 at x 88, rows 40-135), the age's name with a line to the
+ * ring (above it, rows 7-35, or under it, rows 140-147; up to x 250), A Warp and B buttons (rows 150-172). The
+ * main screen shows a second picture of the bottom screen that the renderer draws with the sprites starting
+ * above AGES_SELECTOR_ROWS (ring, line and name) AGES_SHIFT columns left (ss_bottom_shift), the swirl and the
+ * buttons in place, and the map at half size right of the ring, the two centred together. */
+#define AGES_SHIFT 44
+#define AGES_SELECTOR_ROWS 148 /* the buttons' sprites start below */
+#define AGES_RING_X 88         /* the ring's columns on the DS: 88-145 */
+#define AGES_RING_W 58
+#define AGES_GAP 10            /* between ring and map */
+#define AGES_MAP_TO_Y 38       /* the map's top row: it ends above Middle Ages' name (rows 112-118, beside the
+                                * ring), and Present's (rows 37-42) ends left of it */
+#define AGES_MAP_X 26          /* the map's parchment on the top screen, halved to MAP_W x MAP_H */
+#define AGES_MAP_Y 26
+#define AGES_MAP_W 102
+#define AGES_MAP_H 73
+
+static uint32_t average4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+    uint32_t out = 0;
+    for (int s = 0; s < 32; s += 8) out |= (((a >> s & 0xFF) + (b >> s & 0xFF) + (c >> s & 0xFF) + (d >> s & 0xFF) + 2) / 4) << s;
+    return out;
+}
+
+static void compose_ages(uint32_t *main, const uint32_t *top, const uint32_t *shifted) {
+    memcpy(main, shifted, SCREEN_W * SCREEN_H * 4);
+    int mx = AGES_RING_X - AGES_SHIFT + AGES_RING_W + AGES_GAP, my = AGES_MAP_TO_Y;
+    for (int y = 0; y < AGES_MAP_H; y++) {
+        for (int x = 0; x < AGES_MAP_W; x++) {
+            const uint32_t *p = &top[(AGES_MAP_Y + 2 * y) * SCREEN_W + AGES_MAP_X + 2 * x];
+            main[(my + y) * SCREEN_W + mx + x] = average4(p[0], p[1], p[SCREEN_W], p[SCREEN_W + 1]);
+        }
+    }
+}
+
 /* Whether a screen is one plain colour. */
 static int blank(const uint32_t *px) {
     for (int i = 1; i < SCREEN_W * SCREEN_H; i++) {
@@ -892,12 +932,17 @@ int ss_in_field(void) { return current().kind == SCENE_FIELD; }
 int ss_in_warp(void) { return current().kind == SCENE_WARP; }
 int ss_in_overworld(void) { return current().kind == SCENE_OVERWORLD; }
 int ss_in_race(void) { return current().kind == SCENE_RACE; }
+int ss_bottom_shift(int *rows) {
+    *rows = AGES_SELECTOR_ROWS;
+    return current().kind == SCENE_AGES ? AGES_SHIFT : 0;
+}
 
 static SDL_AtomicInt menu_place;
 
 int ss_menu_place(void) { return SDL_GetAtomicInt(&menu_place); }
 
-int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, const uint32_t *wide, int wide_w) {
+int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, const uint32_t *wide, int wide_w,
+               const uint32_t *bottom_shifted) {
     Scene sc = current();
     if (sc.kind != SCENE_EQUIP) equip_portrait = -1; /* the page opens with its member's portrait */
     int paused = EGG_SINGLE_SCREEN && sc.kind == SCENE_FIELD && field_paused();
@@ -959,6 +1004,10 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
         break;
     case SCENE_BESTIARY:
         compose_bestiary(main, top, bottom);
+        break;
+    case SCENE_AGES:
+        if (bottom_shifted) compose_ages(main, top, bottom_shifted);
+        else memcpy(main, bottom, SCREEN_W * SCREEN_H * 4); /* the first frame, drawn before the scene was known */
         break;
     case SCENE_NAMING:
         memcpy(main, rt_r32(sc.obj + NAMING_STATE) == NAMING_ENTERING ? bottom : top, SCREEN_W * SCREEN_H * 4);

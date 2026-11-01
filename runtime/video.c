@@ -107,6 +107,8 @@ typedef struct Engine {
     int repeat_256; /* 256-wide text BGs repeat into the margins (the race's sky, single_screen.c) */
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
     int sliding;    /* camera smoothing: the display slides this frame (the camera moved into it) */
+    int sel_shift, sel_rows; /* single screen's age selector: a second picture with the sprites starting above
+                              * row sel_rows drawn sel_shift columns left (ss_bottom_shift, shifted_frame) */
     uint8_t follows[128]; /* by OAM slot: the sprite moves with the camera */
     uint16_t frame_bg[4][3]; /* widescreen: BGxCNT, HOFS, VOFS as the frame started, and its blending: */
     uint16_t frame_bld[2];   /* BLDCNT, BLDALPHA (see margin_bg) */
@@ -118,6 +120,8 @@ static SDL_AtomicInt wide_margin; /* requested by the display (video_set_wide_ma
 static uint32_t frame[2][VIDEO_LINE_MAX * SCREEN_H]; /* by engine, VIDEO_LINE_MAX apart */
 static uint32_t present[2][SCREEN_W * SCREEN_H];      /* top, bottom */
 static uint32_t present_wide[VIDEO_LINE_MAX * SCREEN_H], present_main[VIDEO_LINE_MAX * SCREEN_H];
+static uint32_t shifted_frame[SCREEN_W * SCREEN_H], present_shifted[SCREEN_W * SCREEN_H]; /* see Engine.sel_shift */
+static int present_shifted_on;
 static int present_main_w;
 static SDL_Mutex *present_lock;
 static uint64_t present_serial, present_time;
@@ -337,8 +341,9 @@ static inline uint16_t oam16(const Engine *e, uint32_t off) {
     return v;
 }
 
-/* skip_party: leave out the sprites that move with the camera (the scenery picture of camera smoothing). */
-static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, int skip_party) {
+/* skip_party: leave out the sprites that move with the camera (the scenery picture of camera smoothing).
+ * shift: draw the sprites starting above row e->sel_rows that many columns left (Engine.sel_shift). */
+static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, int skip_party, int shift) {
     int m = e->margin;
     for (int i = 0; i < 128; i++) {
         if (skip_party && e->follows[i]) continue;
@@ -356,6 +361,7 @@ static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, i
         if (ox >= 256) ox -= 512;
         ox += m - e->obj_origin;        /* buffer column */
         if (ox + bw <= 0) ox += 512;   /* X wraps at 512: beyond the left edge is the right one */
+        if (shift && ((a0 & 0xFF) < e->sel_rows || (a0 & 0xFF) >= SCREEN_H)) ox -= shift;
         int mode = (a0 >> 10) & 3, prio = (a2 >> 10) & 3;
         int bpp8 = a0 & 0x2000;
         uint32_t tile = a2 & 0x3FF, pal = a2 >> 12;
@@ -740,6 +746,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         int a_top = (io_get16(0x304) >> 15) & 1; /* POWCNT1 bit 15: engine A on the top screen */
         e->margin = e->id == !a_top ? SDL_GetAtomicInt(&wide_margin) : 0; /* widescreen: the top screen */
         e->party = e->sliding = 0;
+        e->sel_shift = e->id == !a_top ? 0 : ss_bottom_shift(&e->sel_rows);
         for (int bg = 0; bg < 4; bg++) {
             e->frame_bg[bg][0] = reg16(e, 0x08 + 2 * bg);
             e->frame_bg[bg][1] = reg16(e, 0x10 + 4 * bg);
@@ -788,7 +795,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
 
     {
         static uint16_t bgline[4][VIDEO_LINE_MAX];
-        static ObjLine ol, ol_all; /* ol_all: with the party, for the party layer */
+        static ObjLine ol, ol_all; /* ol_all: with the party, for the party layer (or the shifted picture) */
         memset(bgline, 0, sizeof bgline);
         memset(&ol, 0, sizeof ol);
         uint32_t mode = dispcnt & 7;
@@ -823,11 +830,15 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             e->party = 1;
         }
         int objs = (dispcnt & 0x1000) != 0;
-        if (objs || (dispcnt & 0x8000)) render_objs(e, y, dispcnt, &ol, e->party);
+        if (objs || (dispcnt & 0x8000)) render_objs(e, y, dispcnt, &ol, e->party, 0);
         if (e->obj_stretch) stretch_objs(e, &ol);
         if (e->party) {
             memset(&ol_all, 0, sizeof ol_all);
-            if (objs || (dispcnt & 0x8000)) render_objs(e, y, dispcnt, &ol_all, 0);
+            if (objs || (dispcnt & 0x8000)) render_objs(e, y, dispcnt, &ol_all, 0, 0);
+        }
+        if (e->sel_shift) {
+            memset(&ol_all, 0, sizeof ol_all);
+            if (objs || (dispcnt & 0x8000)) render_objs(e, y, dispcnt, &ol_all, 0, e->sel_shift);
         }
 
         /* [0]: the screen's columns, [1]: the margins (as the frame started for layers margin_bg keeps). */
@@ -848,12 +859,13 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         int ext = m && win_ext_on && win_lines[y] == ((uint32_t)w1h << 16 | w0h); /* the line as the table has it */
         const int16_t *ext0 = ext ? win_ext[y][0] : NULL, *ext1 = ext ? win_ext[y][1] : NULL;
 
-        /* Pass 0: the picture (without the party when it has its own layer); pass 1: the party layer, the party's
+        /* Pass 0: the picture (without the party when it has its own layer); pass 1: the shifted picture of the
+         * age selector (sel_shift), or the party layer, the party's
          * pixels where a party sprite ends up on top or blended under a translucent layer on top (the darkness
          * overlay of dark rooms, BG0 at priority 0), else transparent (scenery in front of it still covers it). */
-        for (int pass = 0; pass < (e->party ? 2 : 1); pass++) {
+        for (int pass = 0; pass < (e->party || e->sel_shift ? 2 : 1); pass++) {
         const ObjLine *o = pass ? &ol_all : &ol;
-        uint32_t *dst = pass ? &party_frame[y * VIDEO_LINE_MAX] : out;
+        uint32_t *dst = !pass ? out : e->sel_shift ? &shifted_frame[y * SCREEN_W] : &party_frame[y * VIDEO_LINE_MAX];
         const uint16_t *src[4] = {bgline[0], bgline[1], bgline[2], bgline[3]};
         for (int bg = 0; bg < 2; bg++) if (!pass && (box >> bg & 1)) src[bg] = under[bg];
         for (int x = 0; x < width; x++) { /* buffer column; windows extend their edge columns into the margins */
@@ -895,7 +907,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 else if (effect == 2) c = brighten(c, evy, 1);
                 else if (effect == 3) c = brighten(c, evy, 0);
             }
-            dst[x] = pass && !(sprite_shows && o->party[x]) && !still ? 0 : to_rgba(c);
+            dst[x] = pass && !e->sel_shift && !(sprite_shows && o->party[x]) && !still ? 0 : to_rgba(c);
         }
         }
     }
@@ -910,8 +922,8 @@ advance:
     int f = mb & 31, mmode = mb >> 14;
     if (f > 16) f = 16;
     if (f && (mmode == 1 || mmode == 2)) {
-        for (int pass = 0; pass < (e->party ? 2 : 1); pass++) {
-            uint32_t *line = pass ? &party_frame[y * VIDEO_LINE_MAX] : out;
+        for (int pass = 0; pass < (e->party || e->sel_shift ? 2 : 1); pass++) {
+            uint32_t *line = !pass ? out : e->sel_shift ? &shifted_frame[y * SCREEN_W] : &party_frame[y * VIDEO_LINE_MAX];
             for (int x = 0; x < width; x++) {
                 uint32_t p = line[x];
                 if (!p) continue; /* transparent (party layer) */
@@ -941,7 +953,9 @@ void video_end_frame(void) {
         memcpy(&present[1][y * SCREEN_W], &fb[y * VIDEO_LINE_MAX], SCREEN_W * 4);
         memcpy(&present_wide[y * w], &ft[y * VIDEO_LINE_MAX], (size_t)w * 4);
     }
-    present_main_w = ss_compose(present_main, present[0], present[1], present_wide, w);
+    present_shifted_on = engines[a_top ? 1 : 0].sel_shift != 0;
+    if (present_shifted_on) memcpy(present_shifted, shifted_frame, sizeof present_shifted);
+    present_main_w = ss_compose(present_main, present[0], present[1], present_wide, w, present_shifted_on ? present_shifted : NULL);
     present_party_on = engines[a_top ? 0 : 1].party && present_main_w == w; /* the field: main is the wide picture */
     for (int y = 0; present_party_on && y < SCREEN_H; y++) {
         memcpy(&present_party[y * w], &party_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);

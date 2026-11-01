@@ -238,6 +238,16 @@ original bytes, and caches the result per region until the region is written.
     the tabs and, in place of the help bar, a 3 x 3 grid of text lines (the party first): each member's name and
     only the stat the item changes (defense when only defense values are coloured, else attack), old -> new.
     The shop's Equip opens the field menu's Equipment page.
+  - Age selector (time travel; ov012, vtable 0x02158290): the chosen age's map on the top screen; on the bottom
+    one the ring of ages, the age's name with a line to it, A Warp and B, all sprites over a swirl (affine BG3
+    with wraparound). The main screen centres the ring and a half-size map (box-filtered) side by side: in this
+    scene the renderer composes the bottom engine's lines a second time, with the sprites that start above row
+    148 (ring, line and name; the buttons start below) drawn 44 columns left (`ss_bottom_shift`), the swirl
+    and buttons in place, and the main screen is that picture with the map put over it. The DS bottom screen of
+    the other layouts stays as it is. The name sits above the ring, beside it (Present rows 37-42, Middle Ages
+    rows 112-118) or under it (rows 131-147), so the map takes rows 38-110, 10 columns right of the ring.
+    (Shifting whole rows instead, from a bottom screen drawn with margins, needed a shear between the moved
+    rows and the buttons, and the names under the ring fall in it.)
   - Classic battles by default, below.
 - **Classic mode default** (single screen mode): the game's own "Game Mode: DS / Classic" option (New Game
   settings scene, ov007) defaults to Classic. `func_ov007_0212a3f0`, which resets the options when the scene opens and on
