@@ -14,6 +14,7 @@ uint32_t ss_game_keys(uint32_t keys); /* keys as the game reads them */
 int ss_in_field(void);                /* the field (towns, maps) is running: widescreen applies */
 int ss_in_warp(void);                 /* the warp through a time gate is running (widescreen, stretched sprites) */
 int ss_in_overworld(void);            /* the world map is running (widescreen) */
+int ss_in_race(void);                 /* the race against Johnny is running (widescreen, sky layers repeated) */
 /* Any thread: whether the System Settings menu (system_menu.c) may open now, and from where: the game's
  * Game Settings screen, the field paused, or the title screen's menu (New Game...). */
 enum { SS_MENU_NONE, SS_MENU_GAME_SETTINGS, SS_MENU_PAUSE, SS_MENU_TITLE };

@@ -104,6 +104,7 @@ typedef struct Engine {
     int margin;     /* columns drawn beyond each side of the screen (widescreen), fixed for a frame */
     int obj_origin; /* sprite X counts from this many columns left of the screen (widescreen.c) */
     int obj_stretch; /* the sprites' screen columns are stretched across the margins (the warp, single_screen.c) */
+    int repeat_256; /* 256-wide text BGs repeat into the margins (the race's sky, single_screen.c) */
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
     int sliding;    /* camera smoothing: the display slides this frame (the camera moved into it) */
     uint8_t follows[128]; /* by OAM slot: the sprite moves with the camera */
@@ -188,7 +189,8 @@ void video_reset(void) {
 /* Widescreen: a map one screen wide would only repeat itself in the margins. The field's text box is one: for
  * its lines the game switches BG0/BG1 from the field's 512-wide layers to 256-wide box maps. Such a map is drawn
  * in the screen's columns alone, and the margins keep the layer as the frame started (its map, scroll, priority
- * and blending), so the room goes on beside the box. */
+ * and blending), so the room goes on beside the box. In the race (repeat_256) the sky, mountains and skyline are
+ * 256-wide maps that tile seamlessly, so they repeat into the margins as they would on a wider screen. */
 static int margin_bg(const Engine *e, int bg) {
     return e->margin && !(reg16(e, 0x08 + 2 * bg) & 0x4000) && (e->frame_bg[bg][0] & 0x4000);
 }
@@ -247,7 +249,7 @@ static int picture_256(const Engine *e, int bg, uint32_t dispcnt) {
 static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *out) {
     int m = e->margin;
     uint16_t cnt = reg16(e, 0x08 + 2 * bg), hofs = reg16(e, 0x10 + 4 * bg), vofs = reg16(e, 0x12 + 4 * bg);
-    if (!m || (cnt & 0x4000)) {
+    if (!m || (cnt & 0x4000) || e->repeat_256) {
         bg_text_cols(e, bg, y, dispcnt, cnt, hofs, vofs, -m, SCREEN_W + m, out);
         if (m && (e->mirror_bg >> bg & 1) && !(hofs & 0x1FF)) {
             for (int k = 0; k < m; k++) out[m - 1 - k] = out[m + k], out[m + SCREEN_W + k] = out[m + SCREEN_W - 1 - k];
@@ -752,6 +754,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             for (int bg = 0; bg < 4 && win_ext_on; bg++) e->mirror_bg |= (uint8_t)(picture_256(e, bg, dispcnt) << bg);
             e->obj_origin = ws_sprite_origin(); /* sprites placed from the left margin (widened view) */
             e->obj_stretch = e->margin && ss_in_warp();
+            e->repeat_256 = e->margin && ss_in_race();
             int cx = 0, cy = 0, known = ws_camera(&cx, &cy); /* camera motion into this frame (camera smoothing) */
             frame_dx = frame_dy = 0;
             if (known && camera_known) {

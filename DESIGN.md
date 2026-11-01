@@ -92,7 +92,8 @@ original bytes, and caches the result per region until the region is written.
   edges the game sets line by line through its software HDMA, such as the rays of Lightning II, carried on along
   their slope, or drawn from the two straight edges fitted to the window where it is a ray shape; their bolts, a
   256-wide SNES picture, reflected at the screen sides) across them. Single screen mode uses the wide picture in
-  the field only (current scene: ov000 vtable 0x02115558); other scenes stay 4:3, centred.
+  the field (current scene: ov000 vtable 0x02115558), the warp (ov010), the world map (ov002) and the race (ov011);
+  other scenes stay 4:3, centred.
   - The field keeps each BG in a 512x256 map used as a ring and only keeps the 34 columns around the 4:3 view
     current (scroll handler ov004 0x0213bcb0: per layer, generator 0x02137144 / 0x02137734 / 0x02137c4c into a
     staging buffer, uploaded into the ring at origin-1 / origin+32 by ov004 0x02137e2c and main 0x02046754).
@@ -139,6 +140,12 @@ original bytes, and caches the result per region until the region is written.
     0x0818, BG1CNT 0x0914, VOFS 384), which would repeat in the margins; the renderer draws a 256-wide text BG
     in the screen columns only. In the margins of those lines it keeps the layer as the frame started (BGxCNT,
     scroll, priority and BLDCNT/BLDALPHA from line 0, `margin_bg`), so the room goes on beside the box.
+  - Race against Johnny (Lab 32, ov011, scene vtable 0x02148574): mode 1, the road an affine BG3 (1024x1024,
+    wraparound) shown below line 57 through WIN0/WIN1 (left and right halves), so its margins are drawn as they
+    are. Above it, outside the windows, BG0 (skyline), BG1 (sky) and BG2 (mountains) are 256-wide text maps that
+    tile seamlessly; in the race they repeat into the margins (`repeat_256`) instead of staying empty. Sprites
+    (bikes, HUD) keep their 4:3 place, centred: logged OAM showed the game keeps Crono's bike at X >= 5 and
+    Johnny well inside the screen, so no cull needed widening.
   - Not handled: rooms smaller than the wide view show what lies beside them in the map (other rooms of the same
     building, or void); the room's camera bounds were not found yet (the limits 0x02143fb0 the object cull clamps
     to hold the whole map, 0-255), so the margins are not masked. The game draws no 3D: the SDK sends a few housekeeping GX commands per frame but no geometry,
