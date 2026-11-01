@@ -22,6 +22,9 @@ void video_end_frame(void);       /* start of VBlank: publish the finished frame
 
 /* Columns to draw beyond each side of the top screen from the next frame on (0 = none; any thread). */
 void video_set_wide_margin(int margin);
+/* Widescreen: in the field, the margins show the room's map repeated beyond a room narrower than the view
+ * (1), or black (0, the default; any thread). */
+void video_set_fill_sides(int on);
 /* Latest finished frame (ABGR8888): top screen, bottom screen (256x192 each), and the main screen of single
  * screen mode (single_screen.c; the top screen when that is off), 192 rows of the returned width (up to
  * VIDEO_LINE_MAX). Copies under a lock. */

@@ -7,6 +7,9 @@
 void ws_fill_margins(int margin);
 /* Columns the game's sprite coordinates are shifted by (the widened view's left margin; 0 normally). */
 int ws_sprite_origin(void);
+/* In the field: the top screen's columns the room covers, x0..x1-1 (beyond them, other rooms or its map
+ * repeated); 0 elsewhere. */
+int ws_room_span(int *x0, int *x1);
 /* The field camera's position in the room (pixels); 0 outside the field. */
 int ws_camera(int *x, int *y);
 /* The window positions of each line of the coming frame (WIN0H | WIN1H << 16), when the game's software HDMA

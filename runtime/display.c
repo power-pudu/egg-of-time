@@ -65,6 +65,8 @@ static const char *const fps_labels[] = {"30", "60", "90", "120", "144", "Unlimi
 static const int fps_values[] = {30, 60, 90, 120, 144, 0};
 static const char *const onoff_names[] = {"off", "on"};
 static const char *const onoff_labels[] = {"Off", "On"};
+static const char *const yesno_names[] = {"no", "yes"};
+static const char *const yesno_labels[] = {"No", "Yes"};
 static const char *const filter_names[] = {"pixel", "sharp", "smooth", "lcd"};
 static const char *const filter_labels[] = {"Off (Pixel)", "Sharp", "Smooth", "LCD (DS)"};
 static const char *const color_names[] = {"ds", "light", "moderate", "strong"};
@@ -77,6 +79,8 @@ static Setting settings[SET_COUNT] = {
     [SET_WINDOW] = {"window", "Window mode", 3, WINDOW_BORDERLESS, window_names, window_labels},
     [SET_RESOLUTION] = {"resolution", "Internal resolution", RES_MAX + 1, 0, res_names, NULL},
     [SET_ASPECT] = {"aspect", "Aspect ratio", 5, ASPECT_16_9, aspect_names, aspect_labels},
+    /* Widescreen in rooms narrower than the view: No leaves the room as it is, black beside it (video.c). */
+    [SET_FILL] = {"fillsides", "Fill screen sides", 2, 0, yesno_names, yesno_labels},
     [SET_FRAMERATE] = {"framerate", "Framerate", 6, 1, fps_names, fps_labels},
     [SET_VSYNC] = {"vsync", "V-Sync", 2, 1, onoff_names, onoff_labels},
     [SET_FILTER] = {"filter", "Graphics filter", 4, FILTER_SHARP, filter_names, filter_labels},
@@ -432,6 +436,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, int 
     asked_guard = camera_smoothing() && EGG_SINGLE_SCREEN && main_shown() ? VIDEO_SLIDE_MAX : 0;
     asked_margin = SDL_min(wide_margin() + asked_guard, VIDEO_MARGIN_MAX);
     video_set_wide_margin(asked_margin);
+    video_set_fill_sides(SETTING(SET_FILL));
     video_set_camera_smoothing(asked_guard != 0);
     main_w = width;
     party_on = main_guard && party;
@@ -482,6 +487,7 @@ int display_key(SDL_Scancode sc) {
 const char *display_setting_title(int id) { return settings[id].title; }
 int display_setting_count(int id) { return settings[id].count; }
 int display_setting_get(int id) { return settings[id].value; }
+int display_setting_shown(int id) { return id != SET_FILL || SETTING(SET_ASPECT) != ASPECT_ORIGINAL; }
 
 const char *display_setting_label(int id, int v) {
     if (id != SET_RESOLUTION) return settings[id].labels[v];

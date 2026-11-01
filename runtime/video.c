@@ -105,6 +105,7 @@ typedef struct Engine {
     int obj_origin; /* sprite X counts from this many columns left of the screen (widescreen.c) */
     int obj_stretch; /* the sprites' screen columns are stretched across the margins (the warp, single_screen.c) */
     int repeat_256; /* 256-wide text BGs repeat into the margins (the race's sky, single_screen.c) */
+    int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
     int sliding;    /* camera smoothing: the display slides this frame (the camera moved into it) */
     int sel_shift, sel_rows; /* single screen's age selector: a second picture with the sprites starting above
@@ -129,6 +130,7 @@ static int present_dx, present_dy;  /* camera motion into the published frame */
 static int camera_known, camera_x, camera_y; /* the field camera at the last frame */
 static int frame_dx, frame_dy;      /* camera motion into the frame being drawn */
 static SDL_AtomicInt party_wanted;  /* camera smoothing is on (video_set_camera_smoothing) */
+static SDL_AtomicInt fill_sides; /* video_set_fill_sides */
 static uint8_t prev_oam[0x400];     /* the top screen's sprites in the previous frame */
 static uint32_t party_frame[VIDEO_LINE_MAX * SCREEN_H]; /* party layer of the top screen (alpha 0: none) */
 static uint32_t present_party[VIDEO_LINE_MAX * SCREEN_H];
@@ -762,6 +764,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             e->obj_origin = ws_sprite_origin(); /* sprites placed from the left margin (widened view) */
             e->obj_stretch = e->margin && ss_in_warp();
             e->repeat_256 = e->margin && ss_in_race();
+            e->room_clip = e->margin && !SDL_GetAtomicInt(&fill_sides) && ws_room_span(&e->room_x0, &e->room_x1);
             int cx = 0, cy = 0, known = ws_camera(&cx, &cy); /* camera motion into this frame (camera smoothing) */
             frame_dx = frame_dy = 0;
             if (known && camera_known) {
@@ -908,6 +911,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 else if (effect == 3) c = brighten(c, evy, 0);
             }
             dst[x] = pass && !e->sel_shift && !(sprite_shows && o->party[x]) && !still ? 0 : to_rgba(c);
+            if (e->room_clip && (x - m < e->room_x0 || x - m >= e->room_x1)) dst[x] = pass ? 0 : 0xFF000000u;
         }
         }
     }
@@ -939,6 +943,8 @@ advance:
 void video_render_line(int line) {
     for (int i = 0; i < 2; i++) render_engine_line(&engines[i], line, &frame[i][line * VIDEO_LINE_MAX]);
 }
+
+void video_set_fill_sides(int on) { SDL_SetAtomicInt(&fill_sides, on); }
 
 void video_set_wide_margin(int margin) { SDL_SetAtomicInt(&wide_margin, SDL_clamp(margin, 0, VIDEO_MARGIN_MAX)); }
 

@@ -24,10 +24,11 @@ void display_capture(const char *path);
 
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
  * Setting one applies it at once and saves eggoftime.ini. */
-enum { SET_WINDOW, SET_RESOLUTION, SET_ASPECT, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_COLOR, SET_MODS, SET_COUNT };
+enum { SET_WINDOW, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_COLOR, SET_MODS, SET_COUNT };
 const char *display_setting_title(int id);
 int display_setting_count(int id);
 int display_setting_get(int id);
+int display_setting_shown(int id); /* the menu lists it (Fill screen sides: only with a wide aspect ratio) */
 const char *display_setting_label(int id, int value); /* may use a buffer shared by every call */
 void display_setting_set(int id, int value);
 /* Window frame interval for the chosen framerate, in nanoseconds; 0 for unlimited. */

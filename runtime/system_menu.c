@@ -3,7 +3,8 @@
  * single screen mode relabels "System settings"), the title screen's menu or while the field is paused; B or
  * SELECT closes it, and so does the game leaving that place (the title idling into the intro, say). Closed
  * from the pause, it also presses START for the game, which ends the pause. Up/Down pick a setting,
- * Left/Right change it (held: repeats); changes apply at once.
+ * Left/Right change it (held: repeats); changes apply at once. Up to ROWS_SHOWN rows fit; beyond them the list
+ * scrolls with the cursor, and arrows in the header show which way more rows lie.
  *
  * The look follows the game's Game Settings screen, drawn by the runtime so it is the same wherever the menu
  * opens: a striped dark backdrop, light bevelled bars (header, footer), dark bevelled buttons, the
@@ -25,6 +26,7 @@ static const char *const descriptions[SET_COUNT] = {
     [SET_WINDOW] = "How the game window is shown.",
     [SET_RESOLUTION] = "Size the screens are drawn at.",
     [SET_ASPECT] = "Wider shows more of the world.",
+    [SET_FILL] = "Repeat small rooms' tiles beside them.",
     [SET_FRAMERATE] = "Frames shown per second. Game: 60.",
     [SET_VSYNC] = "Waits for the display: no tearing.",
     [SET_FILTER] = "How the pixels are scaled up.",
@@ -33,6 +35,7 @@ static const char *const descriptions[SET_COUNT] = {
 };
 
 static int place, cursor; /* place: where it was opened (SS_MENU_*), SS_MENU_NONE when closed */
+static int top;           /* the first row shown (rows: the shown settings, in order) */
 static uint32_t prev_keys, blocked; /* blocked: held since the menu closed, kept from the game until released */
 static Uint64 repeat_at, resume_until;
 
@@ -42,7 +45,7 @@ uint32_t sysmenu_input(uint32_t keys) {
     prev_keys = keys;
     if (place == SS_MENU_NONE) {
         if ((pressed & KEY_SELECT) && (place = ss_menu_place()) != SS_MENU_NONE) {
-            cursor = 0;
+            cursor = top = 0;
             return 0;
         }
         blocked &= keys;
@@ -62,8 +65,8 @@ uint32_t sysmenu_input(uint32_t keys) {
         blocked = keys;
         return 0;
     }
-    if (act & KEY_UP) cursor = (cursor + SET_COUNT - 1) % SET_COUNT;
-    if (act & KEY_DOWN) cursor = (cursor + 1) % SET_COUNT;
+    if (act & KEY_UP) do cursor = (cursor + SET_COUNT - 1) % SET_COUNT; while (!display_setting_shown(cursor));
+    if (act & KEY_DOWN) do cursor = (cursor + 1) % SET_COUNT; while (!display_setting_shown(cursor));
     if (act & (KEY_LEFT | KEY_RIGHT)) {
         int n = display_setting_count(cursor);
         display_setting_set(cursor, (display_setting_get(cursor) + ((act & KEY_RIGHT) ? 1 : n - 1)) % n);
@@ -146,6 +149,16 @@ static void b_sign(uint32_t *s, int cx, int cy) {
 #define ROW_Y 27
 #define ROW_PITCH 17
 #define ROW_H 16
+#define ROWS_SHOWN 8 /* between the header and the footer */
+
+/* A small arrow in the header's right end: up (dir -1) or down (+1), lit when more rows lie that way. */
+static void scroll_arrow(uint32_t *s, int dir, int lit) {
+    int cy = dir < 0 ? 7 : 16;
+    for (int k = 0; k < 4; k++) {
+        int y = cy + (dir < 0 ? k - 2 : 2 - k);
+        for (int x = 241 - k; x <= 241 + k; x++) s[y * SCREEN_W + x] = lit ? WHITE : rgb(90, 99, 107);
+    }
+}
 
 void sysmenu_draw(uint32_t *s) {
     for (int y = 0; y < SCREEN_H; y++) { /* backdrop: the game's brushed dark stripes */
@@ -155,18 +168,25 @@ void sysmenu_draw(uint32_t *s) {
     const char *title = "System Settings";
     ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
 
+    int rows[SET_COUNT], n = 0, at = 0;
     for (int i = 0; i < SET_COUNT; i++) {
-        int y = ROW_Y + i * ROW_PITCH, sel = i == cursor;
+        if (display_setting_shown(i)) at = i == cursor ? n : at, rows[n++] = i;
+    }
+    top = SDL_clamp(top, at - ROWS_SHOWN + 1, at); /* keep the cursor's row in view */
+    top = SDL_clamp(top, 0, SDL_max(n - ROWS_SHOWN, 0));
+    if (n > ROWS_SHOWN) scroll_arrow(s, -1, top > 0), scroll_arrow(s, 1, top + ROWS_SHOWN < n);
+    for (int r = top; r < n && r < top + ROWS_SHOWN; r++) {
+        int i = rows[r], y = ROW_Y + (r - top) * ROW_PITCH, ty = y + 4, sel = i == cursor;
         Rect lr = {6, y, 112, ROW_H}, vr = {122, y, 128, ROW_H};
         panel(s, lr, sel ? &BUTTON_LIT : &BUTTON);
         panel(s, vr, &BUTTON);
         if (sel) frame(s, vr, TEAL);
-        ui_draw_text(s, display_setting_title(i), lr.x + 6, y + 4, sel ? WHITE : GREY);
+        ui_draw_text(s, display_setting_title(i), lr.x + 6, ty, sel ? WHITE : GREY);
         const char *v = display_setting_label(i, display_setting_get(i));
-        ui_draw_text(s, v, vr.x + (vr.w - ui_text_width(v)) / 2, y + 4, sel ? YELLOW : WHITE);
+        ui_draw_text(s, v, vr.x + (vr.w - ui_text_width(v)) / 2, ty, sel ? YELLOW : WHITE);
         if (sel) {
-            ui_draw_text(s, "<", vr.x + 5, y + 4, WHITE);
-            ui_draw_text(s, ">", vr.x + vr.w - 8, y + 4, WHITE);
+            ui_draw_text(s, "<", vr.x + 5, ty, WHITE);
+            ui_draw_text(s, ">", vr.x + vr.w - 8, ty, WHITE);
         }
     }
 

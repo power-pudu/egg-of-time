@@ -134,6 +134,21 @@ int ws_camera(int *x, int *y) {
     return 1;
 }
 
+int ws_room_span(int *x0, int *x1) {
+    if (!ss_in_field()) return 0;
+    uint32_t scroll = rt_r32(SCROLL);
+    if (!ram_ptr(scroll)) return 0;
+    /* The room's bounds in the map, metatiles (16 px), inclusive: left +0x16, right +0x17 (top +0x18, bottom
+     * +0x19); the camera stays within them. The map can hold more than the room (neighbouring rooms beside a
+     * house's), and wraps at its masks. */
+    int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17);
+    if (right < left) return 0;
+    int view = rt_r16(scroll + 4) * 8 + (io_get16(0x10) & 7); /* the view's left in the map (BG0's fine scroll, as below) */
+    *x0 = left * 16 - view;
+    *x1 = (right + 1) * 16 - view;
+    return 1;
+}
+
 int ws_sprite_origin(void) { /* the view as widened here, recognised by its shape (also after a state load) */
     int32_t x = (int32_t)rt_r32(G2D_VIEW);
     return x < 0 && x >= -VIDEO_MARGIN_MAX * 4096 && rt_r32(G2D_VIEW + 8) == FX(SCREEN_W) - 2 * (uint32_t)x ? -x / 4096 : 0;

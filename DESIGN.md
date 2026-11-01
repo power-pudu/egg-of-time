@@ -103,6 +103,11 @@ original bytes, and caches the result per region until the region is written.
     +4, row +8, map masks +0x1a, ring origins +0x8e); layer 2 goes to BG0 (palette through the table at
     0x02058714), layers 0 and 1 to BG2 and BG3, their priority tiles to BG1. That model reproduces every cell the
     game itself drew in the Millennial Fair. A layer is filled only while its BG scroll agrees with its ring origin.
+  - Rooms narrower than the view: the margins show what the map holds beside the room, its tiles repeated (the
+    map wraps at its masks) or neighbouring rooms (a house's map holds several). Fill screen sides (System
+    Settings, shown with a wide aspect ratio): Yes keeps that; No (the default) draws black beyond the room
+    (`ws_room_span`: the room's bounds in metatiles at `*(0x020708e0)` + 0x16 left, + 0x17 right, inclusive, the
+    ones the camera stays within), so the room shows as the original.
   - Characters: two culls kept them inside the 4:3 view. (1) The field object loop (ov004 0x02130a10) draws an
     object only while ov004 0x02130dbc finds its tile within the camera columns `*(0x020708e0)+4 - 4 ..
     +6 + 4` (and rows); those fields are the camera's own, used by map streaming too, so the wrapper

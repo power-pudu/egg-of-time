@@ -102,6 +102,8 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 
 - **Widescreen**: 16:9 by default, also 5:3, 21:9 or the window's own shape. You see more of the world while
   exploring and in battle, with nothing stretched. Menus and text boxes stay in the centred 4:3 area.
+  Rooms narrower than the screen show black at their sides, as in the original; System Settings > Fill screen
+  sides fills them with the room's tiles instead.
 - **Resolution**: 1x (256×192) up to 11x (2816×2112), or Auto.
 - **Framerate**: 30 to 144 fps or unlimited. Above 60 fps, scrolling is smoothed: the camera glides between the
   game's frames. The game itself still runs at 60, so timing, animation, sound and input are unchanged.
