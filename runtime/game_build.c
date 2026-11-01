@@ -29,6 +29,7 @@
 #include "display.h"
 #include "game_build.h"
 #include "rt.h"
+#include "translation.h"
 #include "ui_font.h"
 #include "video.h"
 
@@ -401,7 +402,7 @@ fail:
 }
 
 /* Builds the game library with a progress screen; 1 when built, 0 if it failed (told) or the player quit. */
-static int build(const char *log_path) {
+static int build(const char *log_path, const char *rom_path) {
     memset(&b, 0, sizeof b);
     if (!find_tools()) return 0;
     b.lock = SDL_CreateMutex();
@@ -410,7 +411,7 @@ static int build(const char *log_path) {
     SDL_CreateDirectory(game_dir);
     b.log = SDL_IOFromFile(log_path, "w");
     Uint64 start = SDL_GetTicks();
-    snprintf(b.rom, sizeof b.rom, "%s", rt_rom.path);
+    snprintf(b.rom, sizeof b.rom, "%s", rom_path);
     SDL_Thread *t = SDL_CreateThread(build_thread, "build", NULL);
     int quit = 0;
     while (!SDL_GetAtomicInt(&b.done)) {
@@ -471,8 +472,25 @@ int game_build_prepare(const char *rom_arg) {
         return 0;
     }
     if (kit_id) {
+        /* Translation mods patch the verified ROM in memory; rom/CT.nds stays the unmodified dump. */
+        char err[700];
+        int translated = translation_apply(base, err, sizeof err);
+        if (translated < 0) {
+            SDL_free(kit_id);
+            char msg[1600];
+            snprintf(msg, sizeof msg, "A translation patch in mods/translation could not be applied.\n\n%s", err);
+            fprintf(stderr, "%s\n", msg);
+            rt_log("translation: %s", err);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Egg of Time", msg, NULL);
+            return 0;
+        }
+        char patched_sha[41];
+        if (translated) sha1_hex(rt_rom.data, rt_rom.size, patched_sha);
         char want[256];
-        snprintf(want, sizeof want, "%.*s\n%s\n", (int)strcspn(kit_id,"\r\n"), kit_id, rom_sha);
+        if (translated && strcmp(patched_sha, rom_sha) != 0)
+            snprintf(want, sizeof want, "%.*s\n%s\n%s\n", (int)strcspn(kit_id, "\r\n"), kit_id, rom_sha, patched_sha);
+        else
+            snprintf(want, sizeof want, "%.*s\n%s\n", (int)strcspn(kit_id, "\r\n"), kit_id, rom_sha);
         SDL_free(kit_id);
         char *have = SDL_LoadFile(id_path, NULL);
         SDL_PathInfo info;
@@ -480,7 +498,26 @@ int game_build_prepare(const char *rom_arg) {
         SDL_free(have);
         if (!current) {
             SDL_RemovePath(id_path);
-            if (!build(log_path)) return 0;
+            /* dsd reads the ROM from a file: write the patched copy next to the build and delete it afterwards. */
+            char patched_file[1024] = "";
+            const char *rom_file = rt_rom.path;
+            if (translated) {
+                char game_dir[1024];
+                path(game_dir, sizeof game_dir, "game");
+                SDL_CreateDirectory(game_dir);
+                path(patched_file, sizeof patched_file, "game/translation.nds");
+                if (!SDL_SaveFile(patched_file, rt_rom.data, rt_rom.size)) {
+                    char msg[1400];
+                    snprintf(msg, sizeof msg, "Cannot write %s: %s", patched_file, SDL_GetError());
+                    fprintf(stderr, "%s\n", msg);
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Egg of Time", msg, NULL);
+                    return 0;
+                }
+                rom_file = patched_file;
+            }
+            int built = build(log_path, rom_file);
+            if (patched_file[0]) SDL_RemovePath(patched_file);
+            if (!built) return 0;
             SDL_SaveFile(id_path, want, strlen(want));
         }
     }

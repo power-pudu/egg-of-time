@@ -36,7 +36,9 @@ jobs:
           curl -sSLfo python-embed.zip https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
           curl -sSLfo dsd.exe https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-windows-x86_64.exe
           curl -sSLfo dsd-LICENSE.txt https://raw.githubusercontent.com/AetiasHax/ds-decomp/v0.12.1/LICENSE
-          for z in llvm sdl ffmpeg; do python -m zipfile -e $z.zip .; done
+          curl -sSLfo xdelta3.zip https://github.com/jmacd/xdelta/releases/download/v3.2.2/xdelta3-3.2.2-windows-x86_64.zip
+          curl -sSLfo xdelta3-LICENSE.txt https://raw.githubusercontent.com/jmacd/xdelta/v3.2.2/xdelta3/LICENSE
+          for z in llvm sdl ffmpeg xdelta3; do python -m zipfile -e $z.zip .; done
           pip install ninja
 
       - name: Build the runtime
@@ -52,6 +54,7 @@ jobs:
         run: |
           python -I scripts/package.py --build build --llvm deps/$LLVM --python-embed deps/python-embed.zip \
             --dsd deps/dsd.exe --dsd-license deps/dsd-LICENSE.txt --sdl deps/$SDL --ffmpeg deps/$FFMPEG \
+            --xdelta deps/xdelta3-3.2.2-windows-x86_64/xdelta3.exe --xdelta-license deps/xdelta3-LICENSE.txt \
             --out "dist/Egg of Time" --zip "dist/EggOfTime-${GITHUB_REF_NAME}-windows-x64.zip"
 
       - name: Upload the package
@@ -75,7 +78,10 @@ jobs:
           curl -sSLfo ffmpeg.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FFMPEG_LINUX.tar.xz
           curl -sSLfo dsd https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-linux-x86_64
           curl -sSLfo dsd-LICENSE.txt https://raw.githubusercontent.com/AetiasHax/ds-decomp/v0.12.1/LICENSE
+          curl -sSLfo xdelta3.tar.gz https://github.com/jmacd/xdelta/releases/download/v3.2.2/xdelta3-3.2.2-linux-x86_64.tar.gz
+          curl -sSLfo xdelta3-LICENSE.txt https://raw.githubusercontent.com/jmacd/xdelta/v3.2.2/xdelta3/LICENSE
           tar xf ffmpeg.tar.xz
+          tar xf xdelta3.tar.gz
 
       - name: Build the runtime
         run: |
@@ -84,7 +90,7 @@ jobs:
 
       - name: Package
         run: |
-          python3 -I scripts/package.py --build build --dsd deps/dsd --dsd-license deps/dsd-LICENSE.txt             --sdl deps/fetch/sdl3-src --ffmpeg deps/$FFMPEG_LINUX             --out "dist/Egg of Time" --tar "dist/EggOfTime-${GITHUB_REF_NAME}-linux-x64.tar.gz"
+          python3 -I scripts/package.py --build build --dsd deps/dsd --dsd-license deps/dsd-LICENSE.txt             --sdl deps/fetch/sdl3-src --ffmpeg deps/$FFMPEG_LINUX             --xdelta deps/xdelta3-3.2.2-linux-x86_64/xdelta3 --xdelta-license deps/xdelta3-LICENSE.txt             --out "dist/Egg of Time" --tar "dist/EggOfTime-${GITHUB_REF_NAME}-linux-x64.tar.gz"
 
       - name: Upload the package
         uses: actions/upload-artifact@v4

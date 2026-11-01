@@ -277,6 +277,37 @@ original bytes, and caches the result per region until the region is written.
   `res/mods/music/readme.txt` come from the Music Box: titles in `/msg/big/bgm.msg` (one byte per character in
   the game's font order; English is every 4th entry from 1, French follows each) and the BGM numbers in the u32
   table at main 0x020558d4 (also in ov009); 28 of the 97 are not in the Music Box.
+- **Translation mods** (`runtime/translation.c`, `runtime/rompatch.c`): every `.ips`, `.bps`, `.xdelta`,
+  `.vcdiff`, `.xdelta3` or `.delta` file in `mods/translation/` patches the verified ROM before it is extracted, in
+  file-name order (a split translation, or a base patch and a fix). IPS and BPS are decoded here; BPS checks its
+  source, result and own CRC-32, so a patch made for another ROM is refused. VCDIFF goes through xdelta3 (Apache
+  2.0, in `kit/xdelta3/`; a kit assembled without it uses one from `PATH`) because modern encoders often
+  LZMA-compress their sections. xdelta 1 patches (`%XDZ004%`, usually `.delta`; xdelta3 cannot read them) go
+  through `kit/recomp/xdelta1.py`, run by the build's Python, which checks the source and result MD5s the patch
+  holds. When xdelta3 refuses a patch (or is missing), `kit/recomp/vcdiff.py` tries it: a pure-Python VCDIFF
+  decoder (default code table, no secondary compression) that applies it to the dump, then to the dump rebuilt the
+  way ndstool 1.x's `-x` then `-c` lays it out, which many patchers do before applying their patch: header's
+  0x200 bytes, zeros to 0x4000, ARM9, overlay table (4-aligned), ARM7 and banner (0x200-aligned), a rebuilt FNT
+  (names in Windows' upper-cased order, dir IDs depth-first, files then subfolders), FAT, then the files 4-aligned
+  and zero-padded in the new ID order, the end 4-aligned. A dump with a decrypted secure area cannot rebuild an
+  encrypted one, so a checksum failure in the window(s) starting below 0x8000 is accepted only in that case (those
+  bytes are copied as they are). Only release builds apply patches. `rt_rom.data` holds the patched ROM while `rt_rom.path` and
+  `save_path` stay on `rom/CT.nds`, so saves keep their place and the dump is never changed. `game/build.id` gains
+  the patched SHA-1 as a third line, so changing patches rebuilds; dsd reads `game/translation.nds` for that build
+  and it is deleted afterwards. After a native patch, an xdelta or xdelta 1 one writes the current ROM to
+  `game/.translation-source.nds` and decodes to `game/.translation-target.nds`.
+  A `.nds` next to the patches is the version they were made for (Chrono Trigger (Japan) or (Europe)): they are
+  applied to it, and `kit/recomp/retarget.py` carries what they changed over to the USA ROM, by path (a repacked
+  ROM numbers its files differently). Code cannot cross versions, so a change to ARM9 code that differs between
+  them is refused; a changed overlay or program identical in both (the European overlays are the USA ones and hold
+  some text) is carried like a file. ARM7 changes are dropped: the ARM7 is emulated. A changed
+  file whose original is the same in both versions is copied. Text (`msg/<font>/*.msg`: languages (u8), entries
+  (u16), then a u32 offset per entry and language; characters are glyph numbers of that folder's `msgcmn.fnt`,
+  UTF-8-style, and control codes follow the font's last glyph at fixed distances) moves string by string into the
+  same entry and slot (Japan's English slot 1 is the USA's English slot 1); characters map by identical glyph
+  records, controls by their distance from the glyph count. Glyphs the USA font lacks (Portuguese ã, õ, ...) are
+  drawn over glyphs no USA text uses, so the glyph count and the control codes stay put. Changed files go past the
+  last file in the ROM, the FAT points at them; the header and code are untouched.
 - **Save states** (F5 save, F7 load; one slot: `<rom>.state` next to the ROM; `EGG_LOAD_STATE=<file>` starts
   from a state): `runtime/state.c`. A state holds emulated state only (memory, device state, and per game thread its
   ARM registers and the address it continues at), so it stays loadable after rebuilding, as long as the tagged
@@ -327,11 +358,13 @@ original bytes, and caches the result per region until the region is written.
   without the comments), one `kit/llvm/bin/clang.exe` per core over the generated files (the developer build's
   flags without `-g`) and the link against `kit/lib/libeggoftime.a`, showing progress in the window, the tools'
   output in `game/build.log`. `game/build.id` holds `kit/kit.id` (a hash of the recompiler, config and
-  interface headers, written by the package script) and the ROM's SHA-1: a release with other ones builds
-  again, one with the same ones starts at once. The temporary `game/build/` (extract, C, objects) is deleted.
+  interface headers, written by the package script) and the ROM's SHA-1 (and the patched ROM's, when a
+  translation patch applies): a release with other ones builds again, one with the same ones starts at once. The
+  temporary `game/build/` (extract, C, objects) is deleted.
   `scripts/package.py` assembles the release: the runtime build, the recompiler and `config/`, dsd, embeddable
-  CPython 3.11, and the part of llvm-mingw the build needs (found by asking clang for the headers and lld for
-  the libraries it reads: 50 files), third-party licenses; it refuses generated code, extracts, ROMs and saves.
+  CPython 3.11, xdelta3 (for translation mods), and the part of llvm-mingw the build needs (found by asking clang
+  for the headers and lld for the libraries it reads: 50 files), third-party licenses; it refuses generated code,
+  extracts, ROMs and saves.
   `.github/workflows/release.yml` builds and publishes it for a `v*` tag. The Linux release (built on Ubuntu 22.04
   for glibc 2.35) bundles only dsd in the kit and uses the system's `python3` and `cc`/`clang`/`gcc` from `PATH`
   (a screen names the packages when one is missing): bundling clang would still need the distro's libc headers

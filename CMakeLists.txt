@@ -46,6 +46,7 @@ set(RUNTIME_SOURCES
     runtime/music.c
     runtime/patches.c
     runtime/pxi.c
+    runtime/rompatch.c
     runtime/rt_dispatch.c
     runtime/sched.c
     runtime/snd.c
@@ -55,6 +56,7 @@ set(RUNTIME_SOURCES
     runtime/selftest.c
     runtime/single_screen.c
     runtime/thread.c
+    runtime/translation.c
     runtime/ui_font.c
     runtime/video.c
     runtime/widescreen.c)
@@ -112,15 +114,18 @@ if(WIN32)
     endif()
 endif()
 
-# Movie and music mods: empty mods/cutscenes and mods/music folders next to the executable, each with the list of
-# file names (readme.txt).
+# Movie, music and translation mods: empty mods/cutscenes, mods/music and mods/translation folders next to the
+# executable, each with a readme (the list of file names, or how to use the folder).
 add_custom_command(TARGET eggoftime POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:eggoftime>/mods/cutscenes
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/mods/cutscenes/readme.txt
             $<TARGET_FILE_DIR:eggoftime>/mods/cutscenes
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:eggoftime>/mods/music
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/mods/music/readme.txt
-            $<TARGET_FILE_DIR:eggoftime>/mods/music)
+            $<TARGET_FILE_DIR:eggoftime>/mods/music
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:eggoftime>/mods/translation
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/mods/translation/readme.txt
+            $<TARGET_FILE_DIR:eggoftime>/mods/translation)
 
 if(EGG_RUNTIME_ONLY)
     return()

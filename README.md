@@ -49,7 +49,7 @@ and mods.
 | In-game saves | `rom\CT.sav` |
 | Save state (F5 / F7) | `rom\CT.state` |
 | Settings | `eggoftime.ini` |
-| Mods | `mods\cutscenes\`, `mods\music\` |
+| Mods | `mods\cutscenes\`, `mods\music\`, `mods\translation\` |
 
 > [!TIP]
 > **Updating:** unzip the new version over the old folder. Your ROM, saves and settings are kept. If the new
@@ -114,7 +114,14 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 - **Music**: put an audio file in `mods\music\` to replace a music track, for example `BGM_18.ogg` for
   "Chrono Trigger". Use OGG, Opus, FLAC, MP3, WAV or M4A, looped with `LOOPSTART`/`LOOPEND` tags, or MSU-1
   `.pcm` files. The `readme.txt` there lists every track with its Music Box title.
-- Mods can be turned off in System Settings > Mods.
+- **Translations**: put a translation patch in `mods\translation\`: IPS (`.ips`), BPS (`.bps`), xdelta
+  (`.xdelta`, `.vcdiff`, `.xdelta3`) or xdelta 1 (`.delta`). It is applied to your ROM when the game is built,
+  so `rom\CT.nds` stays the unmodified dump. Patches apply in file-name order, so a translation split into
+  several files works, and so does a base patch followed by a fix. A translation made for Chrono Trigger
+  (Japan) or (Europe) works too: put your dump of that version next to it (`.nds`), and its text, fonts and
+  graphics are carried over to the USA game. The `readme.txt` there has the details. Changing a patch rebuilds
+  the game on the next start.
+- Cutscene and music mods can be turned off in System Settings > Mods.
 
 ### System Settings
 
@@ -199,6 +206,8 @@ For development, or to play on Linux and macOS.
   - macOS: `brew install ffmpeg`.
   - Linux (Debian/Ubuntu): `libavformat-dev libavcodec-dev libswscale-dev libswresample-dev`.
 - [ds-decomp (dsd) v0.12.1](https://github.com/AetiasHax/ds-decomp/releases), in `tools/dsd/` or on your `PATH`.
+- [xdelta3](https://github.com/jmacd/xdelta) only to bundle it in a release: `scripts/package.py --xdelta`
+  puts it in `kit/xdelta3/` (the release workflow does).
 
 ### Steps
 
@@ -240,8 +249,9 @@ each with the toolkit (`scripts/package.py`) and publishes the Windows zip and t
   by AetiasHax, for the analysis the recompiler builds on.
 - [SDL3](https://libsdl.org), [FFmpeg](https://ffmpeg.org) (LGPL, linked dynamically),
   [minicoro](https://github.com/edubart/minicoro) (bundled in `runtime/third_party/`, under its own license),
-  [Capstone](https://www.capstone-engine.org), and [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) and
-  Python in the Windows release.
+  [xdelta3](https://github.com/jmacd/xdelta) (Apache 2.0, bundled in release kits for xdelta translation
+  patches), [Capstone](https://www.capstone-engine.org), and [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
+  and Python in the Windows release.
 - Hardware details from GBATEK.
 - The LCD filter is based on the [lcd3x shader](https://github.com/libretro/slang-shaders/blob/master/handheld/shaders/lcd3x.slang)
   by Gigaherz (public domain).
