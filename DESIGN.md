@@ -267,6 +267,8 @@ original bytes, and caches the result per region until the region is written.
     and buttons in place, and the main screen is that picture with the map put over it. The DS bottom screen of
     the other layouts stays as it is. The name sits above the ring, beside it (Present rows 37-42, Middle Ages
     rows 112-118) or under it (rows 131-147), so the map takes rows 38-110, 10 columns right of the ring.
+    Widescreen: in this scene the bottom engine is drawn with the top screen's margins too, so the second
+    picture is as wide as the field's, the swirl (wrapping) filling the sides and the rest centred.
     (Shifting whole rows instead, from a bottom screen drawn with margins, needed a shear between the moved
     rows and the buttons, and the names under the ring fall in it.)
   - Classic battles by default, below.

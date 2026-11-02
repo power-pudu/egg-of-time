@@ -109,7 +109,8 @@ typedef struct Engine {
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
     int sliding;    /* camera smoothing: the display slides this frame (the camera moved into it) */
     int sel_shift, sel_rows; /* single screen's age selector: a second picture with the sprites starting above
-                              * row sel_rows drawn sel_shift columns left (ss_bottom_shift, shifted_frame) */
+                              * row sel_rows drawn sel_shift columns left (ss_bottom_shift, shifted_frame), with
+                              * the widescreen margins */
     uint8_t follows[128]; /* by OAM slot: the sprite moves with the camera */
     uint16_t frame_bg[4][3]; /* widescreen: BGxCNT, HOFS, VOFS as the frame started, and its blending: */
     uint16_t frame_bld[2];   /* BLDCNT, BLDALPHA (see margin_bg) */
@@ -121,7 +122,7 @@ static SDL_AtomicInt wide_margin; /* requested by the display (video_set_wide_ma
 static uint32_t frame[2][VIDEO_LINE_MAX * SCREEN_H]; /* by engine, VIDEO_LINE_MAX apart */
 static uint32_t present[2][SCREEN_W * SCREEN_H];      /* top, bottom */
 static uint32_t present_wide[VIDEO_LINE_MAX * SCREEN_H], present_main[VIDEO_LINE_MAX * SCREEN_H];
-static uint32_t shifted_frame[SCREEN_W * SCREEN_H], present_shifted[SCREEN_W * SCREEN_H]; /* see Engine.sel_shift */
+static uint32_t shifted_frame[VIDEO_LINE_MAX * SCREEN_H], present_shifted[VIDEO_LINE_MAX * SCREEN_H]; /* see Engine.sel_shift */
 static int present_shifted_on;
 static int present_main_w;
 static SDL_Mutex *present_lock;
@@ -746,9 +747,10 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         reload_ref(e, 0);
         reload_ref(e, 1);
         int a_top = (io_get16(0x304) >> 15) & 1; /* POWCNT1 bit 15: engine A on the top screen */
-        e->margin = e->id == !a_top ? SDL_GetAtomicInt(&wide_margin) : 0; /* widescreen: the top screen */
-        e->party = e->sliding = 0;
         e->sel_shift = e->id == !a_top ? 0 : ss_bottom_shift(&e->sel_rows);
+        /* Widescreen: the top screen, and the bottom one when the age selector's picture is the main screen. */
+        e->margin = e->id == !a_top || e->sel_shift ? SDL_GetAtomicInt(&wide_margin) : 0;
+        e->party = e->sliding = 0;
         for (int bg = 0; bg < 4; bg++) {
             e->frame_bg[bg][0] = reg16(e, 0x08 + 2 * bg);
             e->frame_bg[bg][1] = reg16(e, 0x10 + 4 * bg);
@@ -868,7 +870,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
          * overlay of dark rooms, BG0 at priority 0), else transparent (scenery in front of it still covers it). */
         for (int pass = 0; pass < (e->party || e->sel_shift ? 2 : 1); pass++) {
         const ObjLine *o = pass ? &ol_all : &ol;
-        uint32_t *dst = !pass ? out : e->sel_shift ? &shifted_frame[y * SCREEN_W] : &party_frame[y * VIDEO_LINE_MAX];
+        uint32_t *dst = !pass ? out : e->sel_shift ? &shifted_frame[y * VIDEO_LINE_MAX] : &party_frame[y * VIDEO_LINE_MAX];
         const uint16_t *src[4] = {bgline[0], bgline[1], bgline[2], bgline[3]};
         for (int bg = 0; bg < 2; bg++) if (!pass && (box >> bg & 1)) src[bg] = under[bg];
         for (int x = 0; x < width; x++) { /* buffer column; windows extend their edge columns into the margins */
@@ -927,7 +929,7 @@ advance:
     if (f > 16) f = 16;
     if (f && (mmode == 1 || mmode == 2)) {
         for (int pass = 0; pass < (e->party || e->sel_shift ? 2 : 1); pass++) {
-            uint32_t *line = !pass ? out : e->sel_shift ? &shifted_frame[y * SCREEN_W] : &party_frame[y * VIDEO_LINE_MAX];
+            uint32_t *line = !pass ? out : e->sel_shift ? &shifted_frame[y * VIDEO_LINE_MAX] : &party_frame[y * VIDEO_LINE_MAX];
             for (int x = 0; x < width; x++) {
                 uint32_t p = line[x];
                 if (!p) continue; /* transparent (party layer) */
@@ -952,15 +954,18 @@ void video_end_frame(void) {
     /* POWCNT1 bit 15: engine A on the top screen. */
     int a_top = (io_get16(0x304) >> 15) & 1;
     const uint32_t *ft = frame[a_top ? 0 : 1], *fb = frame[a_top ? 1 : 0];
-    int m = engines[a_top ? 0 : 1].margin, w = SCREEN_W + 2 * m;
+    const Engine *eb = &engines[a_top ? 1 : 0];
+    int m = engines[a_top ? 0 : 1].margin, mb = eb->margin, w = SCREEN_W + 2 * m;
     SDL_LockMutex(present_lock);
     for (int y = 0; y < SCREEN_H; y++) {
         memcpy(&present[0][y * SCREEN_W], &ft[y * VIDEO_LINE_MAX + m], SCREEN_W * 4);
-        memcpy(&present[1][y * SCREEN_W], &fb[y * VIDEO_LINE_MAX], SCREEN_W * 4);
+        memcpy(&present[1][y * SCREEN_W], &fb[y * VIDEO_LINE_MAX + mb], SCREEN_W * 4);
         memcpy(&present_wide[y * w], &ft[y * VIDEO_LINE_MAX], (size_t)w * 4);
     }
-    present_shifted_on = engines[a_top ? 1 : 0].sel_shift != 0;
-    if (present_shifted_on) memcpy(present_shifted, shifted_frame, sizeof present_shifted);
+    present_shifted_on = eb->sel_shift && mb == m; /* as wide as the top screen's (the margin read for each) */
+    for (int y = 0; present_shifted_on && y < SCREEN_H; y++) {
+        memcpy(&present_shifted[y * w], &shifted_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);
+    }
     present_main_w = ss_compose(present_main, present[0], present[1], present_wide, w, present_shifted_on ? present_shifted : NULL);
     present_party_on = engines[a_top ? 0 : 1].party && present_main_w == w; /* the field: main is the wide picture */
     for (int y = 0; present_party_on && y < SCREEN_H; y++) {

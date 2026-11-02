@@ -23,7 +23,8 @@ int ss_bottom_shift(int *rows);
 enum { SS_MENU_NONE, SS_MENU_GAME_SETTINGS, SS_MENU_PAUSE, SS_MENU_TITLE };
 int ss_menu_place(void);
 /* Builds the main screen from both screens of a finished frame (each 256x192 ABGR8888) and the top screen
- * with its widescreen margins (wide_w columns), and the bottom screen with sprites moved (ss_bottom_shift; NULL
- * when not drawn); returns the main screen's width (256, or wide_w in the field). */
+ * with its widescreen margins (wide_w columns), and the bottom screen with sprites moved and the same margins
+ * (ss_bottom_shift; NULL when not drawn); returns the main screen's width (256, or wide_w in the field and the
+ * age selector). */
 int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, const uint32_t *wide, int wide_w,
                const uint32_t *bottom_shifted);

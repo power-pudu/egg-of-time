@@ -893,7 +893,8 @@ static void compose_shop(uint32_t *main, const uint32_t *top, const uint32_t *bo
  * ring (above it, rows 7-35, or under it, rows 140-147; up to x 250), A Warp and B buttons (rows 150-172). The
  * main screen shows a second picture of the bottom screen that the renderer draws with the sprites starting
  * above AGES_SELECTOR_ROWS (ring, line and name) AGES_SHIFT columns left (ss_bottom_shift), the swirl and the
- * buttons in place, and the map at half size right of the ring, the two centred together. */
+ * buttons in place, and the map at half size right of the ring, the two centred together. That picture has the
+ * widescreen margins (wide_w columns), the swirl continuing into them. */
 #define AGES_SHIFT 44
 #define AGES_SELECTOR_ROWS 148 /* the buttons' sprites start below */
 #define AGES_RING_X 88         /* the ring's columns on the DS: 88-145 */
@@ -912,13 +913,13 @@ static uint32_t average4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
     return out;
 }
 
-static void compose_ages(uint32_t *main, const uint32_t *top, const uint32_t *shifted) {
-    memcpy(main, shifted, SCREEN_W * SCREEN_H * 4);
-    int mx = AGES_RING_X - AGES_SHIFT + AGES_RING_W + AGES_GAP, my = AGES_MAP_TO_Y;
+static void compose_ages(uint32_t *main, const uint32_t *top, const uint32_t *shifted, int wide_w) {
+    memcpy(main, shifted, (size_t)wide_w * SCREEN_H * 4);
+    int mx = (wide_w - SCREEN_W) / 2 + AGES_RING_X - AGES_SHIFT + AGES_RING_W + AGES_GAP, my = AGES_MAP_TO_Y;
     for (int y = 0; y < AGES_MAP_H; y++) {
         for (int x = 0; x < AGES_MAP_W; x++) {
             const uint32_t *p = &top[(AGES_MAP_Y + 2 * y) * SCREEN_W + AGES_MAP_X + 2 * x];
-            main[(my + y) * SCREEN_W + mx + x] = average4(p[0], p[1], p[SCREEN_W], p[SCREEN_W + 1]);
+            main[(my + y) * wide_w + mx + x] = average4(p[0], p[1], p[SCREEN_W], p[SCREEN_W + 1]);
         }
     }
 }
@@ -1018,8 +1019,11 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
         compose_bestiary(main, top, bottom);
         break;
     case SCENE_AGES:
-        if (bottom_shifted) compose_ages(main, top, bottom_shifted);
-        else memcpy(main, bottom, SCREEN_W * SCREEN_H * 4); /* the first frame, drawn before the scene was known */
+        if (bottom_shifted) {
+            compose_ages(main, top, bottom_shifted, wide_w);
+            return wide_w;
+        }
+        memcpy(main, bottom, SCREEN_W * SCREEN_H * 4); /* the first frame, drawn before the scene was known */
         break;
     case SCENE_NAMING:
         memcpy(main, rt_r32(sc.obj + NAMING_STATE) == NAMING_ENTERING ? bottom : top, SCREEN_W * SCREEN_H * 4);
