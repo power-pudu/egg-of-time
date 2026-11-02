@@ -54,6 +54,20 @@
  *     bottom one, whose help bar stays empty. The main screen shows the bottom screen moved up into the gap
  *     under the tabs and, in place of the help bar, every member's name and the stat the item changes as lines
  *     of text, three to a line. Equip opens the Equipment page.
+ *   - Arena of the Ages (ov013), a monster's page: its name, wins, HP, element and sprite, then its stats (or with
+ *     Toggle Display nothing in their place) on the top screen; Train Monster, Toggle Display and Release Monster
+ *     stacked and the help bar on the bottom one. The main screen shows the top screen with the sprite moved up
+ *     beside the name and the stats under it, then the three buttons narrowed into one row, then the help bar;
+ *     Left/Right move between the buttons like Up/Down.
+ *     Train Monster then shows the same top screen (on its last page with the item chosen as a fifth line) over
+ *     three pages on the bottom one: a prompt to choose an item and an era, the items (a tab bar, a grid of two
+ *     columns and the help bar), and the five eras stacked. The main screen shows the top screen with the prompt
+ *     under it, then the bottom screen with its items (or eras) packed closer and the stats as lines of text under
+ *     them.
+ *   - The Arena's shop (ov013): the title and the monster's name, wins, HP, element and sprite on the top screen;
+ *     Buy / Sell and the funds, or a category's items (tabs, funds, price and stock, the list) on the bottom one.
+ *     The main screen shows the title and the monster over Buy / Sell and the funds, the bottom screen for the
+ *     items.
  *   - Age selector (ov012, time travel): the chosen age's map on the top screen, the ring of ages with the age's
  *     name, A Warp and B on the bottom one. The main screen shows the bottom screen with the ring and name moved
  *     left (a second picture of the bottom screen, swirl and buttons in place) and the map at half size beside the
@@ -75,7 +89,7 @@
 #include "ui_font.h"
 #include "video.h"
 
-enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES };
+enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP };
 typedef struct Scene { int kind; uint32_t obj; } Scene;
 static uint32_t title_held; /* keys held since before the title started: not a press */
 #define TITLE_STATE 0x4a  /* title scene: current state (halfword); +0x48 holds the requested one */
@@ -105,6 +119,13 @@ static uint32_t title_held; /* keys held since before the title started: not a p
 #define EQUIP_SLOT 0x32c
 #define EQUIP_CHARACTER 0x6688 /* field menu scene: the Equipment page's character (id, byte), set as its data is
                                 * shown; the page's own +0x332 is a place on the members bar, in the menu's order */
+
+#define ARENA_PAGE 0x19c4      /* Arena of the Ages (ov013): its current page object, as the field menu's */
+#define ARENA_MONSTER 0x02147688u /* the monster's page's vtable (+8 the button: 0 Train, 1 Toggle, 2 Release) */
+#define ARENA_TRAIN 0x02147718u   /* Train Monster's pages: the prompt, */
+#define ARENA_TRAIN_ITEMS 0x021477b0u /* the items, */
+#define ARENA_TRAIN_ERA 0x0214783cu   /* the eras */
+#define ARENA_SHOP_BUY 0x2a4e /* the Arena's shop: its Buy button's sprite is shown (byte), on Buy / Sell only */
 
 #define CURRENT_SCENE 0x0207088cu /* the running scene's secondary base (scene + 8), set by Scene::run */
 
@@ -137,6 +158,15 @@ static Scene current(void) {
     if (vt == 0x02120a68u && rt_overlay_resident(2)) sc.kind = SCENE_OVERWORLD; /* ov002: the world map */
     if (vt == 0x02148574u && rt_overlay_resident(11)) sc.kind = SCENE_RACE; /* ov011: the race against Johnny (Lab 32) */
     if (vt == 0x02158290u && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
+    if (vt == 0x0214a550u && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_SHOP; /* ov013: the Arena's shop */
+    if (vt == 0x02147460u && rt_overlay_resident(13)) { /* ov013: the Arena of the Ages */
+        uint32_t page = rt_r32(sc.obj + ARENA_PAGE);
+        uint32_t pvt = page >> 24 == 0x02 ? rt_r32(page) : 0;
+        if (pvt == ARENA_MONSTER) sc.kind = SCENE_ARENA;
+        else if (pvt == ARENA_TRAIN) sc.kind = SCENE_TRAIN;
+        else if (pvt == ARENA_TRAIN_ITEMS) sc.kind = SCENE_TRAIN_ITEMS;
+        else if (pvt == ARENA_TRAIN_ERA) sc.kind = SCENE_TRAIN_ERA;
+    }
     return sc;
 }
 
@@ -247,6 +277,13 @@ static uint32_t party_keys(uint32_t keys) {
     return party_techs ? keys & ~(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_A) : keys;
 }
 
+/* Arena monster page: the buttons are side by side on the main screen, so Left/Right move between them as the
+ * game's Up/Down do. */
+static uint32_t arena_keys(uint32_t keys) {
+    uint32_t moved = (keys & KEY_LEFT ? KEY_UP : 0) | (keys & KEY_RIGHT ? KEY_DOWN : 0);
+    return (keys & ~(KEY_LEFT | KEY_RIGHT)) | moved;
+}
+
 uint32_t ss_game_keys(uint32_t keys) {
     static int seen = SCENE_OTHER;
     Scene sc = current();
@@ -263,6 +300,7 @@ uint32_t ss_game_keys(uint32_t keys) {
     if (sc.kind == SCENE_SETTINGS) return settings_keys(sc, keys);
     if (sc.kind == SCENE_OPTIONS) return options_keys(sc, keys);
     if (sc.kind == SCENE_PARTY) return party_keys(keys);
+    if (sc.kind == SCENE_ARENA) return arena_keys(keys);
     if (!title_waiting(sc)) return keys;
     title_held &= keys;
     return keys & ~title_held ? keys | KEY_START : keys;
@@ -801,6 +839,94 @@ static void blit_bestiary_text(uint32_t *main, int dx, int dy, const uint32_t *b
     }
 }
 
+/* Arena of the Ages, a monster's page (see the top). Top screen: title rows 0-23, name, wins and HP from x 100 in
+ * rows 31-67 with the element at the right, the sprite left of them standing on row 96, a divider at row 102, the
+ * stats rows 113-167. Bottom screen: buttons 144x40 at x 56, y 12 + 52 n (the cursor's frame their edge, the label
+ * in rows 17-23, 68 columns wide at most, centred), the help bar from row 168. Main screen: title, the info from
+ * top row 27 at row 24 with the sprite's column (x 0-95) from 24 rows lower, the stats from the divider (top rows
+ * 99-170) at row 72, the buttons 82x24 in one row at 144 (frame columns 6 and rows 6 each side kept, the label's
+ * middle between), the help bar. */
+#define ARENA_INFO_Y 27
+#define ARENA_SPRITE_W 96
+#define ARENA_SPRITE_DY 24
+#define ARENA_STATS_AT 72
+#define ARENA_STATS_Y 99
+#define ARENA_BUTTONS_Y 144
+#define ARENA_BUTTON_W 82
+#define ARENA_BUTTON_H 24
+
+static void compose_arena(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    memcpy(main, top, 24 * SCREEN_W * 4);
+    memcpy(&main[24 * SCREEN_W], &top[ARENA_INFO_Y * SCREEN_W], (ARENA_STATS_AT - 24) * SCREEN_W * 4);
+    blit(main, 0, 24, top, 0, ARENA_INFO_Y + ARENA_SPRITE_DY, ARENA_SPRITE_W, ARENA_STATS_AT - 24);
+    memcpy(&main[ARENA_STATS_AT * SCREEN_W], &top[ARENA_STATS_Y * SCREEN_W],
+           (ARENA_BUTTONS_Y - ARENA_STATS_AT) * SCREEN_W * 4);
+    memcpy(&main[ARENA_BUTTONS_Y * SCREEN_W], &top[168 * SCREEN_W], ARENA_BUTTON_H * SCREEN_W * 4); /* backdrop */
+    memcpy(&main[168 * SCREEN_W], &bottom[168 * SCREEN_W], (SCREEN_H - 168) * SCREEN_W * 4);
+    static const int sy[3] = {0, 13, 34}, h[3] = {6, 12, 6}; /* top frame, the label's rows, bottom frame */
+    int mid = ARENA_BUTTON_W - 12, mid_x = 56 + (144 - mid) / 2;
+    for (int n = 0; n < 3; n++) {
+        int bx = 3 + 84 * n, by0 = 12 + 52 * n;
+        for (int k = 0, dy = ARENA_BUTTONS_Y; k < 3; dy += h[k++]) {
+            blit(main, bx, dy, bottom, 56, by0 + sy[k], 6, h[k]);
+            blit(main, bx + 6, dy, bottom, mid_x, by0 + sy[k], mid, h[k]);
+            blit(main, bx + 6 + mid, dy, bottom, 194, by0 + sy[k], 6, h[k]);
+        }
+    }
+}
+
+/* Train Monster (see the top). Top screen: as the monster's page, with the stats' text lines at rows 113 + 16 n
+ * and, on the eras page, the item chosen at row 177. Bottom screen: the prompt's two lines in rows 43-59; the
+ * items' tab bar rows 0-21, the backdrop to row 39, the rows of items (24 with the cursor's frame) from row 39,
+ * 28 apart, the help bar from row 168; the eras (24 rows with the cursor's frame) from row 8, 32 apart. Main
+ * screen: the prompt at row 172 under the top screen; the items 25 apart from row 26, then the stats' lines 9
+ * apart from row 128; the eras one under the other from row 1, then the stats' lines and the item from row 122. */
+#define TRAIN_PROMPT_Y 42
+#define TRAIN_PROMPT_H 19
+#define TRAIN_PROMPT_AT 172
+#define TRAIN_LINE_Y 113
+#define TRAIN_LINE_H 9
+
+/* The top screen's stats (and with item, the item chosen) as lines of text TRAIN_LINE_H apart from row y. */
+static void train_lines(uint32_t *main, const uint32_t *top, int y, int item) {
+    for (int n = 0; n < 4 + item; n++)
+        memcpy(&main[(y + TRAIN_LINE_H * n) * SCREEN_W], &top[(TRAIN_LINE_Y - 1 + 16 * n) * SCREEN_W],
+               TRAIN_LINE_H * SCREEN_W * 4);
+}
+
+static void compose_train(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    memcpy(main, top, SCREEN_W * SCREEN_H * 4);
+    memcpy(&main[TRAIN_PROMPT_AT * SCREEN_W], &bottom[TRAIN_PROMPT_Y * SCREEN_W], TRAIN_PROMPT_H * SCREEN_W * 4);
+}
+
+static void compose_train_items(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    for (int y = 24; y < 128; y += 12) /* the backdrop under the tab bar, over the rows' old places */
+        memcpy(&main[y * SCREEN_W], &bottom[24 * SCREEN_W], (size_t)SDL_min(12, 128 - y) * SCREEN_W * 4);
+    for (int n = 0; n < 4; n++)
+        memcpy(&main[(26 + 25 * n) * SCREEN_W], &bottom[(39 + 28 * n) * SCREEN_W], 24 * SCREEN_W * 4);
+    train_lines(main, top, 128, 0);
+}
+
+static void compose_train_era(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    for (int n = 0; n < 5; n++)
+        memcpy(&main[(1 + 24 * n) * SCREEN_W], &bottom[(8 + 32 * n) * SCREEN_W], 24 * SCREEN_W * 4);
+    train_lines(main, top, 122, 1);
+}
+
+/* The Arena's shop (see the top). Top screen: title and monster rows 0-101 (the divider at row 102), nothing under
+ * them. Bottom screen: Buy / Sell rows 0-23, the funds rows 40-63, the help bar from row 168. Main screen: the top
+ * screen's rows 0-101, then Buy / Sell and the funds (bottom rows 0-65), then the bottom screen. */
+#define ARENA_SHOP_TOP_H 102
+
+static void compose_arena_shop(Scene sc, uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    if (!rt_r8(sc.obj + ARENA_SHOP_BUY)) return; /* a category's items */
+    memcpy(main, top, ARENA_SHOP_TOP_H * SCREEN_W * 4);
+    memcpy(&main[ARENA_SHOP_TOP_H * SCREEN_W], bottom, (168 - ARENA_SHOP_TOP_H) * SCREEN_W * 4);
+}
+
 static void compose_bestiary(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     memcpy(main, top, SCREEN_W * SCREEN_H * 4);
     memcpy(main, bottom, 24 * SCREEN_W * 4); /* the tabs over the title */
@@ -1035,6 +1161,21 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
         break;
     case SCENE_BESTIARY:
         compose_bestiary(main, top, bottom);
+        break;
+    case SCENE_ARENA:
+        compose_arena(main, top, bottom);
+        break;
+    case SCENE_ARENA_SHOP:
+        compose_arena_shop(sc, main, top, bottom);
+        break;
+    case SCENE_TRAIN:
+        compose_train(main, top, bottom);
+        break;
+    case SCENE_TRAIN_ITEMS:
+        compose_train_items(main, top, bottom);
+        break;
+    case SCENE_TRAIN_ERA:
+        compose_train_era(main, top, bottom);
         break;
     case SCENE_AGES:
         if (bottom_shifted) {
