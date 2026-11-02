@@ -163,7 +163,8 @@ original bytes, and caches the result per region until the region is written.
   "Exiting..." and quits after 1 s (releasing cancels). The mouse is the stylus wherever the bottom screen is
   shown. Layout, swap and the System Settings persist in `eggoftime.ini` next to the executable.
 - **System Settings menu** (`runtime/system_menu.c`, settings in `runtime/display.c`): SELECT opens it on Game
-  Settings, in the title screen's menu (phase 7; no hint is shown there) or while the field is paused
+  Settings, in the title screen's menu (phase 7; a small SELECT button sits bottom right, above the copyright)
+  or while the field is paused
   (`ss_menu_place`), B or SELECT closes it (closed from the pause, START is held for the game for 100 ms, which
   ends the pause), and so does the game leaving that place (the title idling into the intro); Up/Down choose, Left/Right change (held: repeat
   after 400 ms, then every 110 ms); changes apply at once. While it is open the game gets no keys, and keys
@@ -205,6 +206,17 @@ original bytes, and caches the result per region until the region is written.
   - Color (`color` in the ini: ds, light, moderate, strong): raises each channel of every uploaded screen to
     1.0, 1.1 (default), 1.2 or 1.4 through a 256-entry table, before the filters; black and white stay.
     (The full 2.4 / 1.5 ratio of the SNES on a CRT to the DS screen, 1.6, was tried: it crushes shadows.)
+  - Language (`language` in the ini: english, french): the game picks its language from the firmware user
+    settings (language bits of offset 0x64, 1 English, 2 French), which `rt_boot` writes from the setting, so a
+    change needs a reboot. Choosing a language other than the running one asks "Restart the game now?" (Yes / No,
+    No by default); Yes requests `RT_STATE_REBOOT`, which the game thread takes at its next poll like a state
+    load: `rt_threads_restart(1)` drops every thread, the scheduler clears what a save state holds (main RAM,
+    TCMs, shared WRAM, palette, OAM, VRAM, I/O; CP15) and starts a new boot thread, and `rt_boot` resets the
+    hardware modules (hw, video, widescreen, pxi with snd and spu, card, sched with the frame count) and boots
+    again. The save memory stays as it is, as a cartridge's would. Verified from the title menu and mid-cutscene
+    (autokey `REBOOT`): the logos, title and a loaded save play in the new language. The runtime's own texts in the game's screens (title prompt, relabelled
+    SELECT, pause hint) follow the language in RAM (`rt_french`), so a save state keeps its own; the System
+    Settings menu stays English. `ui_font.c` reads UTF-8 and has è and é for them.
   - Mods: replacement cutscenes on (the default) or off (movie mods, below).
 - **Single screen mode** (CMake option `EGG_SINGLE_SCREEN`, default ON; `runtime/single_screen.c`): the game laid
   out for one screen. `video_end_frame` builds a third output, the main screen, which the top-only layout shows;
@@ -221,7 +233,9 @@ original bytes, and caches the result per region until the region is written.
     screen is the top screen plus the copyright (bottom rows 156-185, moved down 6 rows) and, in state 8,
     "Press any button to start" in a small built-in font, blinking with the game's prompt (its sprites are
     turned off and on) and following the bottom screen's fade; in the menu, the bottom screen's buttons
-    (whatever rows they use above the copyright) are moved into the space left of the pendulum. In state 8
+    (whatever rows they use above the copyright) are moved into the space left of the pendulum. In phase 7 a
+    small SELECT button (`sysmenu_draw_select_button`, the System Settings menu's button look) sits at the
+    bottom right, right above the copyright: SELECT opens System Settings there. In state 8
     any button pressed after the title started also presses START (`ss_game_keys`, applied to KEYINPUT and
     the X/Y buffer), which opens the menu, as a touch does.
   - Game Settings (after New Game): options on the bottom screen (rows: 0 Game Mode, 1 Battle Mode, 2 Movies;
@@ -471,7 +485,7 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
    Fix along the way: `rt_poll` re-enters the IRQ handler while interrupts remain pending; the SDK handler
    services one source per entry, and enabled HBlank IRQs otherwise starved the IPC (touch reply) IRQ.
    Debug aids: `EGG_SHOTS=<dir>` (top, bottom and main screen stacked; with `EGG_SHOT_MS=<interval>`, `EGG_SHOT_FROM=<ms>`; `EGG_SHOT_MS=1` = every frame), `EGG_AUTOKEYS`, `EGG_TOUCH_POS="x,y;x,y..."` (one per TOUCH),
-   `EGG_DUMP_AT="ms,ms..."`, `EGG_LOAD_STATE=<file>`, autokeys `SAVESTATE`/`LOADSTATE`, `EGG_SELFTEST=1`.
+   `EGG_DUMP_AT="ms,ms..."`, `EGG_LOAD_STATE=<file>`, autokeys `SAVESTATE`/`LOADSTATE`/`REBOOT`, `EGG_SELFTEST=1`.
    Classic mode: the game's own option "Game Mode: DS / Classic" on the Game Settings screen shown after
    New Game (bottom-screen buttons at about (163,33) DS and (219,33) Classic) now defaults to Classic (see
    Runtime). Verified: the scene opens on Classic with its description, DS can still be picked, "Defaults"

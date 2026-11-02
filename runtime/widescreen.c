@@ -83,6 +83,8 @@ static void copy_room_rows(uint32_t scroll, uint32_t room) {
     room_copy.after = 0;
 }
 
+void ws_reset(void) { room_copy.of = 0; }
+
 void ws_state(RtStateIO *s) {
     if (!rt_state_optional(s, "ws_room_copy", &room_copy, sizeof room_copy) && rt_state_loading(s)) room_copy.of = 0;
 }

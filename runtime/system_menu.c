@@ -1,9 +1,11 @@
-/* System Settings menu: window mode, internal resolution, aspect ratio, framerate, V-Sync, graphics filter,
- * mods (display.c holds and applies them). SELECT opens it from the game's Game Settings screen (the button
+/* System Settings menu: language, window mode, internal resolution, aspect ratio, framerate, V-Sync, graphics
+ * filter, mods (display.c holds and applies them). SELECT opens it from the game's Game Settings screen (the button
  * single screen mode relabels "System settings"), the title screen's menu or while the field is paused; B or
  * SELECT closes it, and so does the game leaving that place (the title idling into the intro, say). Closed
  * from the pause, it also presses START for the game, which ends the pause. Up/Down pick a setting,
- * Left/Right change it (held: repeats); changes apply at once. Up to ROWS_SHOWN rows fit; beyond them the list
+ * Left/Right change it (held: repeats); changes apply at once. Choosing a language other than the one the game
+ * runs in asks whether to restart the game now (Left/Right pick Yes or No, A confirms, B is No): Yes powers the
+ * game on again in it (RT_STATE_REBOOT), No leaves it for the next start. Up to ROWS_SHOWN rows fit; beyond them the list
  * scrolls with the cursor, and arrows in the header show which way more rows lie.
  *
  * The look follows the game's Game Settings screen, drawn by the runtime so it is the same wherever the menu
@@ -23,6 +25,7 @@
 #define RESUME_MS 100 /* START held for the game after closing from the pause */
 
 static const char *const descriptions[SET_COUNT] = {
+    [SET_LANGUAGE] = "Game text. Applies at the next start.",
     [SET_WINDOW] = "How the game window is shown.",
     [SET_RESOLUTION] = "Size the screens are drawn at.",
     [SET_ASPECT] = "Wider shows more of the world.",
@@ -36,6 +39,7 @@ static const char *const descriptions[SET_COUNT] = {
 
 static int place, cursor; /* place: where it was opened (SS_MENU_*), SS_MENU_NONE when closed */
 static int top;           /* the first row shown (rows: the shown settings, in order) */
+static int confirm, yes;  /* the restart question is open; Yes is chosen */
 static uint32_t prev_keys, blocked; /* blocked: held since the menu closed, kept from the game until released */
 static Uint64 repeat_at, resume_until;
 
@@ -45,7 +49,7 @@ uint32_t sysmenu_input(uint32_t keys) {
     prev_keys = keys;
     if (place == SS_MENU_NONE) {
         if ((pressed & KEY_SELECT) && (place = ss_menu_place()) != SS_MENU_NONE) {
-            cursor = top = 0;
+            cursor = top = confirm = 0;
             return 0;
         }
         blocked &= keys;
@@ -59,6 +63,20 @@ uint32_t sysmenu_input(uint32_t keys) {
         repeat_at = now + REPEAT_MS;
     }
     int left = ss_menu_place() != place; /* the game moved on */
+    if (confirm && !left) {
+        if (act & (KEY_LEFT | KEY_RIGHT | KEY_UP | KEY_DOWN)) yes = !yes;
+        if (act & (KEY_A | KEY_B)) {
+            confirm = 0;
+            if ((act & KEY_A) && yes) {
+                rt_state_request = RT_STATE_REBOOT;
+                place = SS_MENU_NONE;
+                blocked = keys;
+            } else {
+                display_message("Language: applies at the next start", 2500);
+            }
+        }
+        return 0;
+    }
     if ((act & (KEY_B | KEY_SELECT)) || left) {
         if (place == SS_MENU_PAUSE && !left) resume_until = now + RESUME_MS;
         place = SS_MENU_NONE;
@@ -70,6 +88,10 @@ uint32_t sysmenu_input(uint32_t keys) {
     if (act & (KEY_LEFT | KEY_RIGHT)) {
         int n = display_setting_count(cursor);
         display_setting_set(cursor, (display_setting_get(cursor) + ((act & KEY_RIGHT) ? 1 : n - 1)) % n);
+        if (cursor == SET_LANGUAGE && (display_setting_get(SET_LANGUAGE) == LANGUAGE_FRENCH) != rt_french()) {
+            confirm = 1;
+            yes = 0;
+        }
     }
     return 0;
 }
@@ -191,7 +213,27 @@ void sysmenu_draw(uint32_t *s) {
     }
 
     panel(s, (Rect){0, 166, 222, 26}, &BAR);
-    ui_draw_text(s, descriptions[cursor], 8, 175, WHITE);
+    ui_draw_text(s, confirm ? "A: confirm.  B: not now." : descriptions[cursor], 8, 175, WHITE);
     panel(s, (Rect){224, 166, 32, 26}, &BAR);
     b_sign(s, 240, 179);
+    if (confirm) {
+        static const char *const lines[] = {"Restart the game now?", "The new language needs a restart.",
+                                            "Unsaved progress will be lost."};
+        panel(s, (Rect){28, 52, 200, 86}, &BAR);
+        for (int i = 0; i < 3; i++) ui_draw_text(s, lines[i], (SCREEN_W - ui_text_width(lines[i])) / 2, 62 + 12 * i, WHITE);
+        for (int i = 0; i < 2; i++) {
+            Rect b = {64 + 72 * i, 106, 56, 20};
+            int sel = (i == 0) == yes;
+            panel(s, b, sel ? &BUTTON_LIT : &BUTTON);
+            if (sel) frame(s, b, TEAL);
+            const char *label = i == 0 ? "Yes" : "No";
+            ui_draw_text(s, label, b.x + (b.w - ui_text_width(label)) / 2, b.y + 6, sel ? WHITE : GREY);
+        }
+    }
+}
+
+void sysmenu_draw_select_button(uint32_t *s, int x1, int y1) {
+    Rect r = {x1 - SELECT_BUTTON_W, y1 - SELECT_BUTTON_H, SELECT_BUTTON_W, SELECT_BUTTON_H};
+    panel(s, r, &BUTTON);
+    ui_draw_text(s, "SELECT", r.x + (r.w - ui_text_width("SELECT")) / 2, r.y + 3, WHITE);
 }

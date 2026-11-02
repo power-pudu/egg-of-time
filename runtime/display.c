@@ -74,8 +74,12 @@ static const char *const color_labels[] = {"Original (DS)", "SNES light", "SNES 
 /* SNES gamma: the DS version's palette was brightened for the DS screen, so on a PC display it looks washed out.
  * Each channel is raised to an exponent: black and white stay, midtones darken and colors deepen. */
 static const float color_exponents[] = {1.0f, 1.1f, 1.2f, 1.4f};
+static const char *const language_names[] = {"english", "french"};
+static const char *const language_labels[] = {"English", "French"};
 
 static Setting settings[SET_COUNT] = {
+    /* The DS's system language, which the game reads at power-on (boot.c): changes apply at the next start. */
+    [SET_LANGUAGE] = {"language", "Language", 2, LANGUAGE_ENGLISH, language_names, language_labels},
     [SET_WINDOW] = {"window", "Window mode", 3, WINDOW_BORDERLESS, window_names, window_labels},
     [SET_RESOLUTION] = {"resolution", "Internal resolution", RES_MAX + 1, 0, res_names, NULL},
     [SET_ASPECT] = {"aspect", "Aspect ratio", 5, ASPECT_16_9, aspect_names, aspect_labels},

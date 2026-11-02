@@ -1,10 +1,11 @@
-/* Small pixel font for the runtime's own texts: printable ASCII, variable width (mostly 4 pixels), 8 rows. */
+/* Small pixel font for the runtime's own texts: printable ASCII and the French accented letters they use
+ * (UTF-8), variable width (mostly 4 pixels), 8 rows. */
 #include <string.h>
 
 #include "ui_font.h"
 #include "video.h"
 
-typedef struct Glyph { char c; const char *rows[UI_FONT_H]; } Glyph;
+typedef struct Glyph { unsigned c; const char *rows[UI_FONT_H]; } Glyph;
 
 /* '#' = pixel. Capitals and digits use rows 0-6, small letters rows 2-6, descenders row 7. */
 static const Glyph font[] = {
@@ -94,9 +95,19 @@ static const Glyph font[] = {
     {'x', {"...", "...", "#.#", "#.#", ".#.", "#.#", "#.#", "..."}},
     {'y', {"....", "....", "#..#", "#..#", "#..#", ".###", "...#", ".##."}},
     {'z', {"....", "....", "####", "..#.", ".#..", "#...", "####", "...."}},
+    {0xE8, {".#..", "..#.", ".##.", "#..#", "####", "#...", ".###", "...."}}, /* è */
+    {0xE9, {"..#.", ".#..", ".##.", "#..#", "####", "#...", ".###", "...."}}, /* é */
 };
 
-static const Glyph *glyph(char c) {
+/* The glyph of the UTF-8 character at *p (two-byte sequences: U+0080-07FF), advancing *p past it. */
+static const Glyph *glyph(const char **p) {
+    const unsigned char *u = (const unsigned char *)*p;
+    unsigned c = u[0];
+    *p += 1;
+    if ((c & 0xE0) == 0xC0 && (u[1] & 0xC0) == 0x80) {
+        c = (c & 0x1F) << 6 | (u[1] & 0x3F);
+        *p += 1;
+    }
     for (size_t i = 0; i < sizeof font / sizeof font[0]; i++) {
         if (font[i].c == c) return &font[i];
     }
@@ -105,13 +116,13 @@ static const Glyph *glyph(char c) {
 
 int ui_text_width(const char *s) {
     int w = 0;
-    for (const char *p = s; *p; p++) w += (int)strlen(glyph(*p)->rows[0]) + 1;
+    for (const char *p = s; *p;) w += (int)strlen(glyph(&p)->rows[0]) + 1;
     return w > 0 ? w - 1 : 0;
 }
 
 static void draw(uint32_t *screen, int width, const char *s, int x, int y, uint32_t color, int shadow) {
-    for (const char *p = s; *p; p++) {
-        const Glyph *g = glyph(*p);
+    for (const char *p = s; *p;) {
+        const Glyph *g = glyph(&p);
         int gw = (int)strlen(g->rows[0]);
         for (int pass = !shadow; pass < 2; pass++) { /* shadow, then the text */
             for (int r = 0; r < UI_FONT_H; r++) {

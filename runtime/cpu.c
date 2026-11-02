@@ -306,6 +306,11 @@ void rt_unimpl(CPU *cpu, uint32_t addr, uint32_t ins) {
     rt_fatal(cpu, "unimplemented instruction 0x%08x at 0x%08x", ins, addr);
 }
 
+void cpu_power_on(void) {
+    cp15_control = 0x00012078u;
+    cp15_dtcm = cp15_itcm = 0;
+}
+
 void cpu_state(RtStateIO *s) {
     RT_STATE(s, cp15_control);
     RT_STATE(s, cp15_dtcm);

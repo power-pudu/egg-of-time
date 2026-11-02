@@ -132,7 +132,11 @@ void rt_state_poll(CPU *cpu) {
             rt_log("state: not loading %s", rt_state_load_path);
             return;
         }
-        rt_threads_restart(); /* continues in rt_state_apply_requested, on the scheduler */
+        rt_threads_restart(0); /* continues in rt_state_apply_requested, on the scheduler */
+    } else if (rt_state_request == RT_STATE_REBOOT) {
+        rt_state_request = 0;
+        rt_log("reboot");
+        rt_threads_restart(1); /* continues in rt_boot, on a new boot thread */
     }
 }
 

@@ -125,10 +125,11 @@ int rt_load_rom(const char *path);
 void rt_boot(CPU *cpu);
 void rt_write_console_mac(void);  /* firmware data the ARM7 puts in RAM at power-on */
 int rt_console_mac_missing(void);
+int rt_french(void); /* the game runs in French (the language in its firmware settings, save states included) */
 void rt_selftest(CPU *cpu); /* selftest.c */
 
 /* ---- state.c: save states ---- */
-enum { RT_STATE_SAVE = 1, RT_STATE_LOAD = 2 };
+enum { RT_STATE_SAVE = 1, RT_STATE_LOAD = 2, RT_STATE_REBOOT = 3 }; /* REBOOT: power the game on again */
 extern volatile int rt_state_request; /* set by the host thread; handled at the game's next poll */
 extern char rt_state_load_path[1024];  /* file for RT_STATE_LOAD (default: rt_rom.state_path) */
 void rt_state_poll(CPU *cpu);
@@ -142,6 +143,8 @@ int rt_state_loading(const RtStateIO *s); /* state is being applied (run post-lo
 int rt_state_saving(const RtStateIO *s);
 void memory_state(RtStateIO *s);
 void cpu_state(RtStateIO *s);
+void memory_power_on(void); /* memory and CP15 as at power-on (a reboot) */
+void cpu_power_on(void);
 void sched_state(RtStateIO *s);
 void video_state(RtStateIO *s);
 void pxi_state(RtStateIO *s);
@@ -150,5 +153,6 @@ void snd_state(RtStateIO *s);
 void spu_state(RtStateIO *s);
 void threads_state(RtStateIO *s);
 int rt_threads_can_save(void);            /* every thread is at a point it can be resumed from */
-_Noreturn void rt_threads_restart(void);  /* game thread: drop all threads, load the requested state */
+/* Game thread: drop all threads, then load the requested state (power_on 0) or boot the game again (1). */
+_Noreturn void rt_threads_restart(int power_on);
 void rt_state_apply_requested(void);      /* scheduler: apply the state rt_state_poll checked */

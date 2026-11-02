@@ -131,7 +131,9 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 ### System Settings
 
 Open it with **SELECT** on the title menu or the Game Settings screen, or while the game is paused (START). Close
-it with B or SELECT. Changes apply immediately and are saved in `eggoftime.ini`.
+it with B or SELECT. Changes apply immediately and are saved in `eggoftime.ini`. Language (English or French, the
+two the USA release has) needs the game to restart: the menu asks whether to restart now (unsaved progress is
+lost) or keep the change for the next start.
 
 ### Save states
 

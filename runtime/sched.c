@@ -295,6 +295,7 @@ static int SDLCALL poll_ticker(void *arg) {
 
 void sched_init(void) {
     boot_ns = SDL_GetTicksNS();
+    rt_frame_count = 0;
     irq_flags = 0;
     line_done = 0;
     line_phase = LINE_HBLANK;

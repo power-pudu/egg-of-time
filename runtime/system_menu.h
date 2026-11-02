@@ -10,3 +10,8 @@ uint32_t sysmenu_input(uint32_t keys);
 int sysmenu_is_open(void);
 /* Draws the menu over a 256x192 screen. */
 void sysmenu_draw(uint32_t *screen);
+/* A small button reading SELECT, in the menu's look, ending left of column x1 and above row y1: the hint that
+ * SELECT opens the menu. */
+#define SELECT_BUTTON_W 36
+#define SELECT_BUTTON_H 13
+void sysmenu_draw_select_button(uint32_t *screen, int x1, int y1);

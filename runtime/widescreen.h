@@ -18,3 +18,4 @@ int ws_window_lines(uint32_t h[192]);
 /* Save states: the copy of the room map battles use (an optional block). */
 typedef struct RtStateIO RtStateIO;
 void ws_state(RtStateIO *s);
+void ws_reset(void); /* power-on (rt_boot) */

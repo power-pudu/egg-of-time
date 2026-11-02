@@ -85,6 +85,18 @@ void rt_w8_slow(uint32_t a, uint32_t v) {
     if (region == 0x04) io_write(a, v, 1);
 }
 
+void memory_power_on(void) {
+    memset(rt_main_ram, 0, sizeof rt_main_ram);
+    memset(rt_dtcm, 0, sizeof rt_dtcm);
+    rt_dtcm_base = 0x027E0000u;
+    memset(rt_itcm, 0, sizeof rt_itcm);
+    memset(rt_shared_wram, 0, sizeof rt_shared_wram);
+    memset(rt_palette, 0, sizeof rt_palette);
+    memset(rt_oam, 0, sizeof rt_oam);
+    memset(rt_vram, 0, sizeof rt_vram);
+    memset(rt_io, 0, sizeof rt_io);
+}
+
 void memory_state(RtStateIO *s) {
     RT_STATE(s, rt_main_ram);
     RT_STATE(s, rt_dtcm);

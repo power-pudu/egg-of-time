@@ -71,6 +71,7 @@
 #include "dispatch.h"
 #include "rt.h"
 #include "single_screen.h"
+#include "system_menu.h"
 #include "ui_font.h"
 #include "video.h"
 
@@ -291,7 +292,9 @@ static void overlay(uint32_t *dst, const uint32_t *src, int y0, int y1, int dx, 
 #define MENU_Y1 165      /* ...ending right above the copyright (main rows 166-188), over the logo's lower part */
 #define COPYRIGHT_Y0 156 /* bottom-screen rows holding the copyright (BG2)... */
 #define COPYRIGHT_Y1 186
-#define COPYRIGHT_DY 6   /* ...moved down to the main screen's last rows */
+#define COPYRIGHT_DY 6   /* ...moved down to the main screen's last rows (its text from row 166, x up to 245) */
+#define SELECT_HINT_X1 250 /* the SELECT button ends left of this column... */
+#define SELECT_HINT_Y1 164 /* ...and above this row */
 
 static void compose_title(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     memcpy(main, top, SCREEN_W * SCREEN_H * 4);
@@ -307,7 +310,7 @@ static void compose_title(uint32_t *main, const uint32_t *top, const uint32_t *b
         int f = (mb >> 14) == 2 ? (mb & 31) : 0;
         if (f > 16) f = 16;
         uint32_t v = 255u * (uint32_t)(16 - f) / 16;
-        const char *prompt = "Press any button to start";
+        const char *prompt = rt_french() ? "Appuyez sur une touche pour commencer" : "Press any button to start";
         ui_draw_text(main, prompt, FREE_CX - ui_text_width(prompt) / 2, FREE_CY - 4, BLACK | v << 16 | v << 8 | v);
         return;
     }
@@ -336,6 +339,8 @@ static void compose_title(uint32_t *main, const uint32_t *top, const uint32_t *b
             if (x + MENU_DX >= 0 && x + MENU_DX < SCREEN_W) main[ty * SCREEN_W + x + MENU_DX] = src[x];
         }
     }
+    /* SELECT opens System Settings from the menu: its button, bottom right, right above the copyright. */
+    if (rt_r16(sc.obj + TITLE_PHASE) == TITLE_MENU) sysmenu_draw_select_button(main, SELECT_HINT_X1, SELECT_HINT_Y1);
 }
 
 /* Game Settings: top screen, the highlighted option's title and description box; bottom screen, the options
@@ -365,7 +370,7 @@ static void relabel_select(uint32_t *main, int y) {
             row[x] = row[SELECT_FILL_X + (x - SELECT_LABEL_X0) % SELECT_FILL_W];
         }
     }
-    ui_draw_text(main, "System settings", SELECT_LABEL_X0 + 2, y + 6, 0xFFFFFFFFu);
+    ui_draw_text(main, rt_french() ? "Options syst\xC3\xA8me" : "System settings", SELECT_LABEL_X0 + 2, y + 6, 0xFFFFFFFFu);
 }
 
 static void compose_settings(Scene sc, uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
@@ -961,7 +966,8 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
     if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE) { /* widescreen: the top screen with its margins */
         memcpy(main, wide, (size_t)wide_w * SCREEN_H * 4);
         if (paused) {
-            const char *hint = "Press SELECT to open System Settings";
+            const char *hint = rt_french() ? "Appuyez sur SELECT pour les options syst\xC3\xA8me"
+                                           : "Press SELECT to open System Settings";
             ui_draw_text_in(main, wide_w, hint, (wide_w - ui_text_width(hint)) / 2, SCREEN_H - UI_FONT_H - 6, 0xFFFFFFFFu);
         }
         return wide_w;

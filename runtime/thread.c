@@ -51,7 +51,8 @@ CPU *rt_cur_cpu;
 static RtThread *threads[MAX_THREADS];
 static RtThread *cur, *next;
 static void (*boot_fn)(CPU *cpu);
-static int restart; /* a state load was requested: rebuild every thread from it */
+static int restart; /* RESTART_STATE: rebuild every thread from the loaded state; RESTART_BOOT: power on again */
+enum { RESTART_STATE = 1, RESTART_BOOT };
 
 uint32_t rt_call_game(CPU *cpu, uint32_t addr, uint32_t a0, uint32_t a1, uint32_t a2) {
     uint32_t lr = R[14];
@@ -200,19 +201,33 @@ void threads_state(RtStateIO *s) {
     RT_STATE(s, tstate);
 }
 
-_Noreturn void rt_threads_restart(void) {
-    restart = 1;
+_Noreturn void rt_threads_restart(int power_on) {
+    restart = power_on ? RESTART_BOOT : RESTART_STATE;
     next = NULL;
     mco_yield(cur->co);
     rt_fatal(NULL, "dropped game thread was resumed");
 }
 
-/* Replaces every thread with the ones in the loaded state; returns the one that was running. */
-static RtThread *threads_from_state(void) {
+static void threads_drop(void) {
     for (int i = 0; i < MAX_THREADS; i++) {
         if (threads[i]) thread_free(threads[i]);
     }
     cur = NULL;
+}
+
+/* A reboot: memory as at power-on and a new boot thread (rt_boot sets the hardware up again). */
+static RtThread *threads_power_on(void) {
+    threads_drop();
+    memory_power_on();
+    cpu_power_on();
+    RtThread *t = thread_new();
+    t->boot = 1;
+    return t;
+}
+
+/* Replaces every thread with the ones in the loaded state; returns the one that was running. */
+static RtThread *threads_from_state(void) {
+    threads_drop();
     rt_state_apply_requested();
     RtThread *run = NULL;
     for (int i = 0; i < MAX_THREADS; i++) {
@@ -240,8 +255,8 @@ void rt_threads_run(void (*boot)(CPU *cpu)) {
         if (prev && prev->dead) thread_free(prev);
         mco_resume(cur->co);
         if (restart) {
+            next = restart == RESTART_BOOT ? threads_power_on() : threads_from_state();
             restart = 0;
-            next = threads_from_state();
             continue;
         }
         if (mco_status(cur->co) == MCO_DEAD) break;

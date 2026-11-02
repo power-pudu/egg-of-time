@@ -3,8 +3,10 @@
 #include <stdlib.h>
 
 #include "dispatch.h"
+#include "display.h"
 #include "rt.h"
 #include "video.h"
+#include "widescreen.h"
 
 RtRom rt_rom;
 
@@ -39,6 +41,8 @@ int rt_load_rom(const char *path) {
 }
 
 /* Firmware user settings (GBATEK "DS Firmware User Settings"), as the firmware copies them to RAM. */
+#define USER_SETTINGS 0x027FFC80u
+
 static void write_user_settings(uint32_t a) {
     for (uint32_t i = 0; i < 0x70; i++) rt_w8(a + i, 0);
     rt_w16(a + 0x00, 5);    /* version */
@@ -50,8 +54,11 @@ static void write_user_settings(uint32_t a) {
     /* Touch calibration: two ADC/screen point pairs, 16 ADC units per pixel. */
     rt_w16(a + 0x58, 32 * 16); rt_w16(a + 0x5A, 32 * 16); rt_w8(a + 0x5C, 32); rt_w8(a + 0x5D, 32);
     rt_w16(a + 0x5E, 224 * 16); rt_w16(a + 0x60, 160 * 16); rt_w8(a + 0x62, 224); rt_w8(a + 0x63, 160);
-    rt_w16(a + 0x64, 1 | 3 << 4); /* language English, backlight max */
+    /* Language (1 English, 2 French: the two the USA game has), backlight max. */
+    rt_w16(a + 0x64, (display_setting_get(SET_LANGUAGE) == LANGUAGE_FRENCH ? 2 : 1) | 3 << 4);
 }
+
+int rt_french(void) { return (rt_r16(USER_SETTINGS + 0x64) & 7) == 2; }
 
 /* Console Wi-Fi MAC address, which the ARM7 copies from firmware to RAM at power-on (OS_GetMacAddress).
  * DS Protect's emulator check (func_0204e334) treats an all-zero MAC, or the one emulators used
@@ -85,7 +92,7 @@ void rt_boot(CPU *cpu) {
     rt_w32(0x027FFC00u, chip_id);
     rt_w32(0x027FFC04u, chip_id);
     rt_w16(0x027FFC40u, 1); /* boot indicator: booted from cartridge */
-    write_user_settings(0x027FFC80u);
+    write_user_settings(USER_SETTINGS);
     rt_write_console_mac();
 
     if (arm9_entry != rt_game->entry_point) {
@@ -93,6 +100,7 @@ void rt_boot(CPU *cpu) {
     }
     hw_reset();
     video_reset();
+    ws_reset();
     pxi_reset();
     card_reset();
     sched_init();
