@@ -145,7 +145,8 @@ int ws_room_span(int *x0, int *x1) {
      * house's), and wraps at its masks. */
     int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17);
     if (right < left) return 0;
-    int view = rt_r16(scroll + 4) * 8 + (io_get16(0x10) & 7); /* the view's left in the map (BG0's fine scroll, as below) */
+    /* The view's left in the map: the camera's (BG0's scroll can move on its own, an animated layer). */
+    int view = (int16_t)rt_r16(CAMERA);
     *x0 = left * 16 - view;
     *x1 = (right + 1) * 16 - view;
     return 1;
