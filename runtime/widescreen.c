@@ -278,9 +278,16 @@ void ws_fill_margins(int margin) {
     if (!ok0 && !ok1 && !ok2) return;
     copy_room_rows(scroll, room);
     int camc = rt_r16(scroll + 4), camr = rt_r16(scroll + 8);
-    int fine = io_get16(0x10) & 7, vfine = io_get16(0x12) & 7; /* BG0: every filled layer agrees on the tile */
-    int left = camc + ((fine - margin) >> 3), right = camc + ((fine + SCREEN_W - 1 + margin) >> 3);
-    int bottom = camr + ((vfine + SCREEN_H - 1) >> 3);
+    /* The tiles the filled layers show: they agree on the tile, not always on the pixel (Zenan Bridge: BG0 still
+     * at 0, 0, BG2 and BG3 6 rows down, so they show a 25th row). */
+    int left = camc + 1, right = camc - 1, bottom = camr;
+    for (int bg = 0; bg < 4; bg++) {
+        if (!(bg == 2 ? ok0 : bg == 3 ? ok1 : bg == 0 ? ok2 : okhi)) continue;
+        int fine = io_get16(0x10 + 4 * bg) & 7, vfine = io_get16(0x12 + 4 * bg) & 7;
+        int l = camc + ((fine - margin) >> 3), r = camc + ((fine + SCREEN_W - 1 + margin) >> 3);
+        int b = camr + ((vfine + SCREEN_H - 1) >> 3);
+        left = l < left ? l : left, right = r > right ? r : right, bottom = b > bottom ? b : bottom;
+    }
     for (int c = left; c <= right; c++) {
         if (c >= camc && c < camc + 32) continue; /* the game's own columns */
         for (int r = camr; r <= bottom; r++) {

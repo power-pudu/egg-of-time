@@ -102,7 +102,9 @@ original bytes, and caches the result per region until the region is written.
     (`*(*(0x020708d4) + 0xc / + 0x10)`, 2x2 tiles of 3 bytes) and the scroll state `*(0x020708e0)` (camera column
     +4, row +8, map masks +0x1a, ring origins +0x8e); layer 2 goes to BG0 (palette through the table at
     0x02058714), layers 0 and 1 to BG2 and BG3, their priority tiles to BG1. That model reproduces every cell the
-    game itself drew in the Millennial Fair. A layer is filled only while its BG scroll agrees with its ring origin.
+    game itself drew in the Millennial Fair. A layer is filled only while its BG scroll agrees with its ring origin
+    (on the tile: the margins take the tiles every filled layer shows at its own fine scroll; on Zenan Bridge BG0
+    stays at 0, 0 while BG2 and BG3 sit 6 rows lower and show a 25th tile row).
   - Rooms narrower than the view: the margins show what the map holds beside the room, its tiles repeated (the
     map wraps at its masks) or neighbouring rooms (a house's map holds several). Fill screen sides (System
     Settings, shown with a wide aspect ratio): Yes keeps that; No (the default) draws black beyond the room
