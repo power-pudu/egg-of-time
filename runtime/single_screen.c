@@ -893,33 +893,51 @@ static void compose_shop(uint32_t *main, const uint32_t *top, const uint32_t *bo
  * ring (above it, rows 7-35, or under it, rows 140-147; up to x 250), A Warp and B buttons (rows 150-172). The
  * main screen shows a second picture of the bottom screen that the renderer draws with the sprites starting
  * above AGES_SELECTOR_ROWS (ring, line and name) AGES_SHIFT columns left (ss_bottom_shift), the swirl and the
- * buttons in place, and the map at half size right of the ring, the two centred together. That picture has the
+ * buttons in place, and the map at half size right of the ring, the two centred together, under the sprites
+ * (Middle Ages' name, beside the ring, reaches over it). That picture has the
  * widescreen margins (wide_w columns), the swirl continuing into them. */
 #define AGES_SHIFT 44
 #define AGES_SELECTOR_ROWS 148 /* the buttons' sprites start below */
 #define AGES_RING_X 88         /* the ring's columns on the DS: 88-145 */
 #define AGES_RING_W 58
 #define AGES_GAP 10            /* between ring and map */
-#define AGES_MAP_TO_Y 38       /* the map's top row: it ends above Middle Ages' name (rows 112-118, beside the
-                                * ring), and Present's (rows 37-42) ends left of it */
+#define AGES_RING_Y 40         /* the ring's rows: 40-135 */
+#define AGES_RING_H 96
 #define AGES_MAP_X 26          /* the map's parchment on the top screen, halved to MAP_W x MAP_H */
 #define AGES_MAP_Y 26
 #define AGES_MAP_W 102
-#define AGES_MAP_H 73
+#define AGES_MAP_H 70          /* the parchment ends at row 165: the screen's dark backdrop below */
+#define AGES_MAP_TO_Y (AGES_RING_Y + (AGES_RING_H - AGES_MAP_H) / 2) /* the map's top row: centred on the ring */
 
-static uint32_t average4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+/* The top screen's backdrop around the parchment is grey, the parchment never. */
+static int grey(uint32_t c) { return (c & 0xFF) == (c >> 8 & 0xFF) && (c & 0xFF) == (c >> 16 & 0xFF); }
+
+/* The average of a 2x2 block of the map; on its outer pixels only of the parchment's (its corners are rounded):
+ * 0 when there is none there. */
+static uint32_t map_pixel(const uint32_t *p, int edge) {
+    const uint32_t px[4] = {p[0], p[1], p[SCREEN_W], p[SCREEN_W + 1]};
+    uint32_t sum[4] = {0}, n = 0;
+    for (int i = 0; i < 4; i++) {
+        if (edge && grey(px[i])) continue;
+        for (int s = 0; s < 4; s++) sum[s] += px[i] >> 8 * s & 0xFF;
+        n++;
+    }
     uint32_t out = 0;
-    for (int s = 0; s < 32; s += 8) out |= (((a >> s & 0xFF) + (b >> s & 0xFF) + (c >> s & 0xFF) + (d >> s & 0xFF) + 2) / 4) << s;
+    for (int s = 0; n && s < 4; s++) out |= (sum[s] + n / 2) / n << 8 * s;
     return out;
 }
 
-static void compose_ages(uint32_t *main, const uint32_t *top, const uint32_t *shifted, int wide_w) {
+static void compose_ages(uint32_t *main, const uint32_t *top, const uint32_t *shifted, const uint8_t *sprite,
+                         int wide_w) {
     memcpy(main, shifted, (size_t)wide_w * SCREEN_H * 4);
     int mx = (wide_w - SCREEN_W) / 2 + AGES_RING_X - AGES_SHIFT + AGES_RING_W + AGES_GAP, my = AGES_MAP_TO_Y;
     for (int y = 0; y < AGES_MAP_H; y++) {
         for (int x = 0; x < AGES_MAP_W; x++) {
             const uint32_t *p = &top[(AGES_MAP_Y + 2 * y) * SCREEN_W + AGES_MAP_X + 2 * x];
-            main[(my + y) * wide_w + mx + x] = average4(p[0], p[1], p[SCREEN_W], p[SCREEN_W + 1]);
+            int edge = x < 2 || y < 2 || x >= AGES_MAP_W - 2 || y >= AGES_MAP_H - 2;
+            uint32_t c = map_pixel(p, edge);
+            int at = (my + y) * wide_w + mx + x;
+            if (c && !sprite[at]) main[at] = c; /* else the swirl, or a sprite */
         }
     }
 }
@@ -954,7 +972,7 @@ static SDL_AtomicInt menu_place;
 int ss_menu_place(void) { return SDL_GetAtomicInt(&menu_place); }
 
 int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, const uint32_t *wide, int wide_w,
-               const uint32_t *bottom_shifted) {
+               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite) {
     Scene sc = current();
     if (sc.kind != SCENE_EQUIP) equip_portrait = -1; /* the page opens with its member's portrait */
     int paused = EGG_SINGLE_SCREEN && sc.kind == SCENE_FIELD && field_paused();
@@ -1020,7 +1038,7 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
         break;
     case SCENE_AGES:
         if (bottom_shifted) {
-            compose_ages(main, top, bottom_shifted, wide_w);
+            compose_ages(main, top, bottom_shifted, shifted_sprite, wide_w);
             return wide_w;
         }
         memcpy(main, bottom, SCREEN_W * SCREEN_H * 4); /* the first frame, drawn before the scene was known */

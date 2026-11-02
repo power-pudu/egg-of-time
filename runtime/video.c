@@ -123,6 +123,7 @@ static uint32_t frame[2][VIDEO_LINE_MAX * SCREEN_H]; /* by engine, VIDEO_LINE_MA
 static uint32_t present[2][SCREEN_W * SCREEN_H];      /* top, bottom */
 static uint32_t present_wide[VIDEO_LINE_MAX * SCREEN_H], present_main[VIDEO_LINE_MAX * SCREEN_H];
 static uint32_t shifted_frame[VIDEO_LINE_MAX * SCREEN_H], present_shifted[VIDEO_LINE_MAX * SCREEN_H]; /* see Engine.sel_shift */
+static uint8_t shifted_sprite[VIDEO_LINE_MAX * SCREEN_H], present_shifted_sprite[VIDEO_LINE_MAX * SCREEN_H]; /* its sprite pixels */
 static int present_shifted_on;
 static int present_main_w;
 static SDL_Mutex *present_lock;
@@ -913,6 +914,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 else if (effect == 3) c = brighten(c, evy, 0);
             }
             dst[x] = pass && !e->sel_shift && !(sprite_shows && o->party[x]) && !still ? 0 : to_rgba(c);
+            if (pass && e->sel_shift) shifted_sprite[y * VIDEO_LINE_MAX + x] = (uint8_t)sprite_shows;
             if (e->room_clip && (x - m < e->room_x0 || x - m >= e->room_x1)) dst[x] = pass ? 0 : 0xFF000000u;
         }
         }
@@ -965,8 +967,10 @@ void video_end_frame(void) {
     present_shifted_on = eb->sel_shift && mb == m; /* as wide as the top screen's (the margin read for each) */
     for (int y = 0; present_shifted_on && y < SCREEN_H; y++) {
         memcpy(&present_shifted[y * w], &shifted_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);
+        memcpy(&present_shifted_sprite[y * w], &shifted_sprite[y * VIDEO_LINE_MAX], (size_t)w);
     }
-    present_main_w = ss_compose(present_main, present[0], present[1], present_wide, w, present_shifted_on ? present_shifted : NULL);
+    present_main_w = ss_compose(present_main, present[0], present[1], present_wide, w, present_shifted_on ? present_shifted : NULL,
+                                present_shifted_sprite);
     present_party_on = engines[a_top ? 0 : 1].party && present_main_w == w; /* the field: main is the wide picture */
     for (int y = 0; present_party_on && y < SCREEN_H; y++) {
         memcpy(&present_party[y * w], &party_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);

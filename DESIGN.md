@@ -266,9 +266,10 @@ original bytes, and caches the result per region until the region is written.
     with wraparound). The main screen centres the ring and a half-size map (box-filtered) side by side: in this
     scene the renderer composes the bottom engine's lines a second time, with the sprites that start above row
     148 (ring, line and name; the buttons start below) drawn 44 columns left (`ss_bottom_shift`), the swirl
-    and buttons in place, and the main screen is that picture with the map put over it. The DS bottom screen of
-    the other layouts stays as it is. The name sits above the ring, beside it (Present rows 37-42, Middle Ages
-    rows 112-118) or under it (rows 131-147), so the map takes rows 38-110, 10 columns right of the ring.
+    and buttons in place, and the main screen is that picture with the map put under its sprites (the renderer
+    marks them). The DS bottom screen of the other layouts stays as it is. The map takes rows 53-122, centred on
+    the ring (rows 40-135), 10 columns right of it; the name sits above the ring, beside it (Present rows 37-42,
+    Middle Ages rows 112-118, whose end then lies on the map's edge) or under it (rows 131-147).
     Widescreen: in this scene the bottom engine is drawn with the top screen's margins too, so the second
     picture is as wide as the field's, the swirl (wrapping) filling the sides and the rest centred.
     (Shifting whole rows instead, from a bottom screen drawn with margins, needed a shear between the moved
