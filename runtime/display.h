@@ -24,14 +24,18 @@ void display_capture(const char *path);
 
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
  * Setting one applies it at once and saves eggoftime.ini. */
-enum { SET_LANGUAGE, SET_WINDOW, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_COLOR, SET_MODS, SET_FF_MUSIC,
+enum { SET_LANGUAGE, SET_WINDOW, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC,
        SET_COUNT };
 enum { LANGUAGE_ENGLISH, LANGUAGE_FRENCH }; /* SET_LANGUAGE values */
 enum { FF_MUSIC_FAST, FF_MUSIC_NORMAL };    /* SET_FF_MUSIC values */
 const char *display_setting_title(int id);
 int display_setting_count(int id);
 int display_setting_get(int id);
-int display_setting_shown(int id); /* the menu lists it (Fill screen sides: only with a wide aspect ratio) */
+/* The menu lists it: Fill screen sides only with a wide aspect ratio, Shader only with shaders in mods/shaders,
+ * Internal resolution and Graphics filter only without a shader. */
+int display_setting_shown(int id);
+/* The chosen shader's path under mods/shaders (e.g. "glsl/crt/crt-geom.glslp"); NULL when Shader is Off. */
+const char *display_shader_path(void);
 const char *display_setting_label(int id, int value); /* may use a buffer shared by every call */
 void display_setting_set(int id, int value);
 /* Window frame interval for the chosen framerate, in nanoseconds; 0 for unlimited. */

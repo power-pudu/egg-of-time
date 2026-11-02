@@ -17,6 +17,7 @@ env:
   SDL: SDL3-3.4.18
   FFMPEG: ffmpeg-n8.1-latest-win64-lgpl-shared-8.1
   FFMPEG_LINUX: ffmpeg-n8.1-latest-linux64-lgpl-shared-8.1
+  LIBRASHADER: librashader-v0.12.0
 
 jobs:
   windows:
@@ -41,6 +42,15 @@ jobs:
           for z in llvm sdl ffmpeg xdelta3; do python -m zipfile -e $z.zip .; done
           pip install ninja
 
+      # Slang shader mods (runtime/shader.c): librashader with only its OpenGL runtime, and the C runtime linked in,
+      # so the DLL needs nothing beyond Windows itself (the published DLLs also need D3DX9 and the MSVC runtime).
+      - name: librashader
+        run: |
+          git clone -q --depth 1 --branch $LIBRASHADER https://github.com/SnowflakePowered/librashader deps/librashader
+          cd deps/librashader
+          RUSTFLAGS="-C target-feature=+crt-static" cargo run -p librashader-build-script -- --profile optimized \
+            -- --no-default-features --features runtime-opengl
+
       - name: Build the runtime
         run: |
           export PATH="$PWD/deps/$LLVM/bin:$PATH"
@@ -55,6 +65,7 @@ jobs:
           python -I scripts/package.py --build build --llvm deps/$LLVM --python-embed deps/python-embed.zip \
             --dsd deps/dsd.exe --dsd-license deps/dsd-LICENSE.txt --sdl deps/$SDL --ffmpeg deps/$FFMPEG \
             --xdelta deps/xdelta3-3.2.2-windows-x86_64/xdelta3.exe --xdelta-license deps/xdelta3-LICENSE.txt \
+            --librashader deps/librashader/target/optimized/librashader.dll --librashader-license deps/librashader/LICENSE.md \
             --out "dist/Egg of Time" --zip "dist/EggOfTime-${GITHUB_REF_NAME}-windows-x64.zip"
 
       - name: Upload the package
@@ -87,6 +98,12 @@ jobs:
           tar xf ffmpeg.tar.xz
           tar xf xdelta3.tar.gz
 
+      - name: librashader
+        run: |
+          git clone -q --depth 1 --branch $LIBRASHADER https://github.com/SnowflakePowered/librashader deps/librashader
+          cd deps/librashader
+          cargo run -p librashader-build-script -- --profile optimized -- --no-default-features --features runtime-opengl
+
       - name: Build the runtime
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Release -DEGG_RUNTIME_ONLY=ON             -DCMAKE_PREFIX_PATH="$PWD/deps/$FFMPEG_LINUX" -DFETCHCONTENT_BASE_DIR="$PWD/deps/fetch"
@@ -94,7 +111,7 @@ jobs:
 
       - name: Package
         run: |
-          python3 -I scripts/package.py --build build --dsd deps/dsd --dsd-license deps/dsd-LICENSE.txt             --sdl deps/fetch/sdl3-src --ffmpeg deps/$FFMPEG_LINUX             --xdelta deps/xdelta3-3.2.2-linux-x86_64/xdelta3 --xdelta-license deps/xdelta3-LICENSE.txt             --out "dist/Egg of Time" --tar "dist/EggOfTime-${GITHUB_REF_NAME}-linux-x64.tar.gz"             --appimage "dist/EggOfTime-${GITHUB_REF_NAME}-x86_64.AppImage" --appimagetool deps/appimagetool             --appimage-runtime deps/runtime-x86_64
+          python3 -I scripts/package.py --build build --dsd deps/dsd --dsd-license deps/dsd-LICENSE.txt             --sdl deps/fetch/sdl3-src --ffmpeg deps/$FFMPEG_LINUX             --xdelta deps/xdelta3-3.2.2-linux-x86_64/xdelta3 --xdelta-license deps/xdelta3-LICENSE.txt             --librashader deps/librashader/target/optimized/librashader.so             --librashader-license deps/librashader/LICENSE.md             --out "dist/Egg of Time" --tar "dist/EggOfTime-${GITHUB_REF_NAME}-linux-x64.tar.gz"             --appimage "dist/EggOfTime-${GITHUB_REF_NAME}-x86_64.AppImage" --appimagetool deps/appimagetool             --appimage-runtime deps/runtime-x86_64
 
       - name: Upload the package
         uses: actions/upload-artifact@v4

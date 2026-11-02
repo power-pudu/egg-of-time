@@ -1,5 +1,5 @@
 /* System Settings menu: language, window mode, internal resolution, aspect ratio, framerate, V-Sync, graphics
- * filter, mods (display.c holds and applies them), and the Controls page (controls.c). SELECT opens it from the game's Game Settings screen (the button
+ * filter, shader (listed when mods/shaders has some; the footer shows the chosen one's path), mods (display.c holds and applies them), and the Controls page (controls.c). SELECT opens it from the game's Game Settings screen (the button
  * single screen mode relabels "System settings"), the title screen's menu or while the field is paused; B or
  * SELECT closes it, and so does the game leaving that place (the title idling into the intro, say). Closed
  * from the pause, it also presses START for the game, which ends the pause. Up/Down pick a setting,
@@ -43,6 +43,7 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_FRAMERATE] = "Frames shown per second. Game: 60.",
     [SET_VSYNC] = "Waits for the display: no tearing.",
     [SET_FILTER] = "How the pixels are scaled up.",
+    [SET_SHADER] = "RetroArch shaders in mods/shaders.",
     [SET_COLOR] = "Deepens colors toward the SNES.",
     [SET_MODS] = "Replacement movies and music (mods).",
     [SET_FF_MUSIC] = "Normal speed may delay music cues.",
@@ -245,6 +246,18 @@ static void scroll_to(uint32_t *s, int *top, int at, int n) {
     if (n > ROWS_SHOWN) scroll_arrow(s, -1, *top > 0), scroll_arrow(s, 1, *top + ROWS_SHOWN < n);
 }
 
+/* text cut to at most w pixels wide, ending in ".." when cut (a buffer shared by every call). */
+static const char *fit(const char *text, int w) {
+    static char buf[256];
+    if (ui_text_width(text) <= w) return text;
+    for (size_t n = SDL_min(SDL_strlen(text), sizeof buf - 3);; n--) {
+        SDL_memcpy(buf, text, n);
+        SDL_memcpy(buf + n, "..", 3);
+        if (n == 0 || ui_text_width(buf) <= w) break;
+    }
+    return buf;
+}
+
 static void centered(uint32_t *s, const char *text, Rect r, uint32_t color) {
     ui_draw_text(s, text, r.x + (r.w - ui_text_width(text)) / 2, r.y + 4, color);
 }
@@ -301,7 +314,7 @@ void sysmenu_draw(uint32_t *s) {
             panel(s, vr, &BUTTON);
             if (sel) frame(s, vr, TEAL);
             ui_draw_text(s, i == ROW_CONTROLS ? "Controls" : display_setting_title(i), lr.x + 6, ty, sel ? WHITE : GREY);
-            const char *v = i == ROW_CONTROLS ? "A: change" : display_setting_label(i, display_setting_get(i));
+            const char *v = i == ROW_CONTROLS ? "A: change" : fit(display_setting_label(i, display_setting_get(i)), vr.w - 24);
             ui_draw_text(s, v, vr.x + (vr.w - ui_text_width(v)) / 2, ty, sel ? YELLOW : WHITE);
             if (sel && i != ROW_CONTROLS) {
                 ui_draw_text(s, "<", vr.x + 5, ty, WHITE);
@@ -311,6 +324,7 @@ void sysmenu_draw(uint32_t *s) {
     }
 
     const char *footer = descriptions[cursor];
+    if (cursor == SET_SHADER && display_shader_path()) footer = fit(display_shader_path(), 208);
     if (confirm) footer = "A: confirm.  B: not now.";
     else if (controls_page && controls_capturing()) footer = ctl_pad ? "Press a gamepad button. Esc: cancel." : "Press a key. Esc: cancel.";
     else if (controls_page) footer = ctl_cursor == ROW_RESET ? "A: restore the default controls." : "A: change.  Left/Right: key or pad.";

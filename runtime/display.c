@@ -17,6 +17,11 @@
  * to the internal size, then a smooth fit: the default), Smooth (Scale2x applied twice for 4x edge-smoothed
  * art, then smooth scaling).
  *
+ * Shader (shader.c): a RetroArch shader from mods/shaders instead of the filter and internal resolution. Each shown
+ * screen is drawn at its native size and runs through the shader into its place in the window, so the shader
+ * sees one DS screen (as RetroArch shaders expect), not the gap between two. With shaders in mods/shaders, the
+ * window uses SDL's OpenGL renderer (the one shaders can run on).
+ *
  * Window modes: windowed, borderless windowed (fullscreen on the desktop's mode), fullscreen (exclusive, at
  * the desktop's mode); F11 toggles between windowed and the last other mode. EGG_WINDOWED=1 starts windowed
  * without changing the setting (automated runs). Framerate only paces the window's presentation (main.c):
@@ -30,6 +35,7 @@
 #include "display.h"
 #include "movie.h"
 #include "rt.h"
+#include "shader.h"
 #include "single_screen.h"
 #include "video.h"
 
@@ -78,6 +84,8 @@ static const char *const language_names[] = {"english", "french"};
 static const char *const language_labels[] = {"English", "French"};
 static const char *const ff_music_names[] = {"fast", "normal"};
 static const char *const ff_music_labels[] = {"Sped up", "Normal speed"};
+static const char *const off_names[] = {"off"};
+static const char **shader_names; /* "off", then shader_key() of each listed shader */
 
 static Setting settings[SET_COUNT] = {
     /* The DS's system language, which the game reads at power-on (boot.c): changes apply at the next start. */
@@ -90,6 +98,7 @@ static Setting settings[SET_COUNT] = {
     [SET_FRAMERATE] = {"framerate", "Framerate", 6, 1, fps_names, fps_labels},
     [SET_VSYNC] = {"vsync", "V-Sync", 2, 1, onoff_names, onoff_labels},
     [SET_FILTER] = {"filter", "Graphics filter", 4, FILTER_SHARP, filter_names, filter_labels},
+    [SET_SHADER] = {"shader", "Shader", 1, 0, off_names, NULL}, /* the list: list_shaders */
     [SET_COLOR] = {"color", "Color", 4, 1, color_names, color_labels},
     [SET_MODS] = {"mods", "Mods", 2, 1, onoff_names, onoff_labels}, /* replacement cutscenes and music (movie.c, music.c) */
     /* Fast forward (main.c, sched.c); Normal speed keeps the music sequences on the host's clock (snd.c). */
@@ -102,6 +111,9 @@ static SDL_Renderer *ren;
 static int layout = EGG_SINGLE_SCREEN ? LAYOUT_TOP : LAYOUT_STACKED, swapped;
 static int last_full = WINDOW_BORDERLESS; /* F11 from windowed returns here */
 static SDL_Texture *native[4], *smooth[4], *internal; /* top, bottom, main, party; internal: N x the layout */
+static SDL_Texture *shader_in[2], *shader_out[2];      /* per screen: its picture, then shaded at its window size */
+static uint64_t shader_frames;
+static char saved_shader[1024];                        /* eggoftime.ini's shader, until the list is known */
 static int party_on;                                   /* the party layer is shown (camera smoothing) */
 static int main_w = SCREEN_W;                          /* the main screen's width (widescreen) */
 static int main_guard;                                 /* hidden columns each side of it (camera smoothing) */
@@ -154,10 +166,16 @@ static int lookup(const char *const *names, int n, const char *v) {
 static void load_settings(void) {
     FILE *f = fopen(ini_path, "r");
     if (!f) return;
-    char line[128], key[32], val[32];
+    char line[1100], key[32];
     while (fgets(line, sizeof line, f)) {
-        if (sscanf(line, " %31[a-z] = %31[a-z0-9]", key, val) != 2) continue;
+        int at = -1;
+        if (sscanf(line, " %31[a-z] = %n", key, &at) != 1 || at < 0) continue;
+        char *val = line + at;
+        size_t len = strcspn(val, "\r\n");
+        while (len && (val[len - 1] == ' ' || val[len - 1] == '\t')) len--;
+        val[len] = 0;
         int v;
+        if (!strcmp(key, "shader")) snprintf(saved_shader, sizeof saved_shader, "%s", val);
         if (!strcmp(key, "layout") && (v = lookup(layout_names, LAYOUT_COUNT, val)) >= 0) layout = v;
         else if (!strcmp(key, "swap")) swapped = val[0] == '1';
         for (int i = 0; i < SET_COUNT; i++) {
@@ -221,7 +239,7 @@ static SDL_FRect dest_rect(void) {
     content_size(&cw, &ch);
     SDL_GetRenderOutputSize(ren, &ww, &wh);
     float h = SDL_min((float)wh, (float)ww * ch / cw);
-    if (SETTING(SET_FILTER) == FILTER_PIXEL && h >= ch) {
+    if (SETTING(SET_FILTER) == FILTER_PIXEL && !SETTING(SET_SHADER) && h >= ch) {
         h = SDL_floorf(h / ch) * ch; /* integer scaling */
     }
     float w = h * cw / ch;
@@ -351,40 +369,74 @@ static SDL_Texture *lcd_grid(int n) {
     return lcd_mask;
 }
 
-/* Draws the shown screens into the internal target, then the target into the window. */
+/* *t as a w x h render target, made again when its size differs. */
+static SDL_Texture *sized_target(SDL_Texture **t, int w, int h) {
+    float tw = 0, th = 0;
+    if (*t) SDL_GetTextureSize(*t, &tw, &th);
+    if ((int)tw != w || (int)th != h) {
+        SDL_DestroyTexture(*t);
+        *t = w > 0 && h > 0 ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, w, h) : NULL;
+        if (*t) SDL_SetTextureScaleMode(*t, SDL_SCALEMODE_NEAREST);
+        if (*t) SDL_SetTextureBlendMode(*t, SDL_BLENDMODE_NONE); /* copied as they are (shaders may leave alpha 0) */
+    }
+    return *t;
+}
+
+/* The shown screens through the shader, each from its place in the internal target (native size) to its place
+ * in the window. 0 if the shader cannot run: nothing is drawn. */
+static int draw_shaded(const SDL_FRect *shown, const int *screens, int nshown, int cw, int ch, const SDL_FRect *dest) {
+    float kx = dest->w / cw, ky = dest->h / ch;
+    SDL_FRect at[2];
+    for (int i = 0; i < nshown; i++) {
+        const SDL_FRect *r = &shown[i];
+        at[i] = (SDL_FRect){SDL_roundf(dest->x + r->x * kx), SDL_roundf(dest->y + r->y * ky), SDL_roundf(r->w * kx),
+                            SDL_roundf(r->h * ky)};
+        int s = screens[i];
+        if (!sized_target(&shader_in[s], (int)r->w, (int)r->h) || !sized_target(&shader_out[s], (int)at[i].w, (int)at[i].h)) {
+            return 0;
+        }
+        SDL_SetRenderTarget(ren, shader_in[s]);
+        SDL_RenderTexture(ren, internal, r, NULL);
+        SDL_SetRenderTarget(ren, NULL);
+        if (!shader_run(s, SETTING(SET_SHADER) - 1, shader_in[s], shader_out[s], shader_frames)) return 0;
+    }
+    for (int i = 0; i < nshown; i++) SDL_RenderTexture(ren, shader_out[screens[i]], NULL, &at[i]);
+    shader_frames++;
+    return 1;
+}
+
+/* Draws the shown screens into the internal target, then the target into the window (through the shader if one
+ * is chosen: then the target is the native size). */
 static void draw_screens(void) {
     int cw, ch;
     content_size(&cw, &ch);
     SDL_FRect dest = dest_rect();
-    int n = internal_scale(&dest);
-    float tw = 0, th = 0;
-    if (internal) SDL_GetTextureSize(internal, &tw, &th);
-    if ((int)tw != cw * n || (int)th != ch * n) {
-        SDL_DestroyTexture(internal);
-        internal = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, cw * n, ch * n);
-        if (!internal) return;
-    }
+    int shader = SETTING(SET_SHADER) != 0;
+    int n = shader ? 1 : internal_scale(&dest);
+    if (!sized_target(&internal, cw * n, ch * n)) return;
     SDL_SetRenderTarget(ren, internal);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
     SDL_FRect shown[2];
-    int nshown = 0;
+    int screens[2], nshown = 0;
     for (int screen = 0; screen < 2; screen++) {
         int x, y;
         if (!screen_slot(screen, &x, &y)) continue;
         int tex = screen == 0 && main_shown() ? 2 : screen; /* the main screen alone */
-        int k = SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
+        int k = !shader && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
         SDL_Texture *t = k > 1 ? smooth[tex] : native[tex];
         if (tex != 2 || !main_guard) {
             int w = screen_width(tex);
             SDL_FRect src = {0, 0, (float)w * k, (float)SCREEN_H * k};
             SDL_FRect r = {(float)x * n, (float)y * n, (float)w * n, (float)SCREEN_H * n};
             SDL_RenderTexture(ren, t, &src, &r);
+            screens[nshown] = screen;
             shown[nshown++] = r;
             continue;
         }
         /* The field with its hidden columns, slid (camera smoothing); rows beyond the picture repeat its edge. */
         float vw = (float)(main_w - 2 * main_guard), sx = ((float)main_guard + slide_x) * k, o = slide_y;
+        screens[nshown] = screen;
         shown[nshown++] = (SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n};
         float rows = SCREEN_H - SDL_fabsf(o), top = o < 0 ? -o : 0;
         SDL_RenderTexture(ren, t, &(SDL_FRect){sx, (o > 0 ? o : 0) * k, vw * k, rows * k},
@@ -400,24 +452,50 @@ static void draw_screens(void) {
                               &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n});
         }
     }
-    SDL_Texture *grid = SETTING(SET_FILTER) == FILTER_LCD ? lcd_grid(n) : NULL;
+    SDL_Texture *grid = !shader && SETTING(SET_FILTER) == FILTER_LCD ? lcd_grid(n) : NULL;
     for (int i = 0; grid && i < nshown; i++) SDL_RenderTextureTiled(ren, grid, NULL, 1, &shown[i]);
     SDL_SetRenderTarget(ren, NULL);
+    if (shader && draw_shaded(shown, screens, nshown, cw, ch, &dest)) return;
     SDL_SetTextureScaleMode(internal, SETTING(SET_FILTER) == FILTER_PIXEL ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
     SDL_RenderTexture(ren, internal, NULL, &dest);
 }
 
 /* ---- interface ---- */
 
+/* The Shader setting's choices: Off, then the shaders shader_init kept; the saved one chosen if listed. */
+static void list_shaders(void) {
+    int n = shader_count();
+    shader_names = SDL_calloc((size_t)n + 1, sizeof *shader_names);
+    if (!shader_names) return;
+    shader_names[0] = off_names[0];
+    for (int i = 0; i < n; i++) shader_names[i + 1] = shader_key(i);
+    int v = lookup(shader_names, n + 1, saved_shader);
+    settings[SET_SHADER] = (Setting){"shader", "Shader", n + 1, v > 0 ? v : 0, shader_names, NULL};
+}
+
 int display_init(void) {
     snprintf(ini_path, sizeof ini_path, "%seggoftime.ini", rt_data_dir());
     load_settings();
+    shader_scan();
     int cw, ch;
     content_size(&cw, &ch);
-    if (!SDL_CreateWindowAndRenderer("Egg of Time", cw * WINDOW_SCALE, ch * WINDOW_SCALE, SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE, &win, &ren)) {
-        fprintf(stderr, "SDL_CreateWindowAndRenderer: %s\n", SDL_GetError());
+    win = SDL_CreateWindow("Egg of Time", cw * WINDOW_SCALE, ch * WINDOW_SCALE,
+                           SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE | (shader_count() ? SDL_WINDOW_OPENGL : 0));
+    if (!win) {
+        fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         return 0;
     }
+    /* Shaders run on the OpenGL renderer; without them (or OpenGL 3.3), SDL's default renderer. */
+    ren = shader_count() ? SDL_CreateRenderer(win, "opengl") : NULL;
+    if (ren && !shader_init(ren)) {
+        SDL_DestroyRenderer(ren);
+        ren = NULL;
+    }
+    if (!ren && !(ren = SDL_CreateRenderer(win, NULL))) {
+        fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
+        return 0;
+    }
+    list_shaders();
     SDL_SetRenderVSync(ren, SETTING(SET_VSYNC));
     if (SETTING(SET_WINDOW) != WINDOW_WINDOWED) last_full = SETTING(SET_WINDOW);
     if (!SDL_getenv("EGG_WINDOWED")) apply_window_mode(SETTING(SET_WINDOW));
@@ -495,9 +573,20 @@ int display_key(SDL_Scancode sc) {
 const char *display_setting_title(int id) { return settings[id].title; }
 int display_setting_count(int id) { return settings[id].count; }
 int display_setting_get(int id) { return settings[id].value; }
-int display_setting_shown(int id) { return id != SET_FILL || SETTING(SET_ASPECT) != ASPECT_ORIGINAL; }
+int display_setting_shown(int id) {
+    switch (id) {
+    case SET_FILL: return SETTING(SET_ASPECT) != ASPECT_ORIGINAL;
+    case SET_SHADER: return settings[SET_SHADER].count > 1;
+    case SET_RESOLUTION:
+    case SET_FILTER: return !SETTING(SET_SHADER); /* a shader replaces them */
+    default: return 1;
+    }
+}
+
+const char *display_shader_path(void) { return SETTING(SET_SHADER) ? settings[SET_SHADER].names[SETTING(SET_SHADER)] : NULL; }
 
 const char *display_setting_label(int id, int v) {
+    if (id == SET_SHADER) return v ? shader_label(v - 1) : "Off";
     if (id != SET_RESOLUTION) return settings[id].labels[v];
     if (v == 0) return "Auto";
     static char buf[32];

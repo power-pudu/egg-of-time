@@ -34,7 +34,8 @@ Mods: replacement cutscenes and music go in mods/cutscenes and mods/music, and t
 (.ips, .bps, .xdelta, .delta) in mods/translation (see the readme files there). A translation
 patch is applied to your ROM when the game is built, in memory: rom/CT.nds stays the unmodified
 dump. Patches made for Chrono Trigger (Japan) or (Europe) work too, with your dump of that version
-beside them.
+beside them. RetroArch shaders go in mods/shaders/glsl (.glslp, .glsl) and mods/shaders/slang
+(.slangp, .slang), and are chosen in System Settings > Shader.
 
 This is an unofficial fan project, not affiliated with or endorsed by Square Enix or Nintendo.
 Chrono Trigger is a trademark of Square Enix. Third-party licenses are in kit/licenses.

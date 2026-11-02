@@ -4,6 +4,7 @@ The release holds no game code or data: runtime/game_build.c makes the game libr
 the tools in kit/ (see DESIGN.md, "Release builds"). This script copies
 
   <build>/Egg of Time.exe, SDL3 and FFmpeg DLLs, mods/   the runtime (a build with -DEGG_RUNTIME_ONLY=OFF or ON)
+  librashader.dll (--librashader)                         librashader, which runs Slang shader mods
   kit/lib/libeggoftime.a                                  its import library, which the game library links against
   kit/include, kit/recomp, kit/config                     the recompiler and its inputs (runtime/recomp.h, dispatch.h)
   kit/dsd, kit/python, kit/llvm                           dsd, embeddable CPython, and the part of llvm-mingw that
@@ -23,10 +24,11 @@ with the given type 2 runtime. The AppImage is read-only, so there the runtime k
 
 Usage: python -I scripts/package.py --build <dir> --llvm <llvm-mingw dir> --python-embed <python-*-embed-amd64.zip>
            --dsd <dsd.exe> --dsd-license <file> --sdl <SDL3 dir> --ffmpeg <FFmpeg dir> --out <dir> [--zip <file>]
-           [--xdelta <xdelta3.exe> --xdelta-license <file>]
+           [--xdelta <xdelta3.exe> --xdelta-license <file>] [--librashader <dll> --librashader-license <file>]
        python3 -I scripts/package.py --build <dir> --dsd <dsd> --dsd-license <file> --sdl <SDL3 source dir>
            --ffmpeg <FFmpeg shared build dir> --out <dir> [--tar <file.tar.gz>] [--xdelta <xdelta3> --xdelta-license <file>]
            [--appimage <file.AppImage> --appimagetool <appimagetool> --appimage-runtime <runtime-x86_64>]
+           [--librashader <librashader.so> --librashader-license <file>]
 """
 
 import argparse
@@ -159,6 +161,8 @@ def main():
         ap.add_argument("--" + a, required=WINDOWS)
     ap.add_argument("--xdelta")
     ap.add_argument("--xdelta-license")
+    ap.add_argument("--librashader")
+    ap.add_argument("--librashader-license")
     ap.add_argument("--zip")
     ap.add_argument("--tar")
     for a in ("appimage", "appimagetool", "appimage-runtime"):
@@ -183,7 +187,9 @@ def main():
                 copy(os.path.realpath(f), os.path.join(out, os.path.basename(f)))
     if not os.path.exists(os.path.join(out, exe)):
         sys.exit(f"no '{exe}' in " + args.build)
-    for d in ("cutscenes", "music", "translation"):
+    if args.librashader:
+        copy(args.librashader, os.path.join(out, "librashader" + (".dll" if WINDOWS else ".so")))
+    for d in ("cutscenes", "music", "translation", "shaders"):
         copy(os.path.join(ROOT, "res", "mods", d, "readme.txt"), os.path.join(out, "mods", d, "readme.txt"))
     readme = "README.txt" if WINDOWS else "README-linux.txt"
     copy(os.path.join(ROOT, "res", "release", readme), os.path.join(out, "README.txt"))
@@ -227,6 +233,8 @@ def main():
     copy(args.dsd_license, os.path.join(lic, "dsd.txt"))
     copy(os.path.join(args.sdl, "LICENSE.txt"), os.path.join(lic, "SDL3.txt"))
     copy(os.path.join(args.ffmpeg, "LICENSE.txt"), os.path.join(lic, "FFmpeg.txt"))
+    if args.librashader_license:
+        copy(args.librashader_license, os.path.join(lic, "librashader.txt"))
 
     with open(os.path.join(kit, "kit.id"), "w", newline="\n") as f:
         f.write(kit_id(kit) + "\n")

@@ -28,7 +28,7 @@ static char install_dir[1024], data_dir[1024];
 
 /* The AppImage's data folder starts with the mod folders and their readme files, so the player finds where mods go. */
 static void make_mod_folders(void) {
-    static const char *const mods[] = {"cutscenes", "music", "translation"};
+    static const char *const mods[] = {"cutscenes", "music", "translation", "shaders"};
     for (size_t i = 0; i < SDL_arraysize(mods); i++) {
         char from[1024], to[1024];
         snprintf(to, sizeof to, "%smods/%s", data_dir, mods[i]);

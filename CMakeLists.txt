@@ -55,6 +55,8 @@ set(RUNTIME_SOURCES
     runtime/state.c
     runtime/system_menu.c
     runtime/selftest.c
+    runtime/shader.c
+    runtime/shader_glsl.c
     runtime/single_screen.c
     runtime/thread.c
     runtime/translation.c
@@ -115,8 +117,8 @@ if(WIN32)
     endif()
 endif()
 
-# Movie, music and translation mods: empty mods/cutscenes, mods/music and mods/translation folders next to the
-# executable, each with a readme (the list of file names, or how to use the folder).
+# Movie, music, translation and shader mods: empty mods/cutscenes, mods/music, mods/translation and mods/shaders
+# folders next to the executable, each with a readme (the list of file names, or how to use the folder).
 add_custom_command(TARGET eggoftime POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:eggoftime>/mods/cutscenes
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/mods/cutscenes/readme.txt
@@ -126,7 +128,20 @@ add_custom_command(TARGET eggoftime POST_BUILD
             $<TARGET_FILE_DIR:eggoftime>/mods/music
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:eggoftime>/mods/translation
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/mods/translation/readme.txt
-            $<TARGET_FILE_DIR:eggoftime>/mods/translation)
+            $<TARGET_FILE_DIR:eggoftime>/mods/translation
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:eggoftime>/mods/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/mods/shaders/readme.txt
+            $<TARGET_FILE_DIR:eggoftime>/mods/shaders)
+
+# Slang shader mods run in librashader (runtime/shader.c), loaded at run time: a librashader library given here
+# (librashader.dll / .so / .dylib) is copied next to the executable.
+set(EGG_LIBRASHADER "" CACHE FILEPATH "librashader library to put next to the executable (Slang shaders)")
+if(EGG_LIBRASHADER)
+    get_filename_component(LIBRASHADER_EXT ${EGG_LIBRASHADER} LAST_EXT)
+    add_custom_command(TARGET eggoftime POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${EGG_LIBRASHADER}
+                $<TARGET_FILE_DIR:eggoftime>/librashader${LIBRASHADER_EXT})
+endif()
 
 if(EGG_RUNTIME_ONLY)
     return()
