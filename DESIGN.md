@@ -222,6 +222,14 @@ original bytes, and caches the result per region until the region is written.
     SELECT, pause hint) follow the language in RAM (`rt_french`), so a save state keeps its own; the System
     Settings menu stays English. `ui_font.c` reads UTF-8 and has è and é for them.
   - Mods: replacement cutscenes on (the default) or off (movie mods, below).
+- **Fast forward**: holding Left Shift or the gamepad's right trigger (autokey `FF`) runs emulated time at 2x the
+  host clock (`rt_set_speed`; the game thread rebases `sched_now` when it sees the change). Everything on emulated
+  time speeds up; the window keeps presenting at its own rate. The sound driver's frames halve in host time and
+  the mixer steps the channels (and the music mods) twice as fast, so the output stays at the device rate, an
+  octave higher. System Settings > Fast forward music at Normal speed (Sped up is the default) instead runs the
+  players whose sequence is a BGM (`music_is_bgm`) and the channels their tracks hold one driver frame per frame
+  of host time, at their own pitch; the game then sees those players advance slower than itself. Only 2x: from about 3x the host cannot keep up in busy scenes (a Zenan Bridge battle) and the
+  game freezes, its lower priority threads starved, while VBlanks go on.
 - **Single screen mode** (CMake option `EGG_SINGLE_SCREEN`, default ON; `runtime/single_screen.c`): the game laid
   out for one screen. `video_end_frame` builds a third output, the main screen, which the top-only layout shows;
   the other layouts show both DS screens as they are. The running scene is the game's: `Scene::run`
@@ -443,7 +451,7 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
   executable, else relative to the working directory). Alongside dsd's `build/delinks`, that adds
   about 60 MB of generated C and a 140 MB executable to the OneDrive folder.
 - Controls: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Right Shift/Backspace = Select,
-  F2 = layout, F3 = swap screens, F4 = filter, F11 = fullscreen, F5 = save state, F7 = load state, hold Esc = quit. Gamepads use button positions (east = A, south = B,
+  F2 = layout, F3 = swap screens, F4 = filter, F11 = fullscreen, F5 = save state, F7 = load state, hold Left Shift = fast forward, hold Esc = quit. Gamepads use button positions (east = A, south = B,
   north = X, west = Y), shoulders = L/R, Start/Back, D-pad or left stick. X/Y reach the game through the ARM7's
   `HW_BUTTON_XY_BUF` (0x027FFFA8, X = bit 10, Y = bit 11), which `PAD_Read` ORs into KEYINPUT.
 - Video timing: each scanline steps through start (VBlank/VCount IRQs) -> draw -> HBlank (IRQ, HBlank DMA), with

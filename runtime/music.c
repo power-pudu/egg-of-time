@@ -41,6 +41,7 @@ typedef struct Bgm {
 
 static Bgm bgms[256];
 static int bgm_count, archive_read;
+static int is_bgm[PLAYERS]; /* each player's sequence is a BGM (whether or not it is replaced) */
 
 static uint32_t le32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint16_t le16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
@@ -260,9 +261,10 @@ static const char *const extensions[] = {"ogg", "opus", "flac", "mp3", "wav", "m
 
 void music_prepare(int pno, uint32_t seq_data) {
     music_stop(pno);
-    if (pno < 0 || pno >= PLAYERS || !display_setting_get(SET_MODS)) return;
+    if (pno < 0 || pno >= PLAYERS) return;
     const Bgm *b = identify(seq_data);
-    if (!b) return;
+    is_bgm[pno] = b != NULL;
+    if (!b || !display_setting_get(SET_MODS)) return;
     const char *base = rt_data_dir();
     for (size_t i = 0; i < SDL_arraysize(extensions); i++) {
         char path[1024];
@@ -285,6 +287,7 @@ void music_stop(int pno) {
 }
 
 int music_replaced(int pno) { return pno >= 0 && pno < PLAYERS && sources[pno]; }
+int music_is_bgm(int pno) { return pno >= 0 && pno < PLAYERS && is_bgm[pno]; }
 
 void music_player(int pno, int running, int db) {
     if (!music_replaced(pno)) return;
@@ -292,21 +295,27 @@ void music_player(int pno, int running, int db) {
     sources[pno]->db = db;
 }
 
-void music_mix(float *out, uint32_t frames) {
-    static float buf[SPU_RATE / 10 * 2];
+void music_mix(float *out, uint32_t frames, int speed) {
+    static float buf[SPU_RATE / 10 * 2 * 2];
+    speed = SDL_clamp(speed, 1, 2);
     frames = SDL_min(frames, (uint32_t)SPU_RATE / 10);
     for (int i = 0; i < PLAYERS; i++) {
         Source *s = sources[i];
         if (!s || !s->running) continue;
-        if (!fill(s, (int)frames)) {
+        if (!fill(s, (int)frames * speed)) {
             rt_log("music: playback stopped (decoding failed)");
             music_stop(i);
             continue;
         }
         float *p = buf;
-        int got = av_audio_fifo_read(s->fifo, (void **)&p, (int)frames);
+        int got = av_audio_fifo_read(s->fifo, (void **)&p, (int)frames * speed) / speed;
         int db = SDL_min(s->db - s->ref_db, 60); /* up to 6 dB above the sequence's own volume */
-        float gain = db <= -723 ? 0.0f : MUSIC_GAIN * (float)SDL_pow(10.0, db / 200.0);
-        for (int k = 0; k < got * 2; k++) out[k] += buf[k] * gain;
+        float gain = db <= -723 ? 0.0f : MUSIC_GAIN * (float)SDL_pow(10.0, db / 200.0) / speed;
+        for (int k = 0; k < got; k++) { /* fast forward: each output frame averages `speed` of the file's */
+            for (int j = 0; j < speed; j++) {
+                out[k * 2] += buf[(k * speed + j) * 2] * gain;
+                out[k * 2 + 1] += buf[(k * speed + j) * 2 + 1] * gain;
+            }
+        }
     }
 }

@@ -135,6 +135,13 @@ it with B or SELECT. Changes apply immediately and are saved in `eggoftime.ini`.
 two the USA release has) needs the game to restart: the menu asks whether to restart now (unsaved progress is
 lost) or keep the change for the next start.
 
+### Fast forward
+
+Hold **Left Shift** (or the gamepad's right trigger) to run the game at 2x speed. System Settings > Fast forward
+music picks how the music sounds meanwhile: Sped up (the default) plays it faster and higher, as emulators do;
+Normal speed keeps it at its own tempo and pitch. With Normal speed the music falls behind the game, so anything
+that waits for a piece of music to end (a fanfare, say) still takes its usual time.
+
 ### Save states
 
 **F5** saves and **F7** loads. There is one slot, `rom\CT.state`, next to your in-game saves. States keep working
@@ -152,6 +159,7 @@ Gamepads work out of the box. The DS face buttons map by position: A is the righ
 | L / R | Q / W | Shoulder buttons |
 | START / SELECT | Enter / Backspace or Right Shift | Start / Back |
 | Touch screen | Mouse, when the bottom screen is shown | — |
+| Fast forward (hold) | Left Shift | Right trigger |
 
 | Key | Action |
 |---|---|

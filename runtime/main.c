@@ -132,7 +132,7 @@ static const PadMap padmap[] = {
 /* EGG_AUTOKEYS="<ms>:<KEY>:<ms>,...": press keys at fixed times after start (automated tests).
  * KEY TOUCH taps the bottom screen at EGG_TOUCH_POS="x,y" (default: the centre); SAVESTATE / LOADSTATE
  * act like F5 / F7, REBOOT like confirming a restart (System Settings, Language), LAYOUT / SWAP / FILTER like
- * F2 / F3 / F4, ESC like holding Escape. */
+ * F2 / F3 / F4, ESC like holding Escape, FF like holding Left Shift (fast forward). */
 #define AUTO_TOUCH (1u << 31)
 #define AUTO_SAVE (1u << 30)
 #define AUTO_LOAD (1u << 29)
@@ -141,7 +141,8 @@ static const PadMap padmap[] = {
 #define AUTO_FILTER (1u << 26)
 #define AUTO_ESC (1u << 25)
 #define AUTO_REBOOT (1u << 24)
-#define AUTO_HOST (AUTO_TOUCH | AUTO_SAVE | AUTO_LOAD | AUTO_LAYOUT | AUTO_SWAP | AUTO_FILTER | AUTO_ESC | AUTO_REBOOT)
+#define AUTO_FF (1u << 23)
+#define AUTO_HOST (AUTO_TOUCH | AUTO_SAVE | AUTO_LOAD | AUTO_LAYOUT | AUTO_SWAP | AUTO_FILTER | AUTO_ESC | AUTO_REBOOT | AUTO_FF)
 typedef struct AutoKey { Uint64 at, until; uint32_t key; } AutoKey;
 static AutoKey autokeys[64];
 static int autokey_count;
@@ -151,7 +152,7 @@ static void parse_autokeys(const char *spec) {
         {"A", KEY_A}, {"B", KEY_B}, {"X", KEY_X}, {"Y", KEY_Y}, {"L", KEY_L}, {"R", KEY_R}, {"START", KEY_START},
         {"SELECT", KEY_SELECT}, {"UP", KEY_UP}, {"DOWN", KEY_DOWN}, {"LEFT", KEY_LEFT}, {"RIGHT", KEY_RIGHT},
         {"TOUCH", AUTO_TOUCH}, {"SAVESTATE", AUTO_SAVE}, {"LOADSTATE", AUTO_LOAD}, {"REBOOT", AUTO_REBOOT},
-        {"LAYOUT", AUTO_LAYOUT}, {"SWAP", AUTO_SWAP}, {"FILTER", AUTO_FILTER}, {"ESC", AUTO_ESC},
+        {"LAYOUT", AUTO_LAYOUT}, {"SWAP", AUTO_SWAP}, {"FILTER", AUTO_FILTER}, {"ESC", AUTO_ESC}, {"FF", AUTO_FF},
     };
     while (spec && *spec && autokey_count < (int)SDL_arraysize(autokeys)) {
         char name[16];
@@ -323,6 +324,10 @@ int main(int argc, char **argv) {
             esc_since = 0;
         }
         rt_keys = sysmenu_input(read_keys(pad) | (autok & ~AUTO_HOST));
+        /* Fast forward (2x) while Left Shift or the gamepad's right trigger is held. */
+        int ff = SDL_GetKeyboardState(NULL)[SDL_SCANCODE_LSHIFT] ||
+                 (pad && SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16000) || (autok & AUTO_FF);
+        rt_set_speed(ff ? 2 : 1);
 
         /* Touch: left mouse button on the bottom screen, when it is shown. */
         float mx, my;

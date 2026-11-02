@@ -76,6 +76,8 @@ static const char *const color_labels[] = {"Original (DS)", "SNES light", "SNES 
 static const float color_exponents[] = {1.0f, 1.1f, 1.2f, 1.4f};
 static const char *const language_names[] = {"english", "french"};
 static const char *const language_labels[] = {"English", "French"};
+static const char *const ff_music_names[] = {"fast", "normal"};
+static const char *const ff_music_labels[] = {"Sped up", "Normal speed"};
 
 static Setting settings[SET_COUNT] = {
     /* The DS's system language, which the game reads at power-on (boot.c): changes apply at the next start. */
@@ -90,6 +92,8 @@ static Setting settings[SET_COUNT] = {
     [SET_FILTER] = {"filter", "Graphics filter", 4, FILTER_SHARP, filter_names, filter_labels},
     [SET_COLOR] = {"color", "Color", 4, 1, color_names, color_labels},
     [SET_MODS] = {"mods", "Mods", 2, 1, onoff_names, onoff_labels}, /* replacement cutscenes and music (movie.c, music.c) */
+    /* Fast forward (main.c, sched.c); Normal speed keeps the music sequences on the host's clock (snd.c). */
+    [SET_FF_MUSIC] = {"ffmusic", "Fast forward music", 2, FF_MUSIC_FAST, ff_music_names, ff_music_labels},
 };
 #define SETTING(id) (settings[id].value)
 

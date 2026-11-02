@@ -57,6 +57,8 @@ enum { DMA_START_IMMEDIATE, DMA_START_VBLANK, DMA_START_HBLANK, DMA_START_DISPLA
        DMA_START_CARD, DMA_START_GBA, DMA_START_GXFIFO };
 void sched_init(void);
 uint64_t sched_now(void); /* emulated cycles since boot */
+void rt_set_speed(int speed); /* fast forward: emulated time runs this many times the host's (any thread) */
+int sched_speed(void);        /* the speed emulated time runs at now (game thread) */
 void sched_update(void);  /* raise every event up to now */
 void irq_raise(uint32_t bits);
 uint32_t irq_if(void);

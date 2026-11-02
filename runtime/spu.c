@@ -199,7 +199,7 @@ static void output(const float *buf, uint32_t frames) {
     }
 }
 
-void spu_render(double seconds) {
+void spu_render(double seconds, int speed, uint16_t normal, int music_speed) {
     static float buf[SPU_RATE / 10 * 2];
     frac_frames += seconds * SPU_RATE;
     uint32_t frames = (uint32_t)frac_frames;
@@ -211,12 +211,12 @@ void spu_render(double seconds) {
         SpuChannel *c = &spu_ch[ch];
         if (!c->active) continue;
         uint32_t timer = SDL_clamp(c->timer, 0x10u, 0xFFFFu);
-        double step = SPU_CLOCK / timer / SPU_RATE;
+        double step = SPU_CLOCK / timer / SPU_RATE * (normal >> ch & 1 ? 1 : speed);
         float gl = c->volume * (127 - c->pan) / 127.0f, gr = c->volume * c->pan / 127.0f;
         if (c->format == SPU_PSG) mix_psg(c, ch, buf, frames, gl, gr, step);
         else mix_pcm(c, buf, frames, gl, gr, step);
     }
-    music_mix(buf, frames);
+    music_mix(buf, frames, music_speed);
     for (uint32_t i = 0; i < frames * 2; i++) buf[i] = SDL_clamp(buf[i] * spu_master, -1.0f, 1.0f);
     output(buf, frames);
 }

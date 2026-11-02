@@ -11,6 +11,7 @@
 #include <math.h>
 #include <stdlib.h>
 
+#include "display.h"
 #include "sound.h"
 
 #define SND_FRAME_CYCLES (2728u * 64u) /* about 5.2 ms */
@@ -730,10 +731,11 @@ static void track_set_byte(Track *t, uint32_t off, uint8_t b) {
 
 /* ---- per-frame channel processing ---- */
 
-static void ex_main(void) {
+/* The channels in `mask`. */
+static void ex_main(uint16_t mask) {
     for (int c = 0; c < SPU_CHANNELS; c++) {
         ExChannel *e = &ex[c];
-        if (!e->active) continue;
+        if (!e->active || !(mask >> c & 1)) continue;
         SpuChannel *s = &spu_ch[c];
         if (e->start) {
             s->format = e->format;
@@ -803,14 +805,56 @@ static void update_shared_work(void) {
     rt_w16(shared_work + 10, 0);
 }
 
-static void snd_frame(void) {
+/* The players whose sequence is a BGM (bgm 1), the others (0) or all (-1). */
+static void players_main(int bgm) {
     for (int i = 0; i < PLAYERS; i++) {
+        if (bgm >= 0 && music_is_bgm(i) != bgm) continue;
         player_main(i);
         const Player *p = &players[i];
         music_player(i, p->active && p->started && !p->paused, dsq[p->volume & 0x7F] + p->ext_fader);
     }
-    ex_main();
+}
+
+/* The channels held by the tracks of players whose sequence is a BGM. */
+static uint16_t bgm_channels(void) {
+    uint8_t bgm_track[TRACKS] = {0};
+    for (int i = 0; i < PLAYERS; i++) {
+        if (!players[i].active || !music_is_bgm(i)) continue;
+        for (int t = 0; t < 16; t++) {
+            if (players[i].tracks[t] >= 0) bgm_track[players[i].tracks[t]] = 1;
+        }
+    }
+    uint16_t mask = 0;
+    for (int c = 0; c < SPU_CHANNELS; c++) {
+        if (ex[c].active && ex[c].track >= 0 && bgm_track[ex[c].track]) mask |= (uint16_t)(1u << c);
+    }
+    return mask;
+}
+
+/* One driver frame of emulated time, and its output. Fast forward (sched.c) shortens it in host time: the mixer
+ * plays the channels that much faster. With the Fast forward music setting at Normal speed, the BGM players and
+ * their channels instead get a frame per SND_FRAME_CYCLES of host time and play at their own pitch; the game
+ * then sees the music advance slower than itself. */
+static void snd_frame(void) {
+    static double bgm_frames; /* BGM frames owed (Normal speed) */
+    int speed = sched_speed();
+    double seconds = (double)SND_FRAME_CYCLES / RT_CLOCK_HZ / speed;
+    if (speed == 1 || display_setting_get(SET_FF_MUSIC) != FF_MUSIC_NORMAL) {
+        bgm_frames = 0;
+        players_main(-1);
+        ex_main(0xFFFF);
+        update_shared_work();
+        spu_render(seconds, speed, 0, speed);
+        return;
+    }
+    players_main(0);
+    ex_main((uint16_t)~bgm_channels());
+    for (bgm_frames += 1.0 / speed; bgm_frames >= 1; bgm_frames -= 1) {
+        players_main(1);
+        ex_main(bgm_channels());
+    }
     update_shared_work();
+    spu_render(seconds, speed, bgm_channels(), 1);
 }
 
 /* ---- commands ---- */
@@ -1006,7 +1050,6 @@ void snd_update(uint64_t now) {
     if (now > frame_next + 32ull * SND_FRAME_CYCLES) frame_next = now; /* host stall: skip the missed time */
     while (now >= frame_next) {
         snd_frame();
-        spu_render((double)SND_FRAME_CYCLES / RT_CLOCK_HZ);
         frame_next += SND_FRAME_CYCLES;
     }
 }

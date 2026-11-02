@@ -1,6 +1,7 @@
 /* Emulated time, video timing, interrupt controller, timers and DMA.
  *
- * Emulated time follows the host clock (33.513982 MHz bus cycles since boot). Events are processed
+ * Emulated time follows the host clock (33.513982 MHz bus cycles since boot), times the game speed (fast
+ * forward: rt_set_speed, applied by the game thread at its next look at the clock). Events are processed
  * lazily: whenever the game polls (RT_POLL at loop back-edges, BIOS waits, register reads that depend
  * on time), everything up to "now" is raised. A host timer requests a poll every millisecond. */
 #include <SDL3/SDL.h>
@@ -11,7 +12,10 @@
 
 uint64_t rt_frame_count;
 
-static Uint64 boot_ns;
+static Uint64 base_ns;     /* host time at base_cycles */
+static uint64_t base_cycles;
+static int speed = 1;      /* emulated time per host time */
+static SDL_AtomicInt speed_wanted;
 static uint32_t irq_flags;
 static uint64_t line_done; /* absolute index of the last scanline whose events were raised */
 /* Where video time is within line_done: its start events raised, drawn, or its HBlank events raised. Each
@@ -20,8 +24,19 @@ enum { LINE_STARTED, LINE_DRAWN, LINE_HBLANK };
 static int line_phase = LINE_HBLANK;
 
 uint64_t sched_now(void) {
-    return (uint64_t)((double)(SDL_GetTicksNS() - boot_ns) * (RT_CLOCK_HZ / 1e9));
+    Uint64 t = SDL_GetTicksNS();
+    uint64_t now = base_cycles + (uint64_t)((double)(t - base_ns) * (RT_CLOCK_HZ / 1e9) * speed);
+    int want = SDL_GetAtomicInt(&speed_wanted);
+    if (want > 0 && want != speed) { /* time goes on from here at the new speed */
+        base_ns = t;
+        base_cycles = now;
+        speed = want;
+    }
+    return now;
 }
+
+void rt_set_speed(int s) { SDL_SetAtomicInt(&speed_wanted, s); }
+int sched_speed(void) { return speed; }
 
 /* ---- interrupt controller ---- */
 
@@ -294,7 +309,8 @@ static int SDLCALL poll_ticker(void *arg) {
 }
 
 void sched_init(void) {
-    boot_ns = SDL_GetTicksNS();
+    base_ns = SDL_GetTicksNS();
+    base_cycles = 0;
     rt_frame_count = 0;
     irq_flags = 0;
     line_done = 0;
@@ -338,7 +354,7 @@ void rt_halt(CPU *cpu) {
         sched_update();
         if (irq_wanted()) break;
         uint64_t cycles = next_event_delay();
-        SDL_DelayPrecise((Uint64)((double)cycles * (1e9 / RT_CLOCK_HZ)) + 1);
+        SDL_DelayPrecise((Uint64)((double)cycles * (1e9 / RT_CLOCK_HZ) / speed) + 1);
     }
     rt_poll(cpu);
 }
@@ -368,7 +384,8 @@ void sched_state(RtStateIO *s) {
     RT_STATE(s, dmas);
     if (rt_state_loading(s)) {
         /* Emulated time continues from the saved moment. */
-        boot_ns = SDL_GetTicksNS() - (Uint64)((double)now * (1e9 / RT_CLOCK_HZ));
+        base_ns = SDL_GetTicksNS();
+        base_cycles = now;
         rt_poll_pending = 1;
     }
 }

@@ -35,6 +35,7 @@ static const char *const descriptions[SET_COUNT] = {
     [SET_FILTER] = "How the pixels are scaled up.",
     [SET_COLOR] = "Deepens colors toward the SNES.",
     [SET_MODS] = "Replacement movies and music (mods).",
+    [SET_FF_MUSIC] = "Normal speed may delay music cues.",
 };
 
 static int place, cursor; /* place: where it was opened (SS_MENU_*), SS_MENU_NONE when closed */

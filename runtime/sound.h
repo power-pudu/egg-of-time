@@ -32,7 +32,9 @@ extern float spu_master; /* master volume, 0-1 */
 void spu_open_output(void);    /* host thread, once at startup */
 void spu_reset(void);
 void spu_start(int ch);        /* key on: restart playback with the channel's current settings */
-void spu_render(double seconds); /* game thread: mix this much output and queue it */
+/* Game thread: mix this much output (host time) and queue it. Fast forward: channels play `speed` times faster
+ * (higher), except those in `normal`; the music mods play music_speed times faster. */
+void spu_render(double seconds, int speed, uint16_t normal, int music_speed);
 
 void snd_reset(void);
 void snd_command_list(uint32_t list); /* ARM9 -> ARM7 SOUND message: linked list of SNDCommand */
@@ -42,5 +44,7 @@ void snd_update(uint64_t now);        /* driver frames, alarms and audio output 
 void music_prepare(int pno, uint32_t seq_data); /* a player loaded the sequence whose data is at seq_data */
 void music_stop(int pno);                       /* the player stopped */
 int music_replaced(int pno);                    /* the player's sequence is replaced: mute it */
+int music_is_bgm(int pno);                      /* the player's sequence is one of the archive's BGM_* */
 void music_player(int pno, int running, int db); /* every driver frame: playing (not paused), volume in 0.1 dB */
-void music_mix(float *out, uint32_t frames);    /* adds the replacements to float stereo output at SPU_RATE */
+void music_mix(float *out, uint32_t frames, int speed); /* adds the replacements to float stereo output at SPU_RATE,
+                                                       * `speed` (1 or 2) times faster */
