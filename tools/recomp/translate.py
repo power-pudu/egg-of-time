@@ -512,10 +512,20 @@ class FunctionTranslator:
     def arm_table_entries(self, addr, reg, cond):
         """Entry count of an MWCC `add<cond> pc, pc, reg, lsl #2` branch table."""
         LS, LE, CC, LT, HI, GT, CS, GE = 9, 13, 3, 11, 8, 12, 2, 10
-        prev = self.u32(addr - 4) if self.in_func(addr - 4) else 0
-        n = self.arm_cmp_imm(prev, reg)
-        if n is not None and cond in (LS, LE, CC, LT):
-            return n + 1 if cond in (LS, LE) else n
+        # `cmp reg, #N` just before, or with flag-preserving moves in between (`cmp r2, #4 ; mov r0, #0 ; addls`).
+        for back in range(1, 5):
+            a = addr - back * 4
+            if not self.in_func(a):
+                break
+            w = self.u32(a)
+            n = self.arm_cmp_imm(w, reg)
+            if n is not None:
+                if cond in (LS, LE, CC, LT):
+                    return n + 1 if cond in (LS, LE) else n
+                break
+            # Only unconditional `mov rd, #imm` (no S) to another register may sit in between.
+            if (w & 0xFFF00000) != 0xE3A00000 or ((w >> 12) & 0xF) in (reg, 15):
+                break
         # Upper bound checked earlier: `cmp reg, #N ; b{hi,gt,cs,ge} default`.
         for back in range(1, 9):
             a = addr - back * 4
