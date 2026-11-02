@@ -17,6 +17,9 @@ main 02023cb0 rt_bad_alloc
 # (runtime/patches.c).
 ov007 0212a3f0 rt_ct_settings_defaults wrap
 
+# Title idle timeout (30 s to the intro movie): held off while System Settings is open (runtime/patches.c).
+ov007 02127618 rt_ct_title_idle wrap
+
 # Field object visibility test (characters are drawn while their tile is within 4 tiles of the 4:3 view): in
 # widescreen, widened by the margins for the call (runtime/widescreen.c).
 ov004 02130dbc rt_ws_object_visible wrap
