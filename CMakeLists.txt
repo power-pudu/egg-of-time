@@ -36,6 +36,7 @@ endforeach()
 set(RUNTIME_SOURCES
     runtime/main.c
     runtime/boot.c
+    runtime/controls.c
     runtime/cpu.c
     runtime/display.c
     runtime/game_build.c

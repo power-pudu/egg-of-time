@@ -177,6 +177,11 @@ original bytes, and caches the result per region until the region is written.
   apply to it, in the look of Game Settings re-created by the runtime (bevel profiles and colours measured
   there: light bars, dark buttons, lit label and teal frame on the cursor row, striped backdrop, B sign),
   so it looks the same from the pause; text in the runtime's small font (`runtime/ui_font.c`).
+  - Controls (last row, A): the button mapping (`runtime/controls.c`), one keyboard key and one gamepad input
+    (button or trigger) per DS button and for fast forward, saved in `controls.ini` (SDL key and gamepad button
+    names). A on a cell takes the next key or gamepad press from the event loop (`controls_capture`, before the
+    hotkeys; function keys are refused, Escape or 5 s cancels); an input another action had swaps with this
+    one's, so no action is left without one. Afterwards the menu ignores input until every key is released.
   - Pause (field, ov000 func 0x0210155c, START): the game dims both screens (MASTER_BRIGHT darken 4) and loops
     waiting for START, with the byte at `*(0x0207b520) + 0x407` set to 0xff; single screen mode then writes
     "Press SELECT to open System Settings" at the bottom of the main screen.
@@ -450,7 +455,7 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
   be started by double-click when `build/rom/` holds `CT.nds` (the default ROM is `rom/CT.nds` next to the
   executable, else relative to the working directory). Alongside dsd's `build/delinks`, that adds
   about 60 MB of generated C and a 140 MB executable to the OneDrive folder.
-- Controls: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Right Shift/Backspace = Select,
+- Controls: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Backspace = Select (defaults; System Settings > Controls remaps them),
   F2 = layout, F3 = swap screens, F4 = filter, F11 = fullscreen, F5 = save state, F7 = load state, hold Left Shift = fast forward, hold Esc = quit. Gamepads use button positions (east = A, south = B,
   north = X, west = Y), shoulders = L/R, Start/Back, D-pad or left stick. X/Y reach the game through the ARM7's
   `HW_BUTTON_XY_BUF` (0x027FFFA8, X = bit 10, Y = bit 11), which `PAD_Read` ORs into KEYINPUT.

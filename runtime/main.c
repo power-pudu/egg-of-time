@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include "controls.h"
 #include "display.h"
 #include "game_build.h"
 #include "rt.h"
@@ -109,26 +110,6 @@ static int SDLCALL game_thread(void *arg) {
 
 /* ---- input ---- */
 
-typedef struct KeyMap { SDL_Scancode sc; uint32_t key; } KeyMap;
-static const KeyMap keymap[] = {
-    {SDL_SCANCODE_X, KEY_A},          {SDL_SCANCODE_Z, KEY_B},          {SDL_SCANCODE_S, KEY_X},
-    {SDL_SCANCODE_A, KEY_Y},          {SDL_SCANCODE_Q, KEY_L},          {SDL_SCANCODE_W, KEY_R},
-    {SDL_SCANCODE_RETURN, KEY_START}, {SDL_SCANCODE_RSHIFT, KEY_SELECT}, {SDL_SCANCODE_BACKSPACE, KEY_SELECT},
-    {SDL_SCANCODE_UP, KEY_UP},        {SDL_SCANCODE_DOWN, KEY_DOWN},     {SDL_SCANCODE_LEFT, KEY_LEFT},
-    {SDL_SCANCODE_RIGHT, KEY_RIGHT},
-};
-
-/* Positional mapping: the DS A button is the right face button, as on Nintendo controllers. */
-typedef struct PadMap { SDL_GamepadButton b; uint32_t key; } PadMap;
-static const PadMap padmap[] = {
-    {SDL_GAMEPAD_BUTTON_EAST, KEY_A},          {SDL_GAMEPAD_BUTTON_SOUTH, KEY_B},
-    {SDL_GAMEPAD_BUTTON_NORTH, KEY_X},         {SDL_GAMEPAD_BUTTON_WEST, KEY_Y},
-    {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, KEY_L}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, KEY_R},
-    {SDL_GAMEPAD_BUTTON_START, KEY_START},     {SDL_GAMEPAD_BUTTON_BACK, KEY_SELECT},
-    {SDL_GAMEPAD_BUTTON_DPAD_UP, KEY_UP},      {SDL_GAMEPAD_BUTTON_DPAD_DOWN, KEY_DOWN},
-    {SDL_GAMEPAD_BUTTON_DPAD_LEFT, KEY_LEFT},  {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, KEY_RIGHT},
-};
-
 /* EGG_AUTOKEYS="<ms>:<KEY>:<ms>,...": press keys at fixed times after start (automated tests).
  * KEY TOUCH taps the bottom screen at EGG_TOUCH_POS="x,y" (default: the centre); SAVESTATE / LOADSTATE
  * act like F5 / F7, REBOOT like confirming a restart (System Settings, Language), LAYOUT / SWAP / FILTER like
@@ -175,27 +156,6 @@ static uint32_t auto_keys(Uint64 now) {
     return keys;
 }
 
-static uint32_t read_keys(SDL_Gamepad *pad) {
-    const bool *ks = SDL_GetKeyboardState(NULL);
-    uint32_t keys = 0;
-    for (size_t i = 0; i < SDL_arraysize(keymap); i++) {
-        if (ks[keymap[i].sc]) keys |= keymap[i].key;
-    }
-    if (pad) {
-        for (size_t i = 0; i < SDL_arraysize(padmap); i++) {
-            if (SDL_GetGamepadButton(pad, padmap[i].b)) keys |= padmap[i].key;
-        }
-        int ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX), ay = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
-        if (ax < -16000) keys |= KEY_LEFT;
-        if (ax > 16000) keys |= KEY_RIGHT;
-        if (ay < -16000) keys |= KEY_UP;
-        if (ay > 16000) keys |= KEY_DOWN;
-    }
-    if ((keys & (KEY_LEFT | KEY_RIGHT)) == (KEY_LEFT | KEY_RIGHT)) keys &= ~(KEY_LEFT | KEY_RIGHT);
-    if ((keys & (KEY_UP | KEY_DOWN)) == (KEY_UP | KEY_DOWN)) keys &= ~(KEY_UP | KEY_DOWN);
-    return keys;
-}
-
 /* ---- presentation ---- */
 
 static uint32_t top_px[SCREEN_W * SCREEN_H], bottom_px[SCREEN_W * SCREEN_H], main_px[VIDEO_LINE_MAX * SCREEN_H];
@@ -233,6 +193,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (!display_init()) return 1;
+    controls_init();
     if (!game_build_prepare(argc > 1 ? argv[1] : NULL)) return 1; /* the ROM and the game code */
     spu_open_output();
 
@@ -287,6 +248,7 @@ int main(int argc, char **argv) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_QUIT) running = 0;
+            else if (controls_capture(&e)) continue; /* System Settings > Controls: rebinding */
             else if (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
                      e.type == SDL_EVENT_MOUSE_WHEEL) {
                 mouse_used = SDL_GetTicks();
@@ -327,10 +289,9 @@ int main(int argc, char **argv) {
         } else {
             esc_since = 0;
         }
-        rt_keys = sysmenu_input(read_keys(pad) | (autok & ~AUTO_HOST));
-        /* Fast forward (2x) while Left Shift or the gamepad's right trigger is held. */
-        int ff = SDL_GetKeyboardState(NULL)[SDL_SCANCODE_LSHIFT] ||
-                 (pad && SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16000) || (autok & AUTO_FF);
+        rt_keys = sysmenu_input(controls_read(pad) | (autok & ~AUTO_HOST));
+        /* Fast forward (2x) while its key or button is held (default: Left Shift, the right trigger). */
+        int ff = controls_fast_forward(pad) || (autok & AUTO_FF);
         rt_set_speed(ff ? 2 : 1);
 
         /* Touch: left mouse button on the bottom screen, when it is shown. */

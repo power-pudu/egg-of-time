@@ -48,7 +48,7 @@ and mods.
 | Your ROM (copied there on first start) | `rom\CT.nds` |
 | In-game saves | `rom\CT.sav` |
 | Save state (F5 / F7) | `rom\CT.state` |
-| Settings | `eggoftime.ini` |
+| Settings | `eggoftime.ini`, `controls.ini` |
 | Mods | `mods\cutscenes\`, `mods\music\`, `mods\translation\` |
 
 > [!TIP]
@@ -135,9 +135,14 @@ it with B or SELECT. Changes apply immediately and are saved in `eggoftime.ini`.
 two the USA release has) needs the game to restart: the menu asks whether to restart now (unsaved progress is
 lost) or keep the change for the next start.
 
+**Controls**, the last row, remaps the buttons: each DS button and fast forward has a keyboard key and a gamepad
+button. Left/Right pick the column, A waits for the new key or button (Escape cancels). Choosing one that another
+button already uses swaps the two. The last row, Reset to defaults, restores the table below. The mapping is
+saved in `controls.ini`.
+
 ### Fast forward
 
-Hold **Left Shift** (or the gamepad's right trigger) to run the game at 2x speed. System Settings > Fast forward
+Hold **Left Shift** (or the gamepad's right trigger; remappable under Controls) to run the game at 2x speed. System Settings > Fast forward
 music picks how the music sounds meanwhile: Sped up (the default) plays it faster and higher, as emulators do;
 Normal speed keeps it at its own tempo and pitch. With Normal speed the music falls behind the game, so anything
 that waits for a piece of music to end (a fanfare, say) still takes its usual time.
@@ -150,6 +155,7 @@ after updates and move between Windows and Linux.
 ## Controls
 
 Gamepads work out of the box. The DS face buttons map by position: A is the right button, B the bottom one.
+The defaults below can be changed in System Settings > Controls.
 
 | DS | Keyboard | Gamepad |
 |---|---|---|
@@ -157,7 +163,7 @@ Gamepads work out of the box. The DS face buttons map by position: A is the righ
 | A / B | X / Z | East / South button |
 | X / Y | S / A | North / West button |
 | L / R | Q / W | Shoulder buttons |
-| START / SELECT | Enter / Backspace or Right Shift | Start / Back |
+| START / SELECT | Enter / Backspace | Start / Back |
 | Touch screen | Mouse, when the bottom screen is shown | — |
 | Fast forward (hold) | Left Shift | Right trigger |
 

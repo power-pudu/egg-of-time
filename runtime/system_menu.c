@@ -1,5 +1,5 @@
 /* System Settings menu: language, window mode, internal resolution, aspect ratio, framerate, V-Sync, graphics
- * filter, mods (display.c holds and applies them). SELECT opens it from the game's Game Settings screen (the button
+ * filter, mods (display.c holds and applies them), and the Controls page (controls.c). SELECT opens it from the game's Game Settings screen (the button
  * single screen mode relabels "System settings"), the title screen's menu or while the field is paused; B or
  * SELECT closes it, and so does the game leaving that place (the title idling into the intro, say). Closed
  * from the pause, it also presses START for the game, which ends the pause. Up/Down pick a setting,
@@ -8,11 +8,17 @@
  * game on again in it (RT_STATE_REBOOT), No leaves it for the next start. Up to ROWS_SHOWN rows fit; beyond them the list
  * scrolls with the cursor, and arrows in the header show which way more rows lie.
  *
+ * A on the last row, Controls, opens the button mapping: a row per DS button and fast forward, with its keyboard
+ * key and gamepad button. Left/Right pick the key or the button, A waits for the new one (controls_capture), a
+ * last row restores the defaults; B or SELECT goes back to the settings. After a rebinding, input is kept from
+ * the menu until every key is released, so the new key does not act on the menu.
+ *
  * The look follows the game's Game Settings screen, drawn by the runtime so it is the same wherever the menu
  * opens: a striped dark backdrop, light bevelled bars (header, footer), dark bevelled buttons, the
  * highlighted row's label lit and its value framed in the game's cursor teal. */
 #include <SDL3/SDL.h>
 
+#include "controls.h"
 #include "display.h"
 #include "rt.h"
 #include "single_screen.h"
@@ -24,7 +30,11 @@
 #define REPEAT_MS 110
 #define RESUME_MS 100 /* START held for the game after closing from the pause */
 
-static const char *const descriptions[SET_COUNT] = {
+#define ROW_CONTROLS SET_COUNT /* after the display settings */
+#define ROW_COUNT (SET_COUNT + 1)
+#define ROW_RESET CTL_COUNT /* the Controls page's last row */
+
+static const char *const descriptions[ROW_COUNT] = {
     [SET_LANGUAGE] = "Game text. Applies at the next start.",
     [SET_WINDOW] = "How the game window is shown.",
     [SET_RESOLUTION] = "Size the screens are drawn at.",
@@ -36,21 +46,42 @@ static const char *const descriptions[SET_COUNT] = {
     [SET_COLOR] = "Deepens colors toward the SNES.",
     [SET_MODS] = "Replacement movies and music (mods).",
     [SET_FF_MUSIC] = "Normal speed may delay music cues.",
+    [ROW_CONTROLS] = "Keyboard keys and gamepad buttons.",
 };
 
 static int place, cursor; /* place: where it was opened (SS_MENU_*), SS_MENU_NONE when closed */
+static SDL_AtomicInt open_now; /* place != SS_MENU_NONE, for the game thread */
 static int top;           /* the first row shown (rows: the shown settings, in order) */
 static int confirm, yes;  /* the restart question is open; Yes is chosen */
+static int controls_page, ctl_cursor, ctl_pad, ctl_top; /* ctl_pad: the gamepad column is chosen */
+static int released_wait; /* a rebinding ended: the menu ignores input until every key is released */
 static uint32_t prev_keys, blocked; /* blocked: held since the menu closed, kept from the game until released */
 static Uint64 repeat_at, resume_until;
 
-uint32_t sysmenu_input(uint32_t keys) {
+static int row_shown(int i) { return i == ROW_CONTROLS || display_setting_shown(i); }
+
+static void controls_input(uint32_t act) {
+    if (act & (KEY_B | KEY_SELECT)) controls_page = 0;
+    if (act & KEY_UP) ctl_cursor = (ctl_cursor + ROW_RESET) % (ROW_RESET + 1);
+    if (act & KEY_DOWN) ctl_cursor = (ctl_cursor + 1) % (ROW_RESET + 1);
+    if (act & (KEY_LEFT | KEY_RIGHT)) ctl_pad = !ctl_pad;
+    if (act & KEY_A) {
+        if (ctl_cursor == ROW_RESET) {
+            controls_reset();
+            display_message("Controls: defaults restored", 2000);
+        } else {
+            controls_capture_start(ctl_cursor, ctl_pad);
+        }
+    }
+}
+
+static uint32_t input(uint32_t keys) {
     uint32_t pressed = keys & ~prev_keys;
     Uint64 now = SDL_GetTicks();
     prev_keys = keys;
     if (place == SS_MENU_NONE) {
         if ((pressed & KEY_SELECT) && (place = ss_menu_place()) != SS_MENU_NONE) {
-            cursor = top = confirm = 0;
+            cursor = top = confirm = controls_page = 0;
             return 0;
         }
         blocked &= keys;
@@ -64,6 +95,18 @@ uint32_t sysmenu_input(uint32_t keys) {
         repeat_at = now + REPEAT_MS;
     }
     int left = ss_menu_place() != place; /* the game moved on */
+    if (controls_capturing()) {
+        if (!left) {
+            released_wait = 1;
+            return 0;
+        }
+        controls_capture_cancel();
+    }
+    if (released_wait) {
+        if (keys && !left) return 0;
+        released_wait = 0;
+        act = 0;
+    }
     if (confirm && !left) {
         if (act & (KEY_LEFT | KEY_RIGHT | KEY_UP | KEY_DOWN)) yes = !yes;
         if (act & (KEY_A | KEY_B)) {
@@ -78,15 +121,21 @@ uint32_t sysmenu_input(uint32_t keys) {
         }
         return 0;
     }
+    if (controls_page && !left) {
+        controls_input(act);
+        return 0;
+    }
     if ((act & (KEY_B | KEY_SELECT)) || left) {
         if (place == SS_MENU_PAUSE && !left) resume_until = now + RESUME_MS;
         place = SS_MENU_NONE;
         blocked = keys;
         return 0;
     }
-    if (act & KEY_UP) do cursor = (cursor + SET_COUNT - 1) % SET_COUNT; while (!display_setting_shown(cursor));
-    if (act & KEY_DOWN) do cursor = (cursor + 1) % SET_COUNT; while (!display_setting_shown(cursor));
-    if (act & (KEY_LEFT | KEY_RIGHT)) {
+    if (act & KEY_UP) do cursor = (cursor + ROW_COUNT - 1) % ROW_COUNT; while (!row_shown(cursor));
+    if (act & KEY_DOWN) do cursor = (cursor + 1) % ROW_COUNT; while (!row_shown(cursor));
+    if (cursor == ROW_CONTROLS) {
+        if (act & KEY_A) controls_page = 1, ctl_cursor = ctl_pad = ctl_top = 0;
+    } else if (act & (KEY_LEFT | KEY_RIGHT)) {
         int n = display_setting_count(cursor);
         display_setting_set(cursor, (display_setting_get(cursor) + ((act & KEY_RIGHT) ? 1 : n - 1)) % n);
         if (cursor == SET_LANGUAGE && (display_setting_get(SET_LANGUAGE) == LANGUAGE_FRENCH) != rt_french()) {
@@ -97,7 +146,13 @@ uint32_t sysmenu_input(uint32_t keys) {
     return 0;
 }
 
-int sysmenu_is_open(void) { return place != SS_MENU_NONE; }
+uint32_t sysmenu_input(uint32_t keys) {
+    uint32_t game_keys = input(keys);
+    SDL_SetAtomicInt(&open_now, place != SS_MENU_NONE);
+    return game_keys;
+}
+
+int sysmenu_is_open(void) { return SDL_GetAtomicInt(&open_now); }
 
 /* ---- drawing ---- */
 
@@ -183,38 +238,84 @@ static void scroll_arrow(uint32_t *s, int dir, int lit) {
     }
 }
 
+/* Keeps row `at` of n in view of ROWS_SHOWN rows from *top, and lights the header's arrows. */
+static void scroll_to(uint32_t *s, int *top, int at, int n) {
+    *top = SDL_clamp(*top, at - ROWS_SHOWN + 1, at);
+    *top = SDL_clamp(*top, 0, SDL_max(n - ROWS_SHOWN, 0));
+    if (n > ROWS_SHOWN) scroll_arrow(s, -1, *top > 0), scroll_arrow(s, 1, *top + ROWS_SHOWN < n);
+}
+
+static void centered(uint32_t *s, const char *text, Rect r, uint32_t color) {
+    ui_draw_text(s, text, r.x + (r.w - ui_text_width(text)) / 2, r.y + 4, color);
+}
+
+static void draw_controls(uint32_t *s) {
+    const char *title = "Controls";
+    ui_draw_text(s, title, 12, 8, WHITE);
+    centered(s, "Keyboard", (Rect){92, 4, 78, 16}, GREY);
+    centered(s, "Gamepad", (Rect){174, 4, 62, 16}, GREY);
+    scroll_to(s, &ctl_top, ctl_cursor, ROW_RESET + 1);
+    int capturing = controls_capturing();
+    for (int r = ctl_top; r <= ROW_RESET && r < ctl_top + ROWS_SHOWN; r++) {
+        int y = ROW_Y + (r - ctl_top) * ROW_PITCH, sel = r == ctl_cursor;
+        if (r == ROW_RESET) {
+            Rect b = {6, y, 244, ROW_H};
+            panel(s, b, sel ? &BUTTON_LIT : &BUTTON);
+            if (sel) frame(s, b, TEAL);
+            centered(s, "Reset to defaults", b, sel ? WHITE : GREY);
+            continue;
+        }
+        Rect lr = {6, y, 82, ROW_H}, cells[2] = {{92, y, 78, ROW_H}, {174, y, 76, ROW_H}};
+        panel(s, lr, sel ? &BUTTON_LIT : &BUTTON);
+        ui_draw_text(s, controls_name(r), lr.x + 6, y + 4, sel ? WHITE : GREY);
+        for (int c = 0; c < 2; c++) {
+            int on = sel && c == ctl_pad;
+            panel(s, cells[c], &BUTTON);
+            if (on) frame(s, cells[c], TEAL);
+            const char *v = on && capturing ? "Press..." : c ? controls_pad_label(r) : controls_key_label(r);
+            centered(s, v, cells[c], on ? YELLOW : WHITE);
+        }
+    }
+}
+
 void sysmenu_draw(uint32_t *s) {
     for (int y = 0; y < SCREEN_H; y++) { /* backdrop: the game's brushed dark stripes */
         for (int x = 0; x < SCREEN_W; x++) s[y * SCREEN_W + x] = (y & 1) ? rgb(24, 24, 24) : rgb(16, 16, 16);
     }
     panel(s, (Rect){0, 0, 256, 24}, &BAR);
-    const char *title = "System Settings";
-    ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
+    if (controls_page) {
+        draw_controls(s);
+    } else {
+        const char *title = "System Settings";
+        ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
 
-    int rows[SET_COUNT], n = 0, at = 0;
-    for (int i = 0; i < SET_COUNT; i++) {
-        if (display_setting_shown(i)) at = i == cursor ? n : at, rows[n++] = i;
-    }
-    top = SDL_clamp(top, at - ROWS_SHOWN + 1, at); /* keep the cursor's row in view */
-    top = SDL_clamp(top, 0, SDL_max(n - ROWS_SHOWN, 0));
-    if (n > ROWS_SHOWN) scroll_arrow(s, -1, top > 0), scroll_arrow(s, 1, top + ROWS_SHOWN < n);
-    for (int r = top; r < n && r < top + ROWS_SHOWN; r++) {
-        int i = rows[r], y = ROW_Y + (r - top) * ROW_PITCH, ty = y + 4, sel = i == cursor;
-        Rect lr = {6, y, 112, ROW_H}, vr = {122, y, 128, ROW_H};
-        panel(s, lr, sel ? &BUTTON_LIT : &BUTTON);
-        panel(s, vr, &BUTTON);
-        if (sel) frame(s, vr, TEAL);
-        ui_draw_text(s, display_setting_title(i), lr.x + 6, ty, sel ? WHITE : GREY);
-        const char *v = display_setting_label(i, display_setting_get(i));
-        ui_draw_text(s, v, vr.x + (vr.w - ui_text_width(v)) / 2, ty, sel ? YELLOW : WHITE);
-        if (sel) {
-            ui_draw_text(s, "<", vr.x + 5, ty, WHITE);
-            ui_draw_text(s, ">", vr.x + vr.w - 8, ty, WHITE);
+        int rows[ROW_COUNT], n = 0, at = 0;
+        for (int i = 0; i < ROW_COUNT; i++) {
+            if (row_shown(i)) at = i == cursor ? n : at, rows[n++] = i;
+        }
+        scroll_to(s, &top, at, n);
+        for (int r = top; r < n && r < top + ROWS_SHOWN; r++) {
+            int i = rows[r], y = ROW_Y + (r - top) * ROW_PITCH, ty = y + 4, sel = i == cursor;
+            Rect lr = {6, y, 112, ROW_H}, vr = {122, y, 128, ROW_H};
+            panel(s, lr, sel ? &BUTTON_LIT : &BUTTON);
+            panel(s, vr, &BUTTON);
+            if (sel) frame(s, vr, TEAL);
+            ui_draw_text(s, i == ROW_CONTROLS ? "Controls" : display_setting_title(i), lr.x + 6, ty, sel ? WHITE : GREY);
+            const char *v = i == ROW_CONTROLS ? "A: change" : display_setting_label(i, display_setting_get(i));
+            ui_draw_text(s, v, vr.x + (vr.w - ui_text_width(v)) / 2, ty, sel ? YELLOW : WHITE);
+            if (sel && i != ROW_CONTROLS) {
+                ui_draw_text(s, "<", vr.x + 5, ty, WHITE);
+                ui_draw_text(s, ">", vr.x + vr.w - 8, ty, WHITE);
+            }
         }
     }
 
+    const char *footer = descriptions[cursor];
+    if (confirm) footer = "A: confirm.  B: not now.";
+    else if (controls_page && controls_capturing()) footer = ctl_pad ? "Press a gamepad button. Esc: cancel." : "Press a key. Esc: cancel.";
+    else if (controls_page) footer = ctl_cursor == ROW_RESET ? "A: restore the default controls." : "A: change.  Left/Right: key or pad.";
     panel(s, (Rect){0, 166, 222, 26}, &BAR);
-    ui_draw_text(s, confirm ? "A: confirm.  B: not now." : descriptions[cursor], 8, 175, WHITE);
+    ui_draw_text(s, footer, 8, 175, WHITE);
     panel(s, (Rect){224, 166, 32, 26}, &BAR);
     b_sign(s, 240, 179);
     if (confirm) {
