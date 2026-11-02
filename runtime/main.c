@@ -291,6 +291,10 @@ int main(int argc, char **argv) {
                      e.type == SDL_EVENT_MOUSE_WHEEL) {
                 mouse_used = SDL_GetTicks();
                 if (!SDL_CursorVisible()) SDL_ShowCursor();
+            } else if (e.type == SDL_EVENT_WINDOW_MOUSE_ENTER || e.type == SDL_EVENT_WINDOW_FOCUS_GAINED) {
+                /* A hide done while the window lacked the pointer may not have reached it (Wayland, gamescope):
+                 * SDL_SetCursor(NULL) applies the hidden cursor again. */
+                if (!SDL_CursorVisible()) SDL_SetCursor(NULL);
             } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && display_key(e.key.scancode)) {
                 continue;
             } else if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F5 && !e.key.repeat) {
