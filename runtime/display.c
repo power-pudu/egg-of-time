@@ -86,6 +86,8 @@ static const char *const language_names[] = {"english", "french"};
 static const char *const language_labels[] = {"English", "French"};
 static const char *const ff_music_names[] = {"fast", "normal"};
 static const char *const ff_music_labels[] = {"Sped up", "Normal speed"};
+static const char *const ff_sound_names[] = {"all", "music"};
+static const char *const ff_sound_labels[] = {"All", "Music only"};
 static const char *const off_names[] = {"off"};
 static const char **shader_names; /* "off", then shader_key() of each listed shader */
 
@@ -105,6 +107,8 @@ static Setting settings[SET_COUNT] = {
     [SET_MODS] = {"mods", "Mods", 2, 1, onoff_names, onoff_labels}, /* replacement cutscenes and music (movie.c, music.c) */
     /* Fast forward (main.c, sched.c); Normal speed keeps the music sequences on the host's clock (snd.c). */
     [SET_FF_MUSIC] = {"ffmusic", "Fast forward music", 2, FF_MUSIC_FAST, ff_music_names, ff_music_labels},
+    /* Music only mutes every channel but the BGM players' while fast forwarding (snd.c). */
+    [SET_FF_SOUND] = {"ffsound", "Fast forward sound", 2, FF_SOUND_ALL, ff_sound_names, ff_sound_labels},
 };
 #define SETTING(id) (settings[id].value)
 

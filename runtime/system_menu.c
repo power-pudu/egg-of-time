@@ -53,6 +53,7 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_COLOR] = "Deepens colors toward the SNES.",
     [SET_MODS] = "Replacement movies and music (mods).",
     [SET_FF_MUSIC] = "Normal speed may delay music cues.",
+    [SET_FF_SOUND] = "Music only mutes sound effects.",
     [ROW_CONTROLS] = "Keyboard keys and gamepad buttons.",
     [ROW_DUMP] = "Saves the graphics for mods, as PNG.",
 };

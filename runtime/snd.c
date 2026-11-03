@@ -834,17 +834,19 @@ static uint16_t bgm_channels(void) {
 /* One driver frame of emulated time, and its output. Fast forward (sched.c) shortens it in host time: the mixer
  * plays the channels that much faster. With the Fast forward music setting at Normal speed, the BGM players and
  * their channels instead get a frame per SND_FRAME_CYCLES of host time and play at their own pitch; the game
- * then sees the music advance slower than itself. */
+ * then sees the music advance slower than itself. With Fast forward sound at Music only, the other channels
+ * are muted meanwhile. */
 static void snd_frame(void) {
     static double bgm_frames; /* BGM frames owed (Normal speed) */
     int speed = sched_speed();
     double seconds = (double)SND_FRAME_CYCLES / RT_CLOCK_HZ / speed;
+    int sfx_off = speed > 1 && display_setting_get(SET_FF_SOUND) == FF_SOUND_MUSIC;
     if (speed == 1 || display_setting_get(SET_FF_MUSIC) != FF_MUSIC_NORMAL) {
         bgm_frames = 0;
         players_main(-1);
         ex_main(0xFFFF);
         update_shared_work();
-        spu_render(seconds, speed, 0, speed);
+        spu_render(seconds, speed, 0, sfx_off ? (uint16_t)~bgm_channels() : 0, speed);
         return;
     }
     players_main(0);
@@ -854,7 +856,8 @@ static void snd_frame(void) {
         ex_main(bgm_channels());
     }
     update_shared_work();
-    spu_render(seconds, speed, bgm_channels(), 1);
+    uint16_t bgm = bgm_channels();
+    spu_render(seconds, speed, bgm, sfx_off ? (uint16_t)~bgm : 0, 1);
 }
 
 /* ---- commands ---- */

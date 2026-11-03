@@ -33,8 +33,9 @@ void spu_open_output(void);    /* host thread, once at startup */
 void spu_reset(void);
 void spu_start(int ch);        /* key on: restart playback with the channel's current settings */
 /* Game thread: mix this much output (host time) and queue it. Fast forward: channels play `speed` times faster
- * (higher), except those in `normal`; the music mods play music_speed times faster. */
-void spu_render(double seconds, int speed, uint16_t normal, int music_speed);
+ * (higher), except those in `normal`; the music mods play music_speed times faster. Channels in `muted` are
+ * silent. */
+void spu_render(double seconds, int speed, uint16_t normal, uint16_t muted, int music_speed);
 
 void snd_reset(void);
 void snd_command_list(uint32_t list); /* ARM9 -> ARM7 SOUND message: linked list of SNDCommand */

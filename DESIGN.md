@@ -251,7 +251,9 @@ original bytes, and caches the result per region until the region is written.
   the mixer steps the channels (and the music mods) twice as fast, so the output stays at the device rate, an
   octave higher. System Settings > Fast forward music at Normal speed (Sped up is the default) instead runs the
   players whose sequence is a BGM (`music_is_bgm`) and the channels their tracks hold one driver frame per frame
-  of host time, at their own pitch; the game then sees those players advance slower than itself. Only 2x: from about 3x the host cannot keep up in busy scenes (a Zenan Bridge battle) and the
+  of host time, at their own pitch; the game then sees those players advance slower than itself. System Settings >
+  Fast forward sound at Music only (All is the default) mixes every other channel at zero volume while fast
+  forwarding: they still play, so the driver sees them end on time. The music mods play either way. Only 2x: from about 3x the host cannot keep up in busy scenes (a Zenan Bridge battle) and the
   game freezes, its lower priority threads starved, while VBlanks go on.
 - **Single screen mode** (CMake option `EGG_SINGLE_SCREEN`, default ON; `runtime/single_screen.c`): the game laid
   out for one screen. `video_end_frame` builds a third output, the main screen, which the top-only layout shows;

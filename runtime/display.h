@@ -27,10 +27,11 @@ void display_capture(const char *path);
 
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
  * Setting one applies it at once and saves eggoftime.ini. */
-enum { SET_LANGUAGE, SET_WINDOW, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC,
+enum { SET_LANGUAGE, SET_WINDOW, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND,
        SET_COUNT };
 enum { LANGUAGE_ENGLISH, LANGUAGE_FRENCH }; /* SET_LANGUAGE values */
 enum { FF_MUSIC_FAST, FF_MUSIC_NORMAL };    /* SET_FF_MUSIC values */
+enum { FF_SOUND_ALL, FF_SOUND_MUSIC };      /* SET_FF_SOUND values */
 const char *display_setting_title(int id);
 int display_setting_count(int id);
 int display_setting_get(int id);
