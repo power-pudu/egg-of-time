@@ -31,4 +31,5 @@ beside them. RetroArch shaders go in mods\shaders\glsl (.glslp, .glsl) and mods\
 (.slangp, .slang), and are chosen in System Settings > Shader.
 
 This is an unofficial fan project, not affiliated with or endorsed by Square Enix or Nintendo.
-Chrono Trigger is a trademark of Square Enix. Third-party licenses are in kit\licenses.
+Chrono Trigger is a trademark of Square Enix. Egg of Time is MIT-licensed (LICENSE.md); third-party
+licenses are in kit\licenses.

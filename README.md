@@ -264,6 +264,11 @@ For development, or to play on Linux and macOS.
 Pushing a `v*` tag runs `.github/workflows/release.yml`. It builds the runtime for Windows and Linux, packages
 each with the toolkit (`scripts/package.py`) and publishes the Windows zip and the Linux tar.gz. The packager refuses ROMs, extracted files and generated code.
 
+## License
+
+Egg of Time's source code is MIT-licensed; the game itself is not covered, and third-party components keep
+their own licenses. See [LICENSE.md](LICENSE.md).
+
 ## Credits
 
 - [ds-decomp](https://github.com/AetiasHax/ds-decomp) and [dsd-ghidra](https://github.com/AetiasHax/dsd-ghidra)

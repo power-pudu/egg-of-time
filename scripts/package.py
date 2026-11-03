@@ -11,7 +11,7 @@ the tools in kit/ (see DESIGN.md, "Release builds"). This script copies
                                                           compiles and links the game library (found by asking
                                                           clang for the headers and lld for the libraries it reads)
   kit/xdelta3 (--xdelta)                                  xdelta3, for translation patches in xdelta format
-  kit/licenses, README.txt
+  kit/licenses, README.txt, LICENSE.md
 
 and writes kit/kit.id, a hash of what decides the generated code, so a release with other code rebuilds it.
 
@@ -193,6 +193,7 @@ def main():
         copy(os.path.join(ROOT, "res", "mods", d, "readme.txt"), os.path.join(out, "mods", d, "readme.txt"))
     readme = "README.txt" if WINDOWS else "README-linux.txt"
     copy(os.path.join(ROOT, "res", "release", readme), os.path.join(out, "README.txt"))
+    copy(os.path.join(ROOT, "LICENSE.md"), os.path.join(out, "LICENSE.md"))
     implib = os.path.join(args.build, "libeggoftime.a")
     if WINDOWS:
         copy(implib, os.path.join(kit, "lib", "libeggoftime.a"))
