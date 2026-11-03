@@ -1098,8 +1098,9 @@ static SDL_AtomicInt menu_place;
 int ss_menu_place(void) { return SDL_GetAtomicInt(&menu_place); }
 
 int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, const uint32_t *wide, int wide_w,
-               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite) {
+               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from) {
     Scene sc = current();
+    *from = SS_FROM_NONE;
     if (sc.kind != SCENE_EQUIP) equip_portrait = -1; /* the page opens with its member's portrait */
     int paused = EGG_SINGLE_SCREEN && sc.kind == SCENE_FIELD && field_paused();
     int title_menu = sc.kind == SCENE_TITLE && rt_r16(sc.obj + TITLE_PHASE) == TITLE_MENU;
@@ -1110,6 +1111,7 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
                                                : SS_MENU_NONE);
     if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE) { /* widescreen: the top screen with its margins */
         memcpy(main, wide, (size_t)wide_w * SCREEN_H * 4);
+        *from = SS_FROM_WIDE;
         if (paused) {
             const char *hint = rt_french() ? "Appuyez sur SELECT pour les options syst\xC3\xA8me"
                                            : "Press SELECT to open System Settings";
@@ -1121,6 +1123,7 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
     case SCENE_LOGOS:
         if (blank(top)) {
             memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+            *from = SS_FROM_BOTTOM;
             break;
         }
         /* Square Enix (top rows 85-107) above Mobiclip (bottom rows 50-141), centred together. */
@@ -1183,12 +1186,17 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
             return wide_w;
         }
         memcpy(main, bottom, SCREEN_W * SCREEN_H * 4); /* the first frame, drawn before the scene was known */
+        *from = SS_FROM_BOTTOM;
         break;
-    case SCENE_NAMING:
-        memcpy(main, rt_r32(sc.obj + NAMING_STATE) == NAMING_ENTERING ? bottom : top, SCREEN_W * SCREEN_H * 4);
+    case SCENE_NAMING: {
+        int entering = rt_r32(sc.obj + NAMING_STATE) == NAMING_ENTERING;
+        memcpy(main, entering ? bottom : top, SCREEN_W * SCREEN_H * 4);
+        *from = entering ? SS_FROM_BOTTOM : SS_FROM_TOP;
         break;
+    }
     default:
         memcpy(main, top, SCREEN_W * SCREEN_H * 4);
+        *from = SS_FROM_TOP;
         break;
     }
     return SCREEN_W;

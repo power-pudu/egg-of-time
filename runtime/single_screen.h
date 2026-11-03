@@ -25,6 +25,8 @@ int ss_menu_place(void);
 /* Builds the main screen from both screens of a finished frame (each 256x192 ABGR8888) and the top screen
  * with its widescreen margins (wide_w columns), and the bottom screen with sprites moved and the same margins
  * (ss_bottom_shift; NULL when not drawn) with which of its pixels are sprites; returns the main screen's width
- * (256, or wide_w in the field and the age selector). */
+ * (256, or wide_w in the field and the age selector). *from: the picture main is a copy of (SS_FROM_*; texts the
+ * runtime draws over it aside), SS_FROM_NONE when it is put together from both. */
+enum { SS_FROM_NONE, SS_FROM_TOP, SS_FROM_BOTTOM, SS_FROM_WIDE };
 int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, const uint32_t *wide, int wide_w,
-               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite);
+               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from);

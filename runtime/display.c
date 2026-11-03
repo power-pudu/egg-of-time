@@ -33,6 +33,7 @@
 #include <SDL3/SDL.h>
 
 #include "display.h"
+#include "gfx_mod.h"
 #include "movie.h"
 #include "rt.h"
 #include "shader.h"
@@ -43,6 +44,7 @@
 #define SMOOTH_SCALE 4
 #define MESSAGE_MS 2000
 #define RES_MAX 11
+#define SCALE_MAX 8 /* HD art, at most (gfx_mod.c) */
 
 enum { LAYOUT_TOP, LAYOUT_STACKED, LAYOUT_SIDE, LAYOUT_COUNT };
 enum { WINDOW_WINDOWED, WINDOW_BORDERLESS, WINDOW_FULLSCREEN };
@@ -123,6 +125,10 @@ static int reupload;                                   /* the filter changed: up
 static uint32_t scale2x_tmp[VIDEO_LINE_MAX * 2 * SCREEN_H * 2];
 static uint32_t scaled[VIDEO_LINE_MAX * SMOOTH_SCALE * SCREEN_H * SMOOTH_SCALE];
 static uint32_t corrected[VIDEO_LINE_MAX * SCREEN_H]; /* a screen with the Color setting applied */
+static SDL_Texture *hd_tex[4];                         /* the screens drawn from HD art (graphics mods) */
+static int hd_k[4];                                    /* their scale; 0: not drawn this way */
+static uint32_t *hd_px;                                /* a screen being drawn from HD art */
+static const VideoHdFrame *hd_frame;                   /* the sources of the screens being uploaded */
 static uint8_t gamma_lut[256];
 static int gamma_lut_for = -1;                         /* the Color value gamma_lut was built for */
 static char ini_path[1024];
@@ -318,9 +324,151 @@ static const uint32_t *color_corrected(const uint32_t *px, int w) {
     return corrected;
 }
 
-static void upload(int tex, const uint32_t *px) {
+/* ---- HD graphics mods ---- */
+
+static inline uint32_t rgb555(uint16_t c) {
+    uint32_t r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+    return (r << 3 | r >> 2) | (g << 3 | g >> 2) << 8 | (b << 3 | b >> 2) << 16;
+}
+
+/* A texel of the HD art, weighted and with the added colour, as the renderer composed the native pixel; through
+ * the Color setting's curve (lut, NULL for Original). */
+static inline uint32_t hd_mix(uint32_t c, int weight, uint32_t add, const uint8_t *lut) {
+    uint32_t out = 0xFF000000u;
+    for (int s = 0; s < 24; s += 8) {
+        uint32_t v = (((c >> s) & 0xFF) * (uint32_t)weight >> 4) + ((add >> s) & 0xFF);
+        v = v > 255 ? 255 : v;
+        out |= (uint32_t)(lut ? lut[v] : v) << s;
+    }
+    return out;
+}
+
+/* Rows y0..y1-1 of a screen (w columns) drawn at k times its size (job of compose_hd). */
+typedef struct HdJob { const uint32_t *px; const VideoHd *src; const uint16_t *palette; const uint8_t *lut; uint32_t *out; int w, k, y0, y1; } HdJob;
+
+static void compose_rows(const HdJob *j) {
+    int w = j->w, k = j->k, ow = w * k;
+    uint8_t at[SCALE_MAX + 1][RES_MAX]; /* by HD scale: the HD texel under each of a pixel's k columns */
+    for (int es = 1; es <= SCALE_MAX; es++) for (int sx = 0; sx < k; sx++) at[es][sx] = (uint8_t)(sx * es / k);
+    for (int y = j->y0; y < j->y1; y++) {
+        for (int x = 0; x < w; x++) {
+            const VideoHd *r = &j->src[y * w + x];
+            const GfxHdTile *t = r->tile ? gfxmod_tile(r->tile >> 8) : NULL;
+            uint32_t *o = j->out + (size_t)y * k * ow + (size_t)x * k;
+            if (!t) {
+                uint32_t c = j->px[y * w + x];
+                for (int sy = 0; sy < k; sy++) for (int sx = 0; sx < k; sx++) o[sy * ow + sx] = c;
+                continue;
+            }
+            int es = t->scale, n = 8 * es, tx = (r->tile >> 5) & 7, ty = (r->tile >> 2) & 7;
+            int hflip = (r->tile >> 1) & 1, vflip = r->tile & 1;
+            uint32_t add = rgb555(r->added), below = 0xFF000000u | rgb555(r->below);
+            if (j->lut) below = hd_mix(below, 16, 0, j->lut);
+            const uint16_t *pal = j->palette + ((r->pal >> 4) & 1) * 0x200 + ((r->pal >> 5) & 1) * 0x100 +
+                                  (t->bpp8 ? 0 : (r->pal & 15) * 16);
+            const uint8_t *col = at[es];
+            for (int sy = 0; sy < k; sy++) {
+                int v = ty * es + (vflip ? es - 1 - col[sy] : col[sy]);
+                uint32_t *line = o + sy * ow;
+                if (t->indexed) {
+                    const uint8_t *texels = (const uint8_t *)t->px + v * n + tx * es;
+                    for (int sx = 0; sx < k; sx++) {
+                        uint8_t i = texels[hflip ? es - 1 - col[sx] : col[sx]];
+                        line[sx] = i ? hd_mix(rgb555(pal[i]), r->weight, add, j->lut) : below;
+                    }
+                } else {
+                    const uint32_t *texels = (const uint32_t *)t->px + v * n + tx * es;
+                    for (int sx = 0; sx < k; sx++) {
+                        uint32_t a = texels[hflip ? es - 1 - col[sx] : col[sx]];
+                        line[sx] = a >> 24 ? hd_mix(a, r->weight, add, j->lut) : below;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* compose_rows over the whole screen, in bands on worker threads (up to HD_WORKERS, leaving the game's and this
+ * thread's cores) and this one. */
+#define HD_WORKERS 6
+static HdJob hd_jobs[HD_WORKERS + 1];
+static SDL_Semaphore *hd_go[HD_WORKERS], *hd_done;
+static int hd_workers = -1;
+
+static int SDLCALL hd_worker(void *arg) {
+    int i = (int)(intptr_t)arg;
+    for (;;) {
+        SDL_WaitSemaphore(hd_go[i]);
+        compose_rows(&hd_jobs[i]);
+        SDL_SignalSemaphore(hd_done);
+    }
+    return 0;
+}
+
+static void compose_hd(const HdJob *job) {
+    if (hd_workers < 0) {
+        int want = SDL_clamp(SDL_GetNumLogicalCPUCores() - 2, 0, HD_WORKERS);
+        hd_done = SDL_CreateSemaphore(0);
+        for (hd_workers = 0; hd_done && hd_workers < want; hd_workers++) {
+            if (!(hd_go[hd_workers] = SDL_CreateSemaphore(0))) break;
+            SDL_Thread *t = SDL_CreateThread(hd_worker, "hd", (void *)(intptr_t)hd_workers);
+            if (!t) break;
+            SDL_DetachThread(t);
+        }
+    }
+    int bands = hd_workers + 1;
+    for (int i = 0; i < bands; i++) {
+        hd_jobs[i] = *job;
+        hd_jobs[i].y0 = SCREEN_H * i / bands, hd_jobs[i].y1 = SCREEN_H * (i + 1) / bands;
+    }
+    for (int i = 0; i < hd_workers; i++) SDL_SignalSemaphore(hd_go[i]);
+    compose_rows(&hd_jobs[hd_workers]);
+    for (int i = 0; i < hd_workers; i++) SDL_WaitSemaphore(hd_done);
+}
+
+/* The screen's sources, when it is drawn from HD art now (not through a shader, and Mods on). */
+static const VideoHd *hd_source(int tex) {
+    if (!hd_frame || !hd_frame->on || SETTING(SET_SHADER) || !SETTING(SET_MODS) || !gfxmod_hd_scale()) return NULL;
+    return tex == 0 ? hd_frame->top : tex == 1 ? hd_frame->bottom : tex == 2 ? hd_frame->main : hd_frame->party;
+}
+
+/* Draws and uploads screen `tex` (its pixels px with the Color setting applied) from HD art at k times its size;
+ * 0 if it cannot. */
+static int upload_hd(int tex, const uint32_t *px, const VideoHd *src, int k) {
+    int w = screen_width(tex), ow = w * k, oh = SCREEN_H * k;
+    float tw = 0, th = 0;
+    if (hd_tex[tex]) SDL_GetTextureSize(hd_tex[tex], &tw, &th);
+    int full_w = (tex >= 2 ? VIDEO_LINE_MAX : SCREEN_W) * k;
+    if ((int)tw != full_w || (int)th != oh) {
+        SDL_DestroyTexture(hd_tex[tex]);
+        hd_tex[tex] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, full_w, oh);
+        if (!hd_tex[tex]) return 0;
+        SDL_SetTextureScaleMode(hd_tex[tex], SDL_SCALEMODE_LINEAR);
+        SDL_SetTextureBlendMode(hd_tex[tex], tex == 3 ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
+    }
+    static size_t have;
+    size_t need = (size_t)VIDEO_LINE_MAX * SCREEN_H * k * k;
+    if (have < need) {
+        SDL_free(hd_px);
+        hd_px = SDL_malloc(need * 4);
+        have = hd_px ? need : 0;
+        if (!hd_px) return 0;
+    }
+    compose_hd(&(HdJob){px, src, hd_frame->palette, SETTING(SET_COLOR) ? gamma_lut : NULL, hd_px, w, k, 0, SCREEN_H});
+    SDL_UpdateTexture(hd_tex[tex], &(SDL_Rect){0, 0, ow, oh}, hd_px, ow * 4);
+    return 1;
+}
+
+static int internal_scale(const SDL_FRect *dest);
+
+/* shown: the screen is in the layout (only those are drawn from HD art). */
+static void upload(int tex, const uint32_t *px, int shown) {
     int w = screen_width(tex);
     px = color_corrected(px, w);
+    const VideoHd *src = shown ? hd_source(tex) : NULL;
+    SDL_FRect dest = dest_rect();
+    int k = src ? SDL_min(gfxmod_hd_scale(), internal_scale(&dest)) : 0;
+    hd_k[tex] = k > 1 && upload_hd(tex, px, src, k) ? k : 0;
     SDL_UpdateTexture(native[tex], &(SDL_Rect){0, 0, w, SCREEN_H}, px, w * 4);
     if (SETTING(SET_FILTER) == FILTER_SMOOTH) {
         scale2x(px, w, SCREEN_H, scale2x_tmp);
@@ -423,8 +571,8 @@ static void draw_screens(void) {
         int x, y;
         if (!screen_slot(screen, &x, &y)) continue;
         int tex = screen == 0 && main_shown() ? 2 : screen; /* the main screen alone */
-        int k = !shader && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
-        SDL_Texture *t = k > 1 ? smooth[tex] : native[tex];
+        int k = hd_k[tex] ? hd_k[tex] : !shader && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
+        SDL_Texture *t = hd_k[tex] ? hd_tex[tex] : k > 1 ? smooth[tex] : native[tex];
         if (tex != 2 || !main_guard) {
             int w = screen_width(tex);
             SDL_FRect src = {0, 0, (float)w * k, (float)SCREEN_H * k};
@@ -446,8 +594,8 @@ static void draw_screens(void) {
             SDL_RenderTexture(ren, t, &(SDL_FRect){sx, edge * k, vw * k, (float)k},
                               &(SDL_FRect){(float)x * n, (at + y) * n, vw * n, SDL_fabsf(o) * n});
         }
-        if (party_on) { /* the sprites the camera follows: not slid */
-            SDL_RenderTexture(ren, k > 1 ? smooth[3] : native[3],
+        if (party_on) { /* the sprites the camera follows: not slid (drawn at the main screen's scale) */
+            SDL_RenderTexture(ren, hd_k[2] ? (hd_k[3] == k ? hd_tex[3] : native[3]) : k > 1 ? smooth[3] : native[3],
                               &(SDL_FRect){(float)main_guard * k, 0, vw * k, (float)SCREEN_H * k},
                               &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n});
         }
@@ -514,7 +662,7 @@ int display_init(void) {
 }
 
 void display_frame(const uint32_t *const screens[3], const uint32_t *party, int width, int new_frame, float slide_dx,
-                   float slide_dy) {
+                   float slide_dy, const VideoHdFrame *hd) {
     /* A main screen of the margin asked for (plus guard) is the field: its guard columns are hidden. */
     main_guard = asked_guard && width == SCREEN_W + 2 * asked_margin ? asked_guard : 0;
     slide_x = main_guard ? slide_dx : 0;
@@ -527,8 +675,14 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, int 
     main_w = width;
     party_on = main_guard && party;
     if (new_frame || reupload) {
-        for (int i = 0; i < 3; i++) upload(i, screens[i]);
-        if (party_on) upload(3, party);
+        hd_frame = hd;
+        int shown[3] = {0};
+        for (int screen = 0, x, y; screen < 2; screen++) {
+            if (screen_slot(screen, &x, &y)) shown[screen == 0 && main_shown() ? 2 : screen] = 1;
+        }
+        for (int i = 0; i < 3; i++) upload(i, screens[i], shown[i]);
+        if (party_on) upload(3, party, shown[2]);
+        hd_frame = NULL;
         reupload = 0;
     }
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);

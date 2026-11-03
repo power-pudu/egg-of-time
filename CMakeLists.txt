@@ -40,6 +40,9 @@ set(RUNTIME_SOURCES
     runtime/cpu.c
     runtime/display.c
     runtime/game_build.c
+    runtime/gfx_dump.c
+    runtime/gfx_mod.c
+    runtime/gfx_rom.c
     runtime/card.c
     runtime/hw.c
     runtime/memory.c
@@ -117,8 +120,9 @@ if(WIN32)
     endif()
 endif()
 
-# Movie, music, translation and shader mods: empty mods/cutscenes, mods/music, mods/translation and mods/shaders
-# folders next to the executable, each with a readme (the list of file names, or how to use the folder).
+# Movie, music, translation, shader and graphics mods: empty mods/cutscenes, mods/music, mods/translation,
+# mods/shaders and mods/graphics folders next to the executable, each with a readme (the list of file names, or how
+# to use the folder).
 add_custom_command(TARGET eggoftime POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:eggoftime>/mods/cutscenes
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/mods/cutscenes/readme.txt
@@ -131,7 +135,10 @@ add_custom_command(TARGET eggoftime POST_BUILD
             $<TARGET_FILE_DIR:eggoftime>/mods/translation
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:eggoftime>/mods/shaders
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/mods/shaders/readme.txt
-            $<TARGET_FILE_DIR:eggoftime>/mods/shaders)
+            $<TARGET_FILE_DIR:eggoftime>/mods/shaders
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:eggoftime>/mods/graphics
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/mods/graphics/readme.txt
+            $<TARGET_FILE_DIR:eggoftime>/mods/graphics)
 
 # Slang shader mods run in librashader (runtime/shader.c), loaded at run time: a librashader library given here
 # (librashader.dll / .so / .dylib) is copied next to the executable.

@@ -189,7 +189,7 @@ def main():
         sys.exit(f"no '{exe}' in " + args.build)
     if args.librashader:
         copy(args.librashader, os.path.join(out, "librashader" + (".dll" if WINDOWS else ".so")))
-    for d in ("cutscenes", "music", "translation", "shaders"):
+    for d in ("cutscenes", "music", "translation", "shaders", "graphics"):
         copy(os.path.join(ROOT, "res", "mods", d, "readme.txt"), os.path.join(out, "mods", d, "readme.txt"))
     readme = "README.txt" if WINDOWS else "README-linux.txt"
     copy(os.path.join(ROOT, "res", "release", readme), os.path.join(out, "README.txt"))

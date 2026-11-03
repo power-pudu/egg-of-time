@@ -354,6 +354,33 @@ original bytes, and caches the result per region until the region is written.
   `res/mods/music/readme.txt` come from the Music Box: titles in `/msg/big/bgm.msg` (one byte per character in
   the game's font order; English is every 4th entry from 1, French follows each) and the BGM numbers in the u32
   table at main 0x020558d4 (also in ov009); 28 of the 97 are not in the Music Box.
+- **Graphics dump** (`runtime/gfx_dump.c`, System Settings > Dump graphics): every tile sheet (`.NCGR`,
+  `_ncg.bin`), every `.NCER` cell (a sprite frame) and every `_nsc.bin` screen of the ROM in memory, as indexed
+  PNGs (`SDL_SavePNG`, palette indexes kept, colour 0 of each 16-colour row transparent) in
+  `mods/graphics/dump/{sheets,frames,screens}/<ROM path>.png`, on a thread of its own while the game runs. The
+  ROM's files come from its FNT/FAT; most are LZ10-compressed, some twice. The game's background formats have
+  8-byte headers: NCG (tile count, 8 bpp flag), NCL (colour count), NSC (byte 6 bit 0 affine: one byte per map
+  entry, else BG text entries; width and height in tiles at bytes 8, 9). Palettes: the file of the same name,
+  else the only one in the folder, else for `Chara/Chara_xxxx` `Chara/ObjPlt_xxxx` (the game pairs them in code:
+  main 0x020483d0 loads the sheet, 0x02048570 the palette, both called from ov000 0x02109420 through a function
+  pointer; the same number held for every sprite checked), else a grey ramp (`palettes.txt` lists which; `Map/Bg`
+  sheets are paired through the map tables). Progress and the time left are weighted by file size, a sheet's cells counting 32 times theirs.
+  The ROM reading, decoding and layouts (sheet, cell in reverse OAM order, screen) are `runtime/gfx_rom.c`,
+  shared with the loader.
+- **Graphics mods** (`runtime/gfx_mod.c`, Mods on, read once after the game build is prepared, so the build id
+  is the ROM's): PNGs in `mods/graphics/{sheets,frames,screens}/<ROM path>.png` (the dump's paths), in path
+  order. Each image is mapped back onto its 8x8 tiles through the same layouts as the dump; a pixel belongs to
+  the top-most tile covering it. At 1x the tiles are written into the ROM in memory (indexed pixels, or RGBA
+  matched to the tile's palette row), the file recompressed (LZ10) and, when it grows, appended after the ROM's
+  end with its FAT entry moved. Indexed PNGs whose palette differs write the ROM palette's colours. At 2x to 8x
+  each tile's HD block (native pixels upscaled where another tile owns them; blank tiles skipped) goes into a
+  hash table keyed on the native tile's bytes and bpp. The renderer (`runtime/video.c`) records each pixel's
+  source (`VideoHd`: tile number from that hash, cached per frame by VRAM address, texel, flips, palette row,
+  blend weight, added colour and the colour under it for transparent HD texels); affine layers and extended
+  palettes have none. `runtime/display.c` then draws each shown screen at min(HD scale, internal scale) from
+  those records on worker threads: indexed art through the frame's palette RAM, RGBA as painted, both through
+  the recorded blend and the Color setting. Not with a shader; the one-screen menus (built by
+  `runtime/single_screen.c`) keep native tiles, the field, warp, world map and race passing their sources on.
 - **Translation mods** (`runtime/translation.c`, `runtime/rompatch.c`): every `.ips`, `.bps`, `.xdelta`,
   `.vcdiff`, `.xdelta3` or `.delta` file in `mods/translation/` patches the verified ROM before it is extracted, in
   file-name order (a split translation, or a base patch and a fix). IPS and BPS are decoded here; BPS checks its

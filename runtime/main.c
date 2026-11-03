@@ -10,6 +10,7 @@
 #include "controls.h"
 #include "display.h"
 #include "game_build.h"
+#include "gfx_mod.h"
 #include "rt.h"
 #include "sound.h"
 #include "system_menu.h"
@@ -28,7 +29,7 @@ static char install_dir[1024], data_dir[1024];
 
 /* The AppImage's data folder starts with the mod folders and their readme files, so the player finds where mods go. */
 static void make_mod_folders(void) {
-    static const char *const mods[] = {"cutscenes", "music", "translation", "shaders"};
+    static const char *const mods[] = {"cutscenes", "music", "translation", "shaders", "graphics"};
     for (size_t i = 0; i < SDL_arraysize(mods); i++) {
         char from[1024], to[1024];
         snprintf(to, sizeof to, "%smods/%s", data_dir, mods[i]);
@@ -162,6 +163,11 @@ static uint32_t top_px[SCREEN_W * SCREEN_H], bottom_px[SCREEN_W * SCREEN_H], mai
 static const uint32_t *const screens[3] = {top_px, bottom_px, main_px};
 static int main_w = SCREEN_W; /* main_px: rows of this width (widescreen) */
 static uint32_t party_px[VIDEO_LINE_MAX * SCREEN_H]; /* main screen's party layer (camera smoothing) */
+/* The screens' sources for HD graphics mods (gfx_mod.c). */
+static VideoHd hd_top[SCREEN_W * SCREEN_H], hd_bottom[SCREEN_W * SCREEN_H], hd_main[VIDEO_LINE_MAX * SCREEN_H],
+    hd_party[VIDEO_LINE_MAX * SCREEN_H];
+static uint16_t hd_palette[RT_PALETTE_SIZE / 2];
+static VideoHdFrame hd = {hd_top, hd_bottom, hd_main, hd_party, hd_palette, 0};
 static int party_on;
 
 
@@ -195,6 +201,7 @@ int main(int argc, char **argv) {
     if (!display_init()) return 1;
     controls_init();
     if (!game_build_prepare(argc > 1 ? argv[1] : NULL)) return 1; /* the ROM and the game code */
+    if (display_setting_get(SET_MODS)) gfxmod_load(); /* graphics mods: into the ROM in memory, and HD art */
     spu_open_output();
 
     /* Deep C call chains (recompiled calls + tail calls) need a large host stack. */
@@ -338,7 +345,7 @@ int main(int argc, char **argv) {
             }
             shown_serial = serial;
             shown_t = frame_t;
-            main_w = video_copy_frame(top_px, bottom_px, main_px, party_px, &party_on);
+            main_w = video_copy_frame(top_px, bottom_px, main_px, party_px, &party_on, gfxmod_hd_scale() ? &hd : NULL);
         }
         /* Camera smoothing: show the view slid back by the share of the camera's last step still to come, timed from
          * the frame's arrival (so every window frame lands at its own position, whatever the refresh rate). */
@@ -350,7 +357,8 @@ int main(int argc, char **argv) {
             memcpy(top_px, main_px, sizeof top_px); /* layouts other than top-only show it too */
             new_frame = 1;
         }
-        display_frame(screens, party_on ? party_px : NULL, main_w, new_frame, -cam_dx * behind, -cam_dy * behind);
+        display_frame(screens, party_on ? party_px : NULL, main_w, new_frame, -cam_dx * behind, -cam_dy * behind,
+                      hd.on && !sysmenu_is_open() ? &hd : NULL);
         presented++;
         if (log_fps && SDL_GetTicks() >= fps_at) {
             rt_log("fps: window %d, game %llu", presented, (unsigned long long)(rt_frame_count - game_frames));

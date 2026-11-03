@@ -11,6 +11,17 @@
 #define VIDEO_MARGIN_MAX (96 + VIDEO_SLIDE_MAX)
 #define VIDEO_LINE_MAX (SCREEN_W + 2 * VIDEO_MARGIN_MAX)
 
+/* HD graphics mods: where a pixel's colour came from (video.c), to draw it again from HD art (display.c). */
+typedef struct VideoHd {
+    uint32_t tile;     /* gfxmod tile << 8 | texel x << 5 | texel y << 2 | hflip << 1 | vflip; 0: none (the colour stays) */
+    uint8_t pal;       /* palette row | engine B << 4 | sprite palette << 5 */
+    uint8_t weight;    /* the texel's share of the colour, 0-16 */
+    uint16_t added;    /* BGR555 added to it (blending, brightness) */
+    uint16_t below;    /* BGR555 under it: shown where the HD art is transparent */
+} VideoHd;
+/* The shown screens' sources (as video_copy_frame's buffers) and the palette RAM of the frame. */
+typedef struct VideoHdFrame { VideoHd *top, *bottom, *main, *party; uint16_t *palette; int on; } VideoHdFrame;
+
 /* VRAM as seen by the CPU (0x06000000-0x06FFFFFF); NULL where no bank is mapped. */
 uint8_t *video_vram_ptr(uint32_t addr);
 void video_vramcnt_written(void);
@@ -30,7 +41,8 @@ void video_set_fill_sides(int on);
  * VIDEO_LINE_MAX). Copies under a lock. */
 /* party (when *party_on): the main screen's party layer, same size, transparent (0) where the party is not:
  * the sprites the camera follows, left out of main so camera smoothing slides only the scenery. */
-int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *party, int *party_on);
+/* hd (NULL: not wanted): the pixels' sources for HD graphics mods, when the frame has them (hd->on). */
+int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *party, int *party_on, VideoHdFrame *hd);
 /* Camera smoothing on: the field's camera-following sprites get the party layer (any thread). */
 void video_set_camera_smoothing(int on);
 /* Serial of the latest frame; also how far the field camera moved since the previous frame (pixels; 0 outside

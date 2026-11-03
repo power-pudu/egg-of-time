@@ -8,6 +8,7 @@
 *.nds
 *.sav
 *.state
+**/mods/graphics/dump/
 
 # Third-party tools downloaded locally
 /tools/dsd/

@@ -8,6 +8,10 @@
  * game on again in it (RT_STATE_REBOOT), No leaves it for the next start. Up to ROWS_SHOWN rows fit; beyond them the list
  * scrolls with the cursor, and arrows in the header show which way more rows lie.
  *
+ * A on Dump graphics asks whether to save every sprite and background as PNG files (gfx_dump.c), which takes a
+ * while; Yes starts the dump on its own thread. While it runs, the menu shows its progress and the time left (from
+ * the pace so far); the menu can be closed meanwhile, and the message box says when the dump is done.
+ *
  * A on the last row, Controls, opens the button mapping: a row per DS button and fast forward, with its keyboard
  * key and gamepad button. Left/Right pick the key or the button, A waits for the new one (controls_capture), a
  * last row restores the defaults; B or SELECT goes back to the settings. After a rebinding, input is kept from
@@ -20,6 +24,7 @@
 
 #include "controls.h"
 #include "display.h"
+#include "gfx_dump.h"
 #include "rt.h"
 #include "single_screen.h"
 #include "system_menu.h"
@@ -31,7 +36,8 @@
 #define RESUME_MS 100 /* START held for the game after closing from the pause */
 
 #define ROW_CONTROLS SET_COUNT /* after the display settings */
-#define ROW_COUNT (SET_COUNT + 1)
+#define ROW_DUMP (SET_COUNT + 1)
+#define ROW_COUNT (SET_COUNT + 2)
 #define ROW_RESET CTL_COUNT /* the Controls page's last row */
 
 static const char *const descriptions[ROW_COUNT] = {
@@ -48,18 +54,22 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_MODS] = "Replacement movies and music (mods).",
     [SET_FF_MUSIC] = "Normal speed may delay music cues.",
     [ROW_CONTROLS] = "Keyboard keys and gamepad buttons.",
+    [ROW_DUMP] = "Saves the graphics for mods, as PNG.",
 };
+
+enum { CONFIRM_NONE, CONFIRM_LANGUAGE, CONFIRM_DUMP };
 
 static int place, cursor; /* place: where it was opened (SS_MENU_*), SS_MENU_NONE when closed */
 static SDL_AtomicInt open_now; /* place != SS_MENU_NONE, for the game thread */
 static int top;           /* the first row shown (rows: the shown settings, in order) */
-static int confirm, yes;  /* the restart question is open; Yes is chosen */
+static int confirm, yes;  /* the question open (CONFIRM_*); Yes is chosen */
+static Uint64 dump_since; /* when the graphics dump started */
 static int controls_page, ctl_cursor, ctl_pad, ctl_top; /* ctl_pad: the gamepad column is chosen */
 static int released_wait; /* a rebinding ended: the menu ignores input until every key is released */
 static uint32_t prev_keys, blocked; /* blocked: held since the menu closed, kept from the game until released */
 static Uint64 repeat_at, resume_until;
 
-static int row_shown(int i) { return i == ROW_CONTROLS || display_setting_shown(i); }
+static int row_shown(int i) { return i >= SET_COUNT || display_setting_shown(i); }
 
 static void controls_input(uint32_t act) {
     if (act & (KEY_B | KEY_SELECT)) controls_page = 0;
@@ -111,8 +121,11 @@ static uint32_t input(uint32_t keys) {
     if (confirm && !left) {
         if (act & (KEY_LEFT | KEY_RIGHT | KEY_UP | KEY_DOWN)) yes = !yes;
         if (act & (KEY_A | KEY_B)) {
-            confirm = 0;
-            if ((act & KEY_A) && yes) {
+            int asked = confirm;
+            confirm = CONFIRM_NONE;
+            if (asked == CONFIRM_DUMP) {
+                if ((act & KEY_A) && yes) gfxdump_start(), dump_since = now;
+            } else if ((act & KEY_A) && yes) {
                 rt_state_request = RT_STATE_REBOOT;
                 place = SS_MENU_NONE;
                 blocked = keys;
@@ -132,15 +145,18 @@ static uint32_t input(uint32_t keys) {
         blocked = keys;
         return 0;
     }
+    if (gfxdump_running()) return 0; /* the progress covers the rows */
     if (act & KEY_UP) do cursor = (cursor + ROW_COUNT - 1) % ROW_COUNT; while (!row_shown(cursor));
     if (act & KEY_DOWN) do cursor = (cursor + 1) % ROW_COUNT; while (!row_shown(cursor));
     if (cursor == ROW_CONTROLS) {
         if (act & KEY_A) controls_page = 1, ctl_cursor = ctl_pad = ctl_top = 0;
+    } else if (cursor == ROW_DUMP) {
+        if ((act & KEY_A) && !gfxdump_running()) confirm = CONFIRM_DUMP, yes = 0;
     } else if (act & (KEY_LEFT | KEY_RIGHT)) {
         int n = display_setting_count(cursor);
         display_setting_set(cursor, (display_setting_get(cursor) + ((act & KEY_RIGHT) ? 1 : n - 1)) % n);
         if (cursor == SET_LANGUAGE && (display_setting_get(SET_LANGUAGE) == LANGUAGE_FRENCH) != rt_french()) {
-            confirm = 1;
+            confirm = CONFIRM_LANGUAGE;
             yes = 0;
         }
     }
@@ -148,6 +164,12 @@ static uint32_t input(uint32_t keys) {
 }
 
 uint32_t sysmenu_input(uint32_t keys) {
+    int images;
+    if (gfxdump_finished(&images)) {
+        char text[64];
+        SDL_snprintf(text, sizeof text, "Graphics: %d images in mods/graphics/dump", images);
+        display_message(text, 4000);
+    }
     uint32_t game_keys = input(keys);
     SDL_SetAtomicInt(&open_now, place != SS_MENU_NONE);
     return game_keys;
@@ -262,6 +284,57 @@ static void centered(uint32_t *s, const char *text, Rect r, uint32_t color) {
     ui_draw_text(s, text, r.x + (r.w - ui_text_width(text)) / 2, r.y + 4, color);
 }
 
+/* A row's label and value: a display setting's, or an action's (Controls, Dump graphics). */
+static const char *row_title(int i) {
+    return i == ROW_CONTROLS ? "Controls" : i == ROW_DUMP ? "Dump graphics" : display_setting_title(i);
+}
+
+static const char *row_value(int i, int w) {
+    static char buf[16];
+    int done, total;
+    float share;
+    if (i == ROW_CONTROLS) return "A: change";
+    if (i != ROW_DUMP) return fit(display_setting_label(i, display_setting_get(i)), w);
+    if (!gfxdump_running()) return "A: dump";
+    gfxdump_progress(&done, &total, &share);
+    SDL_snprintf(buf, sizeof buf, "%d%%", (int)(share * 100));
+    return buf;
+}
+
+/* A bar panel in the middle of the screen with centred lines of text from its top. */
+static void dialog(uint32_t *s, Rect r, const char *const *lines, int n) {
+    panel(s, r, &BAR);
+    for (int i = 0; i < n; i++) ui_draw_text(s, lines[i], (SCREEN_W - ui_text_width(lines[i])) / 2, r.y + 10 + 12 * i, WHITE);
+}
+
+/* The graphics dump's progress: a bar filling with the work done, and the time left at the pace so far. */
+static void draw_dump_progress(uint32_t *s) {
+    int done, total;
+    float share;
+    gfxdump_progress(&done, &total, &share);
+    char count[48], left[48];
+    if (!total) {
+        SDL_snprintf(count, sizeof count, "Listing the game's files...");
+        left[0] = 0;
+    } else {
+        SDL_snprintf(count, sizeof count, "%d of %d files", done, total);
+        Uint64 spent = SDL_GetTicks() - dump_since, rest = share > 0 ? (Uint64)((double)spent * (1 - share) / share) : 0;
+        if (share < 0.02f || spent < 2000) SDL_snprintf(left, sizeof left, "Working out the time left...");
+        else if (rest < 60000) SDL_snprintf(left, sizeof left, "About %d s left", (int)(rest / 1000) + 1);
+        else SDL_snprintf(left, sizeof left, "About %d min left", (int)((rest + 30000) / 60000));
+    }
+    const char *lines[] = {"Dumping graphics..."};
+    Rect r = {28, 52, 200, 86}, bar = {44, 78, 168, 12};
+    dialog(s, r, lines, 1);
+    panel(s, bar, &BUTTON);
+    int fill = (int)((float)(bar.w - 6) * share);
+    for (int y = bar.y + 3; y < bar.y + bar.h - 3; y++) {
+        for (int x = bar.x + 3; x < bar.x + 3 + fill; x++) s[y * SCREEN_W + x] = TEAL;
+    }
+    ui_draw_text(s, count, (SCREEN_W - ui_text_width(count)) / 2, 98, WHITE);
+    ui_draw_text(s, left, (SCREEN_W - ui_text_width(left)) / 2, 112, GREY);
+}
+
 static void draw_controls(uint32_t *s) {
     const char *title = "Controls";
     ui_draw_text(s, title, 12, 8, WHITE);
@@ -313,10 +386,10 @@ void sysmenu_draw(uint32_t *s) {
             panel(s, lr, sel ? &BUTTON_LIT : &BUTTON);
             panel(s, vr, &BUTTON);
             if (sel) frame(s, vr, TEAL);
-            ui_draw_text(s, i == ROW_CONTROLS ? "Controls" : display_setting_title(i), lr.x + 6, ty, sel ? WHITE : GREY);
-            const char *v = i == ROW_CONTROLS ? "A: change" : fit(display_setting_label(i, display_setting_get(i)), vr.w - 24);
+            ui_draw_text(s, row_title(i), lr.x + 6, ty, sel ? WHITE : GREY);
+            const char *v = row_value(i, vr.w - 24);
             ui_draw_text(s, v, vr.x + (vr.w - ui_text_width(v)) / 2, ty, sel ? YELLOW : WHITE);
-            if (sel && i != ROW_CONTROLS) {
+            if (sel && i < SET_COUNT) {
                 ui_draw_text(s, "<", vr.x + 5, ty, WHITE);
                 ui_draw_text(s, ">", vr.x + vr.w - 8, ty, WHITE);
             }
@@ -326,6 +399,7 @@ void sysmenu_draw(uint32_t *s) {
     const char *footer = descriptions[cursor];
     if (cursor == SET_SHADER && display_shader_path()) footer = fit(display_shader_path(), 208);
     if (confirm) footer = "A: confirm.  B: not now.";
+    else if (gfxdump_running() && !controls_page) footer = "Closing the menu leaves it running.";
     else if (controls_page && controls_capturing()) footer = ctl_pad ? "Press a gamepad button. Esc: cancel." : "Press a key. Esc: cancel.";
     else if (controls_page) footer = ctl_cursor == ROW_RESET ? "A: restore the default controls." : "A: change.  Left/Right: key or pad.";
     panel(s, (Rect){0, 166, 222, 26}, &BAR);
@@ -333,10 +407,11 @@ void sysmenu_draw(uint32_t *s) {
     panel(s, (Rect){224, 166, 32, 26}, &BAR);
     b_sign(s, 240, 179);
     if (confirm) {
-        static const char *const lines[] = {"Restart the game now?", "The new language needs a restart.",
-                                            "Unsaved progress will be lost."};
-        panel(s, (Rect){28, 52, 200, 86}, &BAR);
-        for (int i = 0; i < 3; i++) ui_draw_text(s, lines[i], (SCREEN_W - ui_text_width(lines[i])) / 2, 62 + 12 * i, WHITE);
+        static const char *const language[] = {"Restart the game now?", "The new language needs a restart.",
+                                               "Unsaved progress will be lost."};
+        static const char *const dump[] = {"Dump all game graphics?", "Every sprite and background, to",
+                                           "mods/graphics/dump. May take a while."};
+        dialog(s, (Rect){28, 52, 200, 86}, confirm == CONFIRM_DUMP ? dump : language, 3);
         for (int i = 0; i < 2; i++) {
             Rect b = {64 + 72 * i, 106, 56, 20};
             int sel = (i == 0) == yes;
@@ -345,6 +420,8 @@ void sysmenu_draw(uint32_t *s) {
             const char *label = i == 0 ? "Yes" : "No";
             ui_draw_text(s, label, b.x + (b.w - ui_text_width(label)) / 2, b.y + 6, sel ? WHITE : GREY);
         }
+    } else if (gfxdump_running() && !controls_page) {
+        draw_dump_progress(s);
     }
 }
 

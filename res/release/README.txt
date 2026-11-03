@@ -29,6 +29,9 @@ patch is applied to your ROM when the game is built, in memory: rom\CT.nds stays
 dump. Patches made for Chrono Trigger (Japan) or (Europe) work too, with your dump of that version
 beside them. RetroArch shaders go in mods\shaders\glsl (.glslp, .glsl) and mods\shaders\slang
 (.slangp, .slang), and are chosen in System Settings > Shader.
+System Settings > Dump graphics saves the game's sprites and backgrounds as PNG files in
+mods\graphics\dump, for making graphics mods: edited copies in mods\graphics replace them, at the
+original size or in HD (see the readme there).
 
 This is an unofficial fan project, not affiliated with or endorsed by Square Enix or Nintendo.
 Chrono Trigger is a trademark of Square Enix. Egg of Time is MIT-licensed (LICENSE.md); third-party
