@@ -112,6 +112,24 @@ original bytes, and caches the result per region until the region is written.
     ones the camera stays within, against the camera's x at 0x020760f8; BG0's scroll is no measure, since some
     rooms animate it, e.g. the Geno Dome's, whose edge then wobbled and let sprites show beside the room), so the
     room shows as the original.
+  - Rooms one screen wide with a layer scrolling on its own (the Epoch in flight: a 16-metatile room, the Epoch on
+    BG2, the clouds on BG3 scrolling down while the camera stays; BG3's 512-wide map holds a sea of fire in its
+    right half. The Epoch parked, location 0x1d9 with Take off / Get off: the water on BG0 drifting both ways):
+    such a layer (BG0 or BG3 off its ring origin while BG2, the room's own, is on it, so a shaking screen does
+    not count; `ws_repeat_bgs`) is a 256-wide picture, so its screen columns repeat into the margins, and beyond
+    the room the other BGs are left out, with Fill screen sides on or off; BG0 or BG3 alpha-blended onto such a
+    layer repeats with it (the parked Epoch's water is lit by a grey BG3 added onto it, BLDCNT 0x014a, 16/16;
+    without it the sides were dimmer), and keeps repeating while the room stays: as the Epoch warps the game
+    brightens instead (BLDCNT 0x00bf, BLDY up to 8), the opaque grey then covers the water, and the sides had kept
+    the bare water). The clouds tile without a seam; the
+    water shows a faint one, its map not quite periodic. A layer once seen off its origin keeps repeating while
+    the room stays: in passing, its scroll meets the origin (the clouds at VOFS 0 and 256, a frame each), which
+    blanked the sides.
+  - Rooms whose bounds hold more than the room (`narrow_rooms`, by location id, the halfword at 0x020720a0: 0x1d0
+    the End of Time, 0x1d9 the parked Epoch, 0x1b0 the Epoch in flight): the parked Epoch's bounds are metatiles
+    0-31, but its map's right half holds a second Epoch (its wing showed in the right margin), so the room ends at
+    15. It stays narrow while the room holds (its bounds and first metatile row, `room_print`): taking off, the
+    location reads the destination (0x1f7) for a few frames before the scene changes, and the wing came back.
   - Characters: two culls kept them inside the 4:3 view. (1) The field object loop (ov004 0x02130a10) draws an
     object only while ov004 0x02130dbc finds its tile within the camera columns `*(0x020708e0)+4 - 4 ..
     +6 + 4` (and rows); those fields are the camera's own, used by map streaming too, so the wrapper

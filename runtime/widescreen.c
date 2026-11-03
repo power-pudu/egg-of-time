@@ -136,6 +136,23 @@ int ws_camera(int *x, int *y) {
     return 1;
 }
 
+/* The current location (the game's location id, as the SNES game numbers them: 0x1d0 the End of Time). */
+#define LOCATION 0x020720a0u
+
+/* Rooms whose bounds hold more than the room: the right bound (metatile column) the room really ends at. */
+static const struct { uint16_t location; uint8_t right; } narrow_rooms[] = {
+    {0x1d9, 15}, /* the Epoch parked (Take off / Get off): its map's right half holds a second Epoch */
+};
+
+/* The room's fingerprint: its bounds and its map's first metatile row. A narrow room stays narrow while it
+ * holds: taking off, the location already reads the destination for a few frames before the scene changes. */
+static uint32_t room_print(uint32_t scroll) {
+    uint32_t room = rt_r32(ROOM), h = rt_r32(scroll + 0x16);
+    if (!ram_ptr(room)) return h;
+    for (uint32_t i = 0; i < 0x40; i += 4) h = h * 31 + rt_r32(room + 0x1000 + i);
+    return h;
+}
+
 int ws_room_span(int *x0, int *x1) {
     if (!ss_in_field()) return 0;
     uint32_t scroll = rt_r32(SCROLL);
@@ -144,6 +161,14 @@ int ws_room_span(int *x0, int *x1) {
      * +0x19); the camera stays within them. The map can hold more than the room (neighbouring rooms beside a
      * house's), and wraps at its masks. */
     int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17);
+    static int narrow = -1;      /* the narrow room's right bound, -1: none */
+    static uint32_t narrow_print; /* and its room_print */
+    uint32_t print = room_print(scroll);
+    int found = 0;
+    for (size_t i = 0; i < sizeof narrow_rooms / sizeof *narrow_rooms; i++)
+        if (rt_r16(LOCATION) == narrow_rooms[i].location) narrow = narrow_rooms[i].right, narrow_print = print, found = 1;
+    if (!found && print != narrow_print) narrow = -1;
+    if (narrow >= 0 && right > narrow) right = narrow;
     if (right < left) return 0;
     /* The view's left in the map: the camera's (BG0's scroll can move on its own, an animated layer). */
     int view = (int16_t)rt_r16(CAMERA);
@@ -179,6 +204,27 @@ static void set_screen_view(int margin) {
     int32_t x = (int32_t)rt_r32(s);
     if (rt_r32(s + 4) || rt_r32(s + 8) != FX(1024) || x > 0 || x < -VIDEO_MARGIN_MAX * 4096) return; /* not its own view */
     rt_w32(s, FX(-margin));
+}
+
+/* A room one screen wide with a layer scrolling on its own (the clouds under the Epoch in flight: BG3 of a
+ * 16-metatile room, its scroll moving down while the camera stays; the water around the parked Epoch: BG0, moving
+ * both ways): that layer is a picture 256 wide, so its margins repeat it; beyond the room the other layers stay
+ * empty (their map holds other rooms there, e.g. a sea of fire). The room's own layer (BG2) must agree with its
+ * ring origin (a shaking screen moves every layer). Once seen off its ring origin, a layer keeps repeating while
+ * it stays in the room: in passing, its scroll agrees with the origin for a frame (the clouds at VOFS 0 and 256),
+ * which would blank the margins. A layer blended onto a repeated one repeats with it (the parked Epoch's water
+ * is BG0 with a grey BG3 added onto it, BLDCNT 0x014a: without it the sides were dimmer), and keeps repeating
+ * while the room stays: as the Epoch warps, the game brightens instead (BLDCNT 0x00bf), and the opaque BG3 then
+ * covers the water, as it must beside the screen too. */
+static int repeat_bgs;
+static uint32_t repeat_room; /* the room the layers were seen moving in (room map, bounds) */
+
+int ws_repeat_bgs(void) { return repeat_bgs; }
+
+/* 0: not a 512x256 text BG; 1: one on layer L's ring origin; 2: one off it. */
+static int scrolls_alone(int bg, uint32_t scroll, int L) {
+    if ((io_get16(0x08 + 2 * bg) >> 14) != 1) return 0;
+    return bg_follows(bg, scroll, L) ? 1 : 2;
 }
 
 static int field_margin; /* this frame's margin columns in the field, 0 elsewhere */
@@ -270,9 +316,23 @@ void ws_fill_margins(int margin) {
     field_margin = field ? margin : 0;
     set_sprite_view(field_margin);
     if (ss_in_field()) set_screen_view(field_margin);
+    int seen = repeat_bgs;
+    repeat_bgs = 0;
     if (!field) return;
     uint32_t scroll = rt_r32(SCROLL), room = rt_r32(ROOM), tilesets = rt_r32(TILESETS);
     if (!ram_ptr(scroll) || !ram_ptr(room) || !ram_ptr(tilesets)) return;
+    int x0, x1;
+    if (ws_room_span(&x0, &x1) && x0 == 0 && x1 == SCREEN_W && bg_follows(2, scroll, 0)) {
+        uint32_t here = room ^ rt_r32(scroll + 0x16); /* the room's bounds */
+        if (here != repeat_room) seen = 0, repeat_room = here;
+        static const int layer_of[4] = {2, -1, -1, 1}; /* BG1: priority tiles; BG2: the room itself */
+        for (int bg = 0; bg < 4; bg++) {
+            int s = layer_of[bg] < 0 ? 0 : scrolls_alone(bg, scroll, layer_of[bg]);
+            if (s == 2 || (s == 1 && (seen >> bg & 1))) repeat_bgs |= 1 << bg;
+        }
+        uint16_t bld = io_get16(0x50);
+        if (((bld >> 6) & 3) == 1 && (bld >> 8 & repeat_bgs)) repeat_bgs |= bld & 9; /* BG0, BG3 blended onto them */
+    }
     int ok0 = bg_follows(2, scroll, 0), ok1 = bg_follows(3, scroll, 1), ok2 = bg_follows(0, scroll, 2);
     int okhi = ok0 && ok1 && bg_follows(1, scroll, 0);
     if (!ok0 && !ok1 && !ok2) return;

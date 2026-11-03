@@ -106,6 +106,8 @@ typedef struct Engine {
     int obj_stretch; /* the sprites' screen columns are stretched across the margins (the warp, single_screen.c) */
     int repeat_256; /* 256-wide text BGs repeat into the margins (the race's sky, single_screen.c) */
     int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
+    int repeat_bgs; /* BGs whose screen columns repeat into the margins, the others empty beyond the room
+                     * (ws_repeat_bgs: a one-screen room's layer scrolling on its own, the clouds of the Epoch's flight) */
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
     int sliding;    /* camera smoothing: the display slides this frame (the camera moved into it) */
     int sel_shift, sel_rows; /* single screen's age selector: a second picture with the sprites starting above
@@ -261,6 +263,9 @@ static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *
         bg_text_cols(e, bg, y, dispcnt, cnt, hofs, vofs, -m, SCREEN_W + m, out);
         if (m && (e->mirror_bg >> bg & 1) && !(hofs & 0x1FF)) {
             for (int k = 0; k < m; k++) out[m - 1 - k] = out[m + k], out[m + SCREEN_W + k] = out[m + SCREEN_W - 1 - k];
+        }
+        if (m && (e->repeat_bgs >> bg & 1)) {
+            for (int k = 0; k < m; k++) out[k] = out[k + SCREEN_W], out[m + SCREEN_W + k] = out[m + k];
         }
         return;
     }
@@ -767,7 +772,9 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             e->obj_origin = ws_sprite_origin(); /* sprites placed from the left margin (widened view) */
             e->obj_stretch = e->margin && ss_in_warp();
             e->repeat_256 = e->margin && ss_in_race();
-            e->room_clip = e->margin && !SDL_GetAtomicInt(&fill_sides) && ws_room_span(&e->room_x0, &e->room_x1);
+            e->repeat_bgs = e->margin ? ws_repeat_bgs() : 0;
+            e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs) &&
+                           ws_room_span(&e->room_x0, &e->room_x1);
             int cx = 0, cy = 0, known = ws_camera(&cx, &cy); /* camera motion into this frame (camera smoothing) */
             frame_dx = frame_dy = 0;
             if (known && camera_known) {
@@ -878,6 +885,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             uint32_t ctl = 0x3F;
             int wx = SDL_clamp(x - m, 0, SCREEN_W - 1), side = x - m != wx || (!pass && box);
             int still = 0; /* a text box pixel (the party layer keeps it) */
+            int beyond = e->room_clip && (x - m < e->room_x0 || x - m >= e->room_x1);
+            int bgs = beyond && e->repeat_bgs ? e->repeat_bgs : 0xF; /* the BGs shown in this column */
             for (int bg = 0; bg < 2; bg++) still |= (box >> bg & 1) && x - m == wx && (bgline[bg][x] & OPAQUE);
             const int *pr = prio[side];
             uint16_t bldcnt = bld[side][0], bldalpha = bld[side][1];
@@ -897,7 +906,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                     layer[found] = 4; col[found] = o->color[x] & 0x7FFF; found++;
                 }
                 for (int bg = 0; bg < 4 && found < 2; bg++) {
-                    if (enabled[bg] && pr[bg] == p && (ctl & (1u << bg)) && (src[bg][x] & OPAQUE)) {
+                    if (enabled[bg] && (bgs >> bg & 1) && pr[bg] == p && (ctl & (1u << bg)) && (src[bg][x] & OPAQUE)) {
                         layer[found] = bg; col[found] = src[bg][x] & 0x7FFF; found++;
                     }
                 }
@@ -915,7 +924,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             }
             dst[x] = pass && !e->sel_shift && !(sprite_shows && o->party[x]) && !still ? 0 : to_rgba(c);
             if (pass && e->sel_shift) shifted_sprite[y * VIDEO_LINE_MAX + x] = (uint8_t)sprite_shows;
-            if (e->room_clip && (x - m < e->room_x0 || x - m >= e->room_x1)) dst[x] = pass ? 0 : 0xFF000000u;
+            if (beyond && !e->repeat_bgs) dst[x] = pass ? 0 : 0xFF000000u;
         }
         }
     }
