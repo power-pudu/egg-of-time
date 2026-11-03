@@ -21,7 +21,8 @@ this folder. To update, unzip the new version over this one.
 
 Controls: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Backspace = Select,
 F2 layout, F3 swap screens, F4 filter, F11 fullscreen, hold Left Shift to fast forward, hold Esc to quit.
-Gamepads work too (hold the right trigger to fast forward).
+Gamepads work too (hold the right trigger to fast forward). Remap keys and gamepad buttons in
+System Settings > Controls.
 Mods: replacement cutscenes and music go in mods\cutscenes and mods\music, and translation patches
 (.ips, .bps, .xdelta, .delta) in mods\translation (see the readme files there). A translation
 patch is applied to your ROM when the game is built, in memory: rom\CT.nds stays the unmodified
