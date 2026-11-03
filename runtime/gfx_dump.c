@@ -1,4 +1,4 @@
-/* Graphics dump (System Settings > Dump graphics): the game's sprites and backgrounds as PNG files in
+/* Graphics dump (System Settings > Dump graphics): the game's sprites, backgrounds and fonts as PNG files in
  * mods/graphics/dump, for graphics mods. It reads the ROM in memory (rt_rom.data: a translation's patched copy,
  * with the same-size graphics mods applied), on a thread of its own while the game runs. The formats: gfx_rom.c.
  *
@@ -6,6 +6,8 @@
  *   sheets/<file>.png      each tile sheet (.NCGR, _ncg.bin), 16 tiles wide, in its first palette row
  *   frames/<file>/NNN.png  each cell of a .NCER, drawn from the sheet of the same name
  *   screens/<file>.png     each _nsc.bin, drawn from the _ncg.bin of the same name
+ *   fonts/<file>.png       each message font (.fnt), its glyphs 16 to a row in cells of one size; pixel values 0-3
+ *   fonts/<file>.txt       the font's advance widths and ASCII characters, by glyph
  *   palettes.txt           the palette each image was drawn with
  * The images are indexed: the pixels keep the game's palette indexes, with index 0 of each 16-colour row (of the
  * palette, for 8 bits per pixel) transparent. Without a palette for a sheet (character sprites: the game picks
@@ -27,20 +29,26 @@ static SDL_AtomicInt done_bytes, total_bytes;
 static char out_root[1024];
 static FILE *palette_log;
 
-static void save(const char *kind, const char *name, const GfxLayout *l, const GfxTiles *t, const GfxPalette *p,
-                 const char *from) {
-    char path[1024], dir[1024];
-    snprintf(path, sizeof path, "%s%s/%s.png", out_root, kind, name);
+/* out_root/<kind>/<name><end>, its folders made. */
+static FILE *create(const char *kind, const char *name, const char *end, char *path, size_t size, const char *mode) {
+    char dir[1024];
+    snprintf(path, size, "%s%s/%s%s", out_root, kind, name, end);
     snprintf(dir, sizeof dir, "%s", path);
     *strrchr(dir, '/') = 0;
     SDL_CreateDirectory(dir);
-    uint8_t *px = calloc((size_t)l->w, (size_t)l->h);
-    gfx_draw(l, t, px);
-    SDL_Surface *s = SDL_CreateSurfaceFrom(l->w, l->h, SDL_PIXELFORMAT_INDEX8, px, l->w);
+    return mode ? fopen(path, mode) : NULL;
+}
+
+/* w x h palette indexes as <kind>/<name>.png. */
+static void save_png(const char *kind, const char *name, int w, int h, uint8_t *px, int bpp8, const GfxPalette *p,
+                     const char *from) {
+    char path[1024];
+    create(kind, name, ".png", path, sizeof path, NULL);
+    SDL_Surface *s = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_INDEX8, px, w);
     SDL_Palette *sp = s ? SDL_CreateSurfacePalette(s) : NULL;
     if (sp) {
         SDL_Color c[256];
-        for (int i = 0; i < 256; i++) c[i] = p->c[i], c[i].a = (l->bpp8 ? i == 0 : (i & 15) == 0) ? 0 : 255;
+        for (int i = 0; i < 256; i++) c[i] = p->c[i], c[i].a = (bpp8 ? i == 0 : (i & 15) == 0) ? 0 : 255;
         SDL_SetPaletteColors(sp, c, 0, 256);
     }
     if (sp && SDL_SavePNG(s, path)) {
@@ -50,7 +58,49 @@ static void save(const char *kind, const char *name, const GfxLayout *l, const G
         rt_log("gfxdump: cannot write %s: %s", path, SDL_GetError());
     }
     SDL_DestroySurface(s);
+}
+
+static void save(const char *kind, const char *name, const GfxLayout *l, const GfxTiles *t, const GfxPalette *p,
+                 const char *from) {
+    uint8_t *px = calloc((size_t)l->w, (size_t)l->h);
+    gfx_draw(l, t, px);
+    save_png(kind, name, l->w, l->h, px, l->bpp8, p, from);
     free(px);
+}
+
+/* A message font: its glyphs as a sheet, and their widths and characters in a .txt beside it. */
+static void dump_font(const GfxFile *f) {
+    GfxBlob b = gfx_open(f);
+    GfxFont font;
+    if (gfx_read_font(&b, &font)) {
+        int w, h;
+        gfx_font_size(&font, &w, &h);
+        uint8_t *px = calloc((size_t)w, (size_t)h);
+        gfx_font_draw(&font, px);
+        GfxPalette p;
+        gfx_font_palette(f->path, &p);
+        save_png("fonts", f->path, w, h, px, 0, &p, f->path);
+        free(px);
+        char path[1024];
+        FILE *txt = create("fonts", f->path, ".txt", path, sizeof path, "w");
+        if (txt) {
+            fprintf(txt, "# %s: glyph number (its place in the .png, %d to a row), advance width in pixels (- : no\n"
+                         "# glyph), and the ASCII characters drawn with it\n", f->path, GFX_FONT_COLUMNS);
+            for (int g = 0; g < font.count; g++) {
+                const uint8_t *r = gfx_font_glyph(&font, g);
+                if (r) fprintf(txt, "%d\t%d\t", g, r[0]);
+                else fprintf(txt, "%d\t-\t", g);
+                for (int c = 32; c < 127; c++) {
+                    if ((int)gfx_le16(font.data + 12 + c * 2) == g) fprintf(txt, c == ' ' ? " space" : " %c", c);
+                }
+                fputc('\n', txt);
+            }
+            fclose(txt);
+        } else {
+            rt_log("gfxdump: cannot write %s", path);
+        }
+    }
+    gfx_close(&b);
 }
 
 /* The _nsc.bin `f` drawn from its _ncg.bin. */
@@ -101,7 +151,8 @@ static void dump_graphics(const GfxFile *f) {
 }
 
 static int is_unit(const GfxFile *f) {
-    return gfx_ends_with(f->path, ".NCGR") || gfx_ends_with(f->path, "_ncg.bin") || gfx_ends_with(f->path, "_nsc.bin");
+    return gfx_ends_with(f->path, ".NCGR") || gfx_ends_with(f->path, "_ncg.bin") || gfx_ends_with(f->path, "_nsc.bin") ||
+           gfx_ends_with(f->path, ".fnt");
 }
 
 /* A unit's share of the work: its file, and its cells for a sheet. */
@@ -135,6 +186,7 @@ static int worker(void *arg) {
         const GfxFile *f = gfx_file(i);
         if (!is_unit(f)) continue;
         if (gfx_ends_with(f->path, "_nsc.bin")) dump_screen(f);
+        else if (gfx_ends_with(f->path, ".fnt")) dump_font(f);
         else dump_graphics(f);
         SDL_AddAtomicInt(&done_bytes, unit_bytes(f));
         SDL_AddAtomicInt(&done_count, 1);

@@ -383,6 +383,11 @@ original bytes, and caches the result per region until the region is written.
   main 0x020483d0 loads the sheet, 0x02048570 the palette, both called from ov000 0x02109420 through a function
   pointer; the same number held for every sprite checked), else a grey ramp (`palettes.txt` lists which; `Map/Bg`
   sheets are paired through the map tables). Progress and the time left are weighted by file size, a sheet's cells counting 32 times theirs.
+  The message fonts (`msg/<size>/msgcmn.fnt`, `"\0\0\0\0FONT"`, 2 bits per pixel, a variable-width record per
+  glyph; format in `runtime/gfx_rom.c`) go to `fonts/<ROM path>.png`, 16 glyphs to a row in cells as wide as the
+  widest glyph's rows (12x10 big, 8x8 small), with `.txt` advance widths and ASCII characters by glyph; their
+  palette is the only one in the folder above (`msg/font.NCLR`), its colours reordered as text shows on screen:
+  letter (1) in colour 2, white; shadow (3) in colour 1, black (seen in screenshots, not traced in the code).
   The ROM reading, decoding and layouts (sheet, cell in reverse OAM order, screen) are `runtime/gfx_rom.c`,
   shared with the loader.
 - **Graphics mods** (`runtime/gfx_mod.c`, Mods on, read once after the game build is prepared, so the build id
@@ -399,6 +404,10 @@ original bytes, and caches the result per region until the region is written.
   those records on worker threads: indexed art through the frame's palette RAM, RGBA as painted, both through
   the recorded blend and the Color setting. Not with a shader; the one-screen menus (built by
   `runtime/single_screen.c`) keep native tiles, the field, warp, world map and race passing their sources on.
+  Fonts (`fonts/<ROM path>.png` and `.txt`, first pass) rebuild the font file: glyph pixels at 1x only (text is
+  drawn into tiles at run time), advance widths, new glyphs where none were; each glyph keeps its bytes per row
+  unless its pixels need more (some originals are wider than their pixels), so unchanged files rebuild byte for
+  byte.
 - **Translation mods** (`runtime/translation.c`, `runtime/rompatch.c`): every `.ips`, `.bps`, `.xdelta`,
   `.vcdiff`, `.xdelta3` or `.delta` file in `mods/translation/` patches the verified ROM before it is extracted, in
   file-name order (a split translation, or a base patch and a fix). IPS and BPS are decoded here; BPS checks its

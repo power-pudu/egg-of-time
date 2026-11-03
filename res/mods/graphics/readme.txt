@@ -2,7 +2,7 @@ Egg of Time - graphics mods
 ===========================
 
 Replace the game's sprites and backgrounds with your own art, at the original size or
-in HD (2 to 8 times larger).
+in HD (2 to 8 times larger), and restyle its text fonts.
 
 1. Dump the game's graphics
 ---------------------------
@@ -16,6 +16,8 @@ is done.
     dump\frames\     every frame of every sprite, one folder per sprite (Chara\Chara_0000\000.png,
                      001.png, ...), put together from its sheet as the game draws it
     dump\screens\    the backgrounds stored as whole pictures (menus, title, minimaps...)
+    dump\fonts\      the message fonts (msg\big and msg\small: the game's text), with a .txt
+                     of their letter widths (see Fonts below)
     dump\palettes.txt  the palette each image was drawn with
 
 The PNGs are indexed (palette) images: each pixel keeps the game's own colour number.
@@ -78,6 +80,23 @@ palette colours change that palette file: every image using it changes too. For 
 frames\Chara\Chara_0000\*.png with other colours in the PNG palette recolour Crono. The
 game reads the palette when it loads the character: a save state keeps the colours it holds
 until the game loads that character again.
+
+Fonts
+-----
+dump\fonts\msg\big\msgcmn.fnt.png holds every letter (glyph) of the big message font, 16 to a
+row in cells of one size (12x10 pixels for the big font, 8x8 for the small one). Glyph
+numbers count from 0, left to right, top to bottom. msgcmn.fnt.txt beside it lists, for each
+glyph, its number, its advance width (how far the next letter starts, in pixels; "-" for a
+glyph the font does not have) and the ASCII characters drawn with it.
+
+Copy either or both to fonts\msg\big\ (or small\) and edit them:
+- The .png at its original size only (no HD: text is drawn into tiles as the game runs).
+  Colour 0 is transparent, 1 the letter (white) and 3 its shadow (black); 2 is unused. In an
+  RGBA PNG each colour becomes the nearest of these. A letter can use its whole cell.
+- The .txt: change the widths (the second column). The third column is not read.
+A glyph the font does not have becomes a new one when you draw in its cell, as wide as the
+cell until the .txt gives it a width. Glyphs keep their numbers: the game's text refers to
+them by number, so a translation's letters stay where its patch put them.
 
 Sharing
 -------

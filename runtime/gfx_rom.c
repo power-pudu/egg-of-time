@@ -13,6 +13,10 @@
  *   - NSC (*_nsc.bin): "NSC\0", entries (16 bits), two flags (byte 6, bit 0: an affine BG), width and height in
  *     tiles (bytes 8, 9), from byte 12 the map: BG text entries (tile in bits 0-9, flips 10 and 11, palette row
  *     12-15), or a byte per tile for an affine BG (the title's clock, the minimaps).
+ *   - FONT (msg/<size>/msgcmn.fnt), the message fonts: "\0\0\0\0FONT", height (byte 8), bits per pixel (byte 9),
+ *     glyph count (16 bits at 10), an ASCII-to-glyph table (128 x 16 bits at 12), a 32-bit offset per glyph at
+ *     0x10C (0: none), then each glyph: advance width (u8), bytes per row (u8), its rows (pixels from the low
+ *     bits). Never compressed. Text draws the glyphs into tiles at run time, so fonts have no tiles of their own.
  * The palettes are never compressed. A sheet's palette is the file of the same name, else the only palette in its
  * folder; the field characters' (Chara/) and the field maps' (Map/Bg/) the game picks in code. */
 #include <stdio.h>
@@ -179,7 +183,7 @@ static int known(const uint8_t *d, uint32_t n) {
     for (size_t i = 0; n >= 16 && i < SDL_arraysize(magics); i++) {
         if (!memcmp(d, magics[i], 4)) return 1;
     }
-    return 0;
+    return n >= 16 && !memcmp(d, "\0\0\0\0FONT", 8);
 }
 
 GfxBlob gfx_open(const GfxFile *f) {
@@ -404,6 +408,68 @@ void gfx_draw(const GfxLayout *l, const GfxTiles *t, uint8_t *px) {
                 int dx = p->x + tx, dy = p->y + ty;
                 if (v && dx >= 0 && dy >= 0 && dx < l->w && dy < l->h) px[dy * l->w + dx] = (uint8_t)(p->bpp8 ? v : p->row * 16 + v);
             }
+        }
+    }
+}
+
+/* ---- fonts ---- */
+
+int gfx_read_font(const GfxBlob *b, GfxFont *f) {
+    const uint8_t *d = b->data;
+    if (!d || b->size < GFX_FONT_TABLE || memcmp(d, "\0\0\0\0FONT", 8)) return 0;
+    int bpp = d[9], count = (int)le16(d + 10);
+    if (!d[8] || (bpp != 1 && bpp != 2 && bpp != 4 && bpp != 8) || (uint64_t)GFX_FONT_TABLE + 4u * count > b->size) return 0;
+    *f = (GfxFont){d, b->size, d[8], bpp, count, 8};
+    for (int g = 0; g < count; g++) {
+        const uint8_t *r = gfx_font_glyph(f, g);
+        if (r) f->cell_w = SDL_max(f->cell_w, r[1] * 8 / bpp);
+    }
+    return 1;
+}
+
+const uint8_t *gfx_font_glyph(const GfxFont *f, int g) {
+    if (g < 0 || g >= f->count) return NULL;
+    uint32_t o = le32(f->data + GFX_FONT_TABLE + 4 * g);
+    if (!o || o > f->size - 2 || (uint32_t)f->height * f->data[o + 1] > f->size - o - 2) return NULL;
+    return f->data + o;
+}
+
+int gfx_font_px(const GfxFont *f, const uint8_t *glyph, int x, int y) {
+    int bit = x * f->bpp;
+    if (x < 0 || y < 0 || y >= f->height || bit / 8 >= glyph[1]) return 0;
+    return glyph[2 + y * glyph[1] + bit / 8] >> bit % 8 & ((1 << f->bpp) - 1);
+}
+
+void gfx_font_palette(const char *path, GfxPalette *p) {
+    gfx_palette_for(path, 0, p);
+    const char *slash = strrchr(path, '/');
+    if (!p->from && slash) {
+        char up[300];
+        int dir = (int)(slash - path);
+        while (dir > 0 && path[dir - 1] != '/') dir--;
+        snprintf(up, sizeof up, "%.*sfont", dir, path); /* a file in the folder above */
+        gfx_palette_for(up, 0, p);
+    }
+    if (!p->from) return;
+    /* The game draws a glyph's letter (1) in colour 2 (white) and its shadow (3) in colour 1 (black), as text
+     * shows on screen; 2, unused, is taken as colour 3. */
+    SDL_Color c1 = p->c[1];
+    p->c[1] = p->c[2], p->c[2] = p->c[3], p->c[3] = c1;
+}
+
+void gfx_font_size(const GfxFont *f, int *w, int *h) {
+    *w = GFX_FONT_COLUMNS * f->cell_w;
+    *h = (f->count + GFX_FONT_COLUMNS - 1) / GFX_FONT_COLUMNS * f->height;
+}
+
+void gfx_font_draw(const GfxFont *f, uint8_t *px) {
+    int w, h;
+    gfx_font_size(f, &w, &h);
+    for (int g = 0; g < f->count; g++) {
+        const uint8_t *r = gfx_font_glyph(f, g);
+        int x0 = g % GFX_FONT_COLUMNS * f->cell_w, y0 = g / GFX_FONT_COLUMNS * f->height;
+        for (int y = 0; r && y < f->height; y++) {
+            for (int x = 0; x < f->cell_w; x++) px[(y0 + y) * w + x0 + x] = (uint8_t)gfx_font_px(f, r, x, y);
         }
     }
 }

@@ -50,3 +50,18 @@ int gfx_cell_layout(const GfxBlob *ncer, uint32_t cell, GfxLayout *l);
 int gfx_screen_layout(const GfxBlob *nsc, int bpp8, GfxLayout *l);
 /* The layout's pixels as palette indexes (w x h bytes, 0 transparent; row * 16 + index for 4 bits per pixel). */
 void gfx_draw(const GfxLayout *l, const GfxTiles *t, uint8_t *px);
+
+/* A message font (.fnt; its format: gfx_rom.c), and its glyphs as a sheet: GFX_FONT_COLUMNS glyphs to a row, in
+ * cells of cell_w (the widest glyph's rows) x height pixels. */
+typedef struct GfxFont { const uint8_t *data; uint32_t size; int height, bpp, count, cell_w; } GfxFont;
+#define GFX_FONT_TABLE 0x10C /* the glyph offsets */
+#define GFX_FONT_COLUMNS 16
+int gfx_read_font(const GfxBlob *b, GfxFont *f);
+/* Glyph g's record: advance width, bytes per row, the rows; NULL when it has none. */
+const uint8_t *gfx_font_glyph(const GfxFont *f, int g);
+int gfx_font_px(const GfxFont *f, const uint8_t *glyph, int x, int y); /* 0 outside its rows */
+/* The font's colours by pixel value: from the only palette in its folder, else in the folder above
+ * (msg/font.NCLR for msg/big/), in the order text shows them (1 white letter, 3 black shadow). */
+void gfx_font_palette(const char *path, GfxPalette *p);
+void gfx_font_size(const GfxFont *f, int *w, int *h);
+void gfx_font_draw(const GfxFont *f, uint8_t *px); /* w x h pixel values (0 transparent), px zeroed */

@@ -15,6 +15,10 @@
  * of its own: see palettes.txt in the dump) changes that palette file's colours. Where images overlap, the one
  * read later (in path order) wins.
  *
+ * Fonts (fonts/<file>.png and .txt, the dump's) change the message font files: glyph pixels at the same size only
+ * (text draws glyphs into tiles at run time, so there are no font tiles to give HD art), advance widths, and new
+ * glyphs where the font has none. The font file is rebuilt.
+ *
  * Images are read in two passes: palettes and same-size images first, then the HD ones, keyed by the tiles as the
  * first pass left them. */
 #include <stdio.h>
@@ -387,9 +391,147 @@ static int hd_tiles(const Png *png, const Item *it, int s) {
     return added;
 }
 
+/* ---- fonts ---- */
+
+/* A font being edited: each glyph's advance width (-1: none), bytes per row as it was (some glyphs have more than
+ * their pixels need) and pixels in its cell. */
+typedef struct FontEdit { GfxFont font; int *width, *bpr; uint8_t *px; } FontEdit;
+
+static int font_begin(const GfxFile *f, Edit **e, FontEdit *fe) {
+    if (!(*e = edit_for(f))) return 0;
+    GfxBlob b = {(*e)->data, (*e)->size, NULL, 0};
+    if (!gfx_read_font(&b, &fe->font)) return 0;
+    const GfxFont *font = &fe->font;
+    fe->width = malloc((size_t)font->count * sizeof *fe->width);
+    fe->bpr = malloc((size_t)font->count * sizeof *fe->bpr);
+    fe->px = calloc((size_t)font->count, (size_t)font->cell_w * font->height);
+    for (int g = 0; g < font->count; g++) {
+        const uint8_t *r = gfx_font_glyph(font, g);
+        fe->width[g] = r ? r[0] : -1;
+        fe->bpr[g] = r ? r[1] : 0;
+        for (int y = 0; r && y < font->height; y++) {
+            for (int x = 0; x < font->cell_w; x++) fe->px[(g * font->height + y) * font->cell_w + x] = (uint8_t)gfx_font_px(font, r, x, y);
+        }
+    }
+    return 1;
+}
+
+/* Rebuilds the font file from the edit (each glyph's rows as wide as they were, or as its pixels need); 1 if it
+ * changed. */
+static int font_end(Edit *e, FontEdit *fe) {
+    const GfxFont *f = &fe->font;
+    int per_byte = 8 / f->bpp;
+    uint32_t cap = GFX_FONT_TABLE + 4u * f->count, size = cap;
+    for (int g = 0; g < f->count; g++) cap += 2 + (uint32_t)f->height * ((f->cell_w + per_byte - 1) / per_byte);
+    uint8_t *out = calloc(cap, 1);
+    memcpy(out, f->data, GFX_FONT_TABLE);
+    for (int g = 0; g < f->count; g++) {
+        if (fe->width[g] < 0) continue;
+        const uint8_t *px = &fe->px[(size_t)g * f->height * f->cell_w];
+        int used = 0;
+        for (int i = 0; i < f->height * f->cell_w; i++) used = px[i] ? SDL_max(used, i % f->cell_w + 1) : used;
+        int bpr = SDL_max(fe->bpr[g], (used + per_byte - 1) / per_byte);
+        memcpy(out + GFX_FONT_TABLE + 4 * g, &size, 4);
+        uint8_t *r = out + size;
+        r[0] = (uint8_t)fe->width[g], r[1] = (uint8_t)bpr;
+        for (int y = 0; y < f->height; y++) {
+            for (int x = 0; x < used; x++) r[2 + y * bpr + x / per_byte] |= (uint8_t)(px[y * f->cell_w + x] << x % per_byte * f->bpp);
+        }
+        size += 2 + (uint32_t)f->height * bpr;
+    }
+    free(fe->width);
+    free(fe->bpr);
+    free(fe->px);
+    if (size == e->size && !memcmp(out, e->data, size)) {
+        free(out);
+        return 0;
+    }
+    free(e->data);
+    e->data = out, e->size = size, e->dirty = 1;
+    return 1;
+}
+
+/* fonts/<file>.png: the glyphs' pixels, at the dump's size. Indexed: pixel values as they are (others: the nearest
+ * colour of the font's); RGBA: the nearest colour. Returns the glyphs changed. */
+static int font_png(const char *rel, const char *path, const GfxFile *f) {
+    Edit *e;
+    FontEdit fe;
+    if (!font_begin(f, &e, &fe)) return 0;
+    const GfxFont *font = &fe.font;
+    int w, h, top = (1 << font->bpp) - 1, changed = 0;
+    gfx_font_size(font, &w, &h);
+    Png png;
+    if (!png_load(path, &png)) {
+        rt_log("gfxmod: %s: cannot read: %s", rel, SDL_GetError());
+    } else if (png.w != w || png.h != h) {
+        rt_log("gfxmod: %s: %dx%d, not %dx%d", rel, png.w, png.h, w, h);
+    } else {
+        GfxPalette pal;
+        gfx_font_palette(f->path, &pal);
+        for (int g = 0; g < font->count; g++) {
+            int x0 = g % GFX_FONT_COLUMNS * font->cell_w, y0 = g / GFX_FONT_COLUMNS * font->height, was = 0, any = 0;
+            for (int y = 0; y < font->height; y++) {
+                for (int x = 0; x < font->cell_w; x++) {
+                    int i = (y0 + y) * w + x0 + x, v;
+                    if (png.indexed) {
+                        v = png.idx[i];
+                        SDL_Color c = v < png.colors ? png.pal[v] : (SDL_Color){0, 0, 0, 255};
+                        if (v > top) v = c.a < 128 ? 0 : nearest(&pal, 1, top + 1, c.r, c.g, c.b);
+                    } else {
+                        uint32_t c = png.rgba[i];
+                        v = (c >> 24) < 128 ? 0 : nearest(&pal, 1, top + 1, c & 0xFF, c >> 8 & 0xFF, c >> 16 & 0xFF);
+                    }
+                    uint8_t *p = &fe.px[(g * font->height + y) * font->cell_w + x];
+                    was |= *p != v, any |= v;
+                    *p = (uint8_t)v;
+                }
+            }
+            if (fe.width[g] < 0 && any) fe.width[g] = font->cell_w; /* a new glyph: as wide as its cell until the .txt says */
+            changed += was;
+        }
+    }
+    png_free(&png);
+    font_end(e, &fe);
+    return changed;
+}
+
+/* fonts/<file>.txt: lines of glyph number and advance width (- : unchanged), as the dump writes them. Returns the
+ * widths changed. */
+static int font_txt(const char *rel, const char *path, const GfxFile *f) {
+    size_t n;
+    char *text = SDL_LoadFile(path, &n);
+    if (!text) {
+        rt_log("gfxmod: %s: cannot read: %s", rel, SDL_GetError());
+        return 0;
+    }
+    Edit *e;
+    FontEdit fe;
+    int changed = 0;
+    if (font_begin(f, &e, &fe)) {
+        for (char *line = text, *next; line; line = next) {
+            next = strchr(line, '\n');
+            if (next) *next++ = 0;
+            char *end;
+            long g = strtol(line, &end, 10), wd;
+            if (end == line || *line == '#') continue;
+            wd = strtol(end, &line, 10);
+            if (line == end) continue;
+            if (g < 0 || g >= fe.font.count || wd < 0 || wd > 255) {
+                rt_log("gfxmod: %s: glyph %ld width %ld: out of range", rel, g, wd);
+                continue;
+            }
+            changed += fe.width[g] != wd;
+            fe.width[g] = (int)wd;
+        }
+        font_end(e, &fe);
+    }
+    SDL_free(text);
+    return changed;
+}
+
 /* ---- loading ---- */
 
-typedef struct List { char **paths; int count, cap; } List;
+typedef struct List { char **paths; int count, cap, fonts; } List; /* fonts: the .txt files too */
 
 static SDL_EnumerationResult SDLCALL collect(void *ctx, const char *dir, const char *name) {
     List *list = ctx;
@@ -399,7 +541,7 @@ static SDL_EnumerationResult SDLCALL collect(void *ctx, const char *dir, const c
     if (!SDL_GetPathInfo(path, &info)) return SDL_ENUM_CONTINUE;
     if (info.type == SDL_PATHTYPE_DIRECTORY) {
         SDL_EnumerateDirectory(path, collect, list);
-    } else if (gfx_ends_with(name, ".png") || gfx_ends_with(name, ".PNG")) {
+    } else if (gfx_ends_with(name, ".png") || gfx_ends_with(name, ".PNG") || (list->fonts && gfx_ends_with(name, ".txt"))) {
         if (list->count == list->cap) {
             list->cap = list->cap ? list->cap * 2 : 256;
             list->paths = realloc(list->paths, (size_t)list->cap * sizeof *list->paths);
@@ -426,10 +568,11 @@ void gfxmod_load(void) {
     char root[1024];
     snprintf(root, sizeof root, "%smods/graphics/", rt_data_dir());
     List list = {0};
-    static const char *const kinds[] = {"sheets", "frames", "screens"};
+    static const char *const kinds[] = {"sheets", "frames", "screens", "fonts"};
     for (size_t k = 0; k < SDL_arraysize(kinds); k++) {
         char dir[1100];
         snprintf(dir, sizeof dir, "%s%s/", root, kinds[k]);
+        list.fonts = !strcmp(kinds[k], "fonts");
         SDL_PathInfo info;
         if (SDL_GetPathInfo(dir, &info) && info.type == SDL_PATHTYPE_DIRECTORY) SDL_EnumerateDirectory(dir, collect, &list);
     }
@@ -437,12 +580,26 @@ void gfxmod_load(void) {
     qsort(list.paths, (size_t)list.count, sizeof *list.paths, by_path);
     if (!gfx_list_files()) return;
     int *scale = calloc((size_t)list.count, sizeof *scale); /* by image: 0 not usable */
-    int images = 0, colours = 0, same_tiles = 0, hd = 0;
+    int images = 0, colours = 0, same_tiles = 0, hd = 0, glyphs = 0, widths = 0;
     Uint64 t1 = 0;
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < list.count; i++) {
             if (pass && scale[i] < 2) continue;
             const char *rel = relative(list.paths[i], root);
+            if (!strncmp(rel, "fonts/", 6)) {
+                if (pass) continue;
+                char path[512];
+                snprintf(path, sizeof path, "%.*s", (int)strlen(rel) - 4 - 6, rel + 6);
+                const GfxFile *f = gfx_ends_with(path, ".fnt") ? gfx_find(path) : NULL;
+                if (!f) {
+                    rt_log("gfxmod: %s: no such font in the dump", rel);
+                } else {
+                    images++;
+                    if (gfx_ends_with(rel, ".png")) glyphs += font_png(rel, list.paths[i], f);
+                    else widths += font_txt(rel, list.paths[i], f);
+                }
+                continue;
+            }
             Item it;
             Png png;
             if (!resolve(rel, &it)) {
@@ -477,7 +634,7 @@ void gfxmod_load(void) {
     for (int i = 0; i < list.count; i++) SDL_free(list.paths[i]);
     free(list.paths);
     free(scale);
-    rt_log("gfxmod: %d images: %d same-size tiles changed, %d palette colours, %d HD tiles (up to %dx) in %.1f s "
-           "(%.1f s writing the ROM)",
-           images, same_tiles, colours, hd, hd_scale, (double)(SDL_GetTicks() - t0) / 1000, (double)t1 / 1000);
+    rt_log("gfxmod: %d files: %d same-size tiles changed, %d palette colours, %d HD tiles (up to %dx), %d glyphs and "
+           "%d glyph widths changed in %.1f s (%.1f s writing the ROM)",
+           images, same_tiles, colours, hd, hd_scale, glyphs, widths, (double)(SDL_GetTicks() - t0) / 1000, (double)t1 / 1000);
 }
