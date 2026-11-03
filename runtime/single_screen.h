@@ -9,6 +9,12 @@
 #define EGG_SINGLE_SCREEN 1
 #endif
 
+/* Any thread: single screen mode is on: the build option, unless turned off at run time (the second screen
+ * window shows both DS screens as they are). Off, the scenes are still told apart for the System Settings
+ * menu, but the main screen is the top screen and the keys reach the game unchanged. */
+int ss_enabled(void);
+void ss_set_enabled(int on);
+
 /* Game thread only. */
 uint32_t ss_game_keys(uint32_t keys); /* keys as the game reads them */
 int ss_in_field(void);                /* the field (towns, maps) is running: widescreen applies */

@@ -184,6 +184,22 @@ original bytes, and caches the result per region until the region is written.
   (`EGG_WINDOWED=1` starts windowed without changing the setting, for automated runs). Each change shows a short message in the window; Sharp is the default filter. Holding Escape shows
   "Exiting..." and quits after 1 s (releasing cancels). The mouse is the stylus wherever the bottom screen is
   shown. Layout, swap and the System Settings persist in `eggoftime.ini` next to the executable.
+- **Second screen window** (System Settings, `runtime/display.c`): the screen the main window does not show,
+  in a window of its own (a `View`: window, renderer and the screen textures it draws with, since SDL
+  textures belong to one renderer). While it is open single screen mode is off at run time
+  (`ss_set_enabled`): the main screen is the top screen, the keys reach the game unchanged, Game Settings
+  defaults are the game's and its SELECT stays "Defaults", and no widescreen margin is asked for; scenes are
+  still told apart, so SELECT opens System Settings on the title menu and while the field is paused. The
+  main window then uses the top-only layout; the second is top-only
+  with the swap inverted, so F3 exchanges the windows' screens and F2 does nothing. Each screen is uploaded to the window showing it, through the same
+  pipeline (internal resolution, filter, HD art); shaders run on the main window only. The second window has no
+  V-Sync (the main window's paces both) and is black while a cutscene plays. It follows Window mode on a monitor
+  of its own and stays windowed on the main window's monitor (re-checked when either window changes monitor);
+  its windowed place is saved as `secondplace` and reused while it is mostly on a monitor; the first time it
+  opens centred on another monitor, or beside the main window. Closing it turns the setting off; closing the
+  main window quits (SDL itself quits only on the last window). Touch maps through the window under the
+  pointer. While it is open, `SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS` is 0, so exclusive fullscreen survives
+  the focus moving between the windows.
 - **System Settings menu** (`runtime/system_menu.c`, settings in `runtime/display.c`): SELECT opens it on Game
   Settings, in the title screen's menu (phase 7; a small SELECT button sits bottom right, above the copyright)
   or while the field is paused

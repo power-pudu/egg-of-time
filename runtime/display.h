@@ -18,7 +18,9 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, int 
 int display_camera_smoothing(void);
 /* F2 layout, F3 swap screens, F4 filter, F11 fullscreen; returns 1 if the key was used. */
 int display_key(SDL_Scancode sc);
-/* Window position -> bottom-screen pixel, when the bottom screen is shown there. */
+/* Window events: the second screen window's closing, moves and monitor changes. */
+void display_event(const SDL_Event *e);
+/* Pointer position in the window it is over -> bottom-screen pixel, when the bottom screen is shown there. */
 int display_touch(float wx, float wy, int *x, int *y);
 /* Shows text in the window's message box for ms milliseconds (replacing any current message). */
 void display_message(const char *text, unsigned ms);
@@ -27,7 +29,7 @@ void display_capture(const char *path);
 
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
  * Setting one applies it at once and saves eggoftime.ini. */
-enum { SET_LANGUAGE, SET_WINDOW, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND,
+enum { SET_LANGUAGE, SET_WINDOW, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND,
        SET_COUNT };
 enum { LANGUAGE_ENGLISH, LANGUAGE_FRENCH }; /* SET_LANGUAGE values */
 enum { FF_MUSIC_FAST, FF_MUSIC_NORMAL };    /* SET_FF_MUSIC values */

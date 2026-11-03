@@ -113,6 +113,7 @@ static void show(const char *const *lines, int count, float progress) {
 static int pump(int *key) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
+        display_event(&e);
         if (e.type == SDL_EVENT_QUIT) return 0;
         if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
             if (display_key(e.key.scancode)) continue;

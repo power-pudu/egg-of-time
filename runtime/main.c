@@ -254,6 +254,7 @@ int main(int argc, char **argv) {
     while (running && !SDL_GetAtomicInt(&game_finished)) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            display_event(&e);
             if (e.type == SDL_EVENT_QUIT) running = 0;
             else if (controls_capture(&e)) continue; /* System Settings > Controls: rebinding */
             else if (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||

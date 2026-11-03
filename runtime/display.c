@@ -22,6 +22,9 @@
  * sees one DS screen (as RetroArch shaders expect), not the gap between two. With shaders in mods/shaders, the
  * window uses SDL's OpenGL renderer (the one shaders can run on).
  *
+ * Second screen window: the other screen in a window of its own, for a second monitor (DESIGN.md); each
+ * window is a View, with its own renderer and textures.
+ *
  * Window modes: windowed, borderless windowed (fullscreen on the desktop's mode), fullscreen (exclusive, at
  * the desktop's mode); F11 toggles between windowed and the last other mode. EGG_WINDOWED=1 starts windowed
  * without changing the setting (automated runs). Framerate only paces the window's presentation (main.c):
@@ -95,6 +98,8 @@ static Setting settings[SET_COUNT] = {
     /* The DS's system language, which the game reads at power-on (boot.c): changes apply at the next start. */
     [SET_LANGUAGE] = {"language", "Language", 2, LANGUAGE_ENGLISH, language_names, language_labels},
     [SET_WINDOW] = {"window", "Window mode", 3, WINDOW_BORDERLESS, window_names, window_labels},
+    /* The other DS screen in a window of its own, for a second monitor; the main window shows the top only. */
+    [SET_SECOND] = {"secondscreen", "Second screen window", 2, 0, onoff_names, onoff_labels},
     [SET_RESOLUTION] = {"resolution", "Internal resolution", RES_MAX + 1, 0, res_names, NULL},
     [SET_ASPECT] = {"aspect", "Aspect ratio", 5, ASPECT_16_9, aspect_names, aspect_labels},
     /* Widescreen in rooms narrower than the view: No leaves the room as it is, black beside it (video.c). */
@@ -112,11 +117,24 @@ static Setting settings[SET_COUNT] = {
 };
 #define SETTING(id) (settings[id].value)
 
-static SDL_Window *win;
-static SDL_Renderer *ren;
+/* A window and what it draws with: the main window, or the second screen window (SDL textures belong to one
+ * renderer). Screens: top, bottom, main, party; internal: N x the layout. */
+typedef struct View {
+    SDL_Window *win;
+    SDL_Renderer *ren;
+    SDL_Texture *native[4], *smooth[4], *internal;
+    SDL_Texture *hd_tex[4]; /* the screens drawn from HD art (graphics mods) */
+    int hd_k[4];            /* their scale; 0: not drawn this way */
+    SDL_Texture *lcd_mask;  /* LCD filter: one pixel's grid at lcd_mask_n */
+    int lcd_mask_n;
+} View;
+
+static View primary, secondary; /* secondary.win: NULL while Second screen window is off */
 static int layout = EGG_SINGLE_SCREEN ? LAYOUT_TOP : LAYOUT_STACKED, swapped;
 static int last_full = WINDOW_BORDERLESS; /* F11 from windowed returns here */
-static SDL_Texture *native[4], *smooth[4], *internal; /* top, bottom, main, party; internal: N x the layout */
+static int force_windowed;                /* EGG_WINDOWED */
+static SDL_Rect second_rect;              /* the second window's last windowed place (w 0: none yet) */
+static Uint64 second_moved;               /* when it was moved or resized (saved half a second later) */
 static SDL_Texture *shader_in[2], *shader_out[2];      /* per screen: its picture, then shaded at its window size */
 static uint64_t shader_frames;
 static char saved_shader[1024];                        /* eggoftime.ini's shader, until the list is known */
@@ -129,9 +147,7 @@ static int reupload;                                   /* the filter changed: up
 static uint32_t scale2x_tmp[VIDEO_LINE_MAX * 2 * SCREEN_H * 2];
 static uint32_t scaled[VIDEO_LINE_MAX * SMOOTH_SCALE * SCREEN_H * SMOOTH_SCALE];
 static uint32_t corrected[VIDEO_LINE_MAX * SCREEN_H]; /* a screen with the Color setting applied */
-static SDL_Texture *hd_tex[4];                         /* the screens drawn from HD art (graphics mods) */
-static int hd_k[4];                                    /* their scale; 0: not drawn this way */
-static uint32_t *hd_px;                                /* a screen being drawn from HD art */
+static uint32_t *hd_px;                               /* a screen being drawn from HD art */
 static const VideoHdFrame *hd_frame;                   /* the sources of the screens being uploaded */
 static uint8_t gamma_lut[256];
 static int gamma_lut_for = -1;                         /* the Color value gamma_lut was built for */
@@ -154,6 +170,7 @@ void display_message(const char *text, unsigned ms) {
 static void draw_message(void) {
     if (!message[0] || SDL_GetTicks() >= message_until) return;
     int ww, wh;
+    SDL_Renderer *ren = primary.ren;
     SDL_GetRenderOutputSize(ren, &ww, &wh);
     float k = SDL_max(2.0f, SDL_floorf(wh / 270.0f));
     float w = (float)strlen(message) * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE + 8, h = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE + 8;
@@ -188,6 +205,10 @@ static void load_settings(void) {
         if (!strcmp(key, "shader")) snprintf(saved_shader, sizeof saved_shader, "%s", val);
         if (!strcmp(key, "layout") && (v = lookup(layout_names, LAYOUT_COUNT, val)) >= 0) layout = v;
         else if (!strcmp(key, "swap")) swapped = val[0] == '1';
+        else if (!strcmp(key, "secondplace")) {
+            SDL_Rect r;
+            if (sscanf(val, "%d , %d , %d , %d", &r.x, &r.y, &r.w, &r.h) == 4 && r.w > 0 && r.h > 0) second_rect = r;
+        }
         for (int i = 0; i < SET_COUNT; i++) {
             if (!strcmp(key, settings[i].key) && (v = lookup(settings[i].names, settings[i].count, val)) >= 0) {
                 settings[i].value = v;
@@ -202,18 +223,29 @@ static void save_settings(void) {
     if (!f) return;
     fprintf(f, "# Egg of Time display settings (System Settings menu; F2 layout, F3 swap screens, F4 filter)\n");
     fprintf(f, "layout = %s\nswap = %d\n", layout_names[layout], swapped);
+    if (second_rect.w) fprintf(f, "secondplace = %d, %d, %d, %d\n", second_rect.x, second_rect.y, second_rect.w, second_rect.h);
     for (int i = 0; i < SET_COUNT; i++) fprintf(f, "%s = %s\n", settings[i].key, settings[i].names[settings[i].value]);
     fclose(f);
 }
 
 /* ---- geometry ---- */
 
-static int main_shown(void) { return layout == LAYOUT_TOP && !swapped; } /* top-only shows the main screen */
+/* The view's layout: with the second screen window, each window shows one screen, the second window the one the
+ * main window does not. */
+static int view_layout(const View *v) { return v == &primary && !secondary.win ? layout : LAYOUT_TOP; }
+static int view_swapped(const View *v) { return swapped ^ (v == &secondary); }
 
-static void content_size(int *w, int *h) {
-    *w = layout == LAYOUT_SIDE ? SCREEN_W * 2 : main_shown() ? main_w - 2 * main_guard : SCREEN_W;
-    *h = layout == LAYOUT_STACKED ? SCREEN_H * 2 : SCREEN_H;
+/* Top-only shows the main screen. */
+static int main_shown(const View *v) { return view_layout(v) == LAYOUT_TOP && !view_swapped(v); }
+
+static void content_size(const View *v, int *w, int *h) {
+    int l = view_layout(v);
+    *w = l == LAYOUT_SIDE ? SCREEN_W * 2 : main_shown(v) ? main_w - 2 * main_guard : SCREEN_W;
+    *h = l == LAYOUT_STACKED ? SCREEN_H * 2 : SCREEN_H;
 }
+
+/* The view runs the chosen shader (the main window only: the second window uses the graphics filter). */
+static int view_shader(const View *v) { return v == &primary && SETTING(SET_SHADER) != 0; }
 
 /* Camera smoothing (framerates above 60): between game frames, the field picture is shown slid back toward
  * where the camera was, by the fraction of the frame still to come (main.c), so scrolling moves on every
@@ -224,32 +256,33 @@ static int camera_smoothing(void) { return fps_values[SETTING(SET_FRAMERATE)] !=
 
 /* Columns beyond each side of the top screen for the chosen aspect ratio (only the main screen shows them). */
 static int wide_margin(void) {
-    if (!EGG_SINGLE_SCREEN || !main_shown()) return 0;
+    if (!ss_enabled() || !main_shown(&primary)) return 0;
     float ratio = aspect_ratios[SETTING(SET_ASPECT)];
     if (ratio == 0) {
         int ww, wh;
-        SDL_GetRenderOutputSize(ren, &ww, &wh);
+        SDL_GetRenderOutputSize(primary.ren, &ww, &wh);
         ratio = wh > 0 ? (float)ww / wh : 4.0f / 3;
     }
     return SDL_clamp(((int)SDL_lroundf(SCREEN_H * ratio) - SCREEN_W) / 2, 0, VIDEO_MARGIN_MAX);
 }
 
-/* Where a screen goes in the layout, in native pixels; screen 0 = top, 1 = bottom. 0 when it is not shown. */
-static int screen_slot(int screen, int *x, int *y) {
-    int slot = screen ^ swapped; /* position: 0 first (top/left), 1 second */
-    if (layout == LAYOUT_TOP && slot != 0) return 0;
-    *x = slot && layout == LAYOUT_SIDE ? SCREEN_W : 0;
-    *y = slot && layout == LAYOUT_STACKED ? SCREEN_H : 0;
+/* Where a screen goes in the view's layout, in native pixels; screen 0 = top, 1 = bottom. 0 when it is not
+ * shown there. */
+static int screen_slot(const View *v, int screen, int *x, int *y) {
+    int slot = screen ^ view_swapped(v), l = view_layout(v); /* position: 0 first (top/left), 1 second */
+    if (!v->win || (l == LAYOUT_TOP && slot != 0)) return 0;
+    *x = slot && l == LAYOUT_SIDE ? SCREEN_W : 0;
+    *y = slot && l == LAYOUT_STACKED ? SCREEN_H : 0;
     return 1;
 }
 
-/* The window rectangle the layout is shown in. */
-static SDL_FRect dest_rect(void) {
+/* The window rectangle the view's layout is shown in. */
+static SDL_FRect dest_rect(const View *v) {
     int cw, ch, ww, wh;
-    content_size(&cw, &ch);
-    SDL_GetRenderOutputSize(ren, &ww, &wh);
+    content_size(v, &cw, &ch);
+    SDL_GetRenderOutputSize(v->ren, &ww, &wh);
     float h = SDL_min((float)wh, (float)ww * ch / cw);
-    if (SETTING(SET_FILTER) == FILTER_PIXEL && !SETTING(SET_SHADER) && h >= ch) {
+    if (SETTING(SET_FILTER) == FILTER_PIXEL && !view_shader(v) && h >= ch) {
         h = SDL_floorf(h / ch) * ch; /* integer scaling */
     }
     float w = h * cw / ch;
@@ -257,22 +290,22 @@ static SDL_FRect dest_rect(void) {
 }
 
 /* Internal resolution: N times the layout's native size. */
-static int internal_scale(const SDL_FRect *dest) {
+static int internal_scale(const View *v, const SDL_FRect *dest) {
     if (SETTING(SET_RESOLUTION)) return SETTING(SET_RESOLUTION);
     int cw, ch;
-    content_size(&cw, &ch);
+    content_size(v, &cw, &ch);
     return SDL_clamp((int)SDL_ceilf(dest->h / ch), 1, RES_MAX);
 }
 
 static void resize_window(void) {
     int cw, ch;
-    content_size(&cw, &ch);
-    if (!(SDL_GetWindowFlags(win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED))) {
-        SDL_SetWindowSize(win, cw * WINDOW_SCALE, ch * WINDOW_SCALE);
+    content_size(&primary, &cw, &ch);
+    if (!(SDL_GetWindowFlags(primary.win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED))) {
+        SDL_SetWindowSize(primary.win, cw * WINDOW_SCALE, ch * WINDOW_SCALE);
     }
 }
 
-static void apply_window_mode(int mode) {
+static void apply_window_mode(SDL_Window *win, int mode) {
     if (mode == WINDOW_WINDOWED) {
         SDL_SetWindowFullscreen(win, false);
         return;
@@ -288,7 +321,14 @@ static void apply_window_mode(int mode) {
         SDL_SetWindowFullscreenMode(win, NULL); /* borderless, at the desktop's mode */
     }
     SDL_SetWindowFullscreen(win, true);
-    last_full = mode;
+}
+
+/* The second window follows Window mode on a monitor of its own; on the main window's, it stays windowed. */
+static void apply_second_mode(void) {
+    if (!secondary.win) return;
+    int mode = force_windowed ? WINDOW_WINDOWED : SETTING(SET_WINDOW);
+    if (SDL_GetDisplayForWindow(secondary.win) == SDL_GetDisplayForWindow(primary.win)) mode = WINDOW_WINDOWED;
+    apply_window_mode(secondary.win, mode);
 }
 
 /* ---- filters ---- */
@@ -430,22 +470,23 @@ static void compose_hd(const HdJob *job) {
     for (int i = 0; i < hd_workers; i++) SDL_WaitSemaphore(hd_done);
 }
 
-/* The screen's sources, when it is drawn from HD art now (not through a shader, and Mods on). */
-static const VideoHd *hd_source(int tex) {
-    if (!hd_frame || !hd_frame->on || SETTING(SET_SHADER) || !SETTING(SET_MODS) || !gfxmod_hd_scale()) return NULL;
+/* The screen's sources, when the view draws it from HD art now (not through a shader, and Mods on). */
+static const VideoHd *hd_source(const View *v, int tex) {
+    if (!hd_frame || !hd_frame->on || view_shader(v) || !SETTING(SET_MODS) || !gfxmod_hd_scale()) return NULL;
     return tex == 0 ? hd_frame->top : tex == 1 ? hd_frame->bottom : tex == 2 ? hd_frame->main : hd_frame->party;
 }
 
-/* Draws and uploads screen `tex` (its pixels px with the Color setting applied) from HD art at k times its size;
- * 0 if it cannot. */
-static int upload_hd(int tex, const uint32_t *px, const VideoHd *src, int k) {
+/* Draws and uploads screen `tex` (its pixels px with the Color setting applied) from HD art at k times its size,
+ * to the view; 0 if it cannot. */
+static int upload_hd(View *v, int tex, const uint32_t *px, const VideoHd *src, int k) {
     int w = screen_width(tex), ow = w * k, oh = SCREEN_H * k;
     float tw = 0, th = 0;
+    SDL_Texture **hd_tex = v->hd_tex;
     if (hd_tex[tex]) SDL_GetTextureSize(hd_tex[tex], &tw, &th);
     int full_w = (tex >= 2 ? VIDEO_LINE_MAX : SCREEN_W) * k;
     if ((int)tw != full_w || (int)th != oh) {
         SDL_DestroyTexture(hd_tex[tex]);
-        hd_tex[tex] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, full_w, oh);
+        hd_tex[tex] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, full_w, oh);
         if (!hd_tex[tex]) return 0;
         SDL_SetTextureScaleMode(hd_tex[tex], SDL_SCALEMODE_LINEAR);
         SDL_SetTextureBlendMode(hd_tex[tex], tex == 3 ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
@@ -463,21 +504,19 @@ static int upload_hd(int tex, const uint32_t *px, const VideoHd *src, int k) {
     return 1;
 }
 
-static int internal_scale(const SDL_FRect *dest);
-
-/* shown: the screen is in the layout (only those are drawn from HD art). */
-static void upload(int tex, const uint32_t *px, int shown) {
+/* Uploads screen `tex` to the view; shown: the screen is in its layout (only those are drawn from HD art). */
+static void upload(View *v, int tex, const uint32_t *px, int shown) {
     int w = screen_width(tex);
     px = color_corrected(px, w);
-    const VideoHd *src = shown ? hd_source(tex) : NULL;
-    SDL_FRect dest = dest_rect();
-    int k = src ? SDL_min(gfxmod_hd_scale(), internal_scale(&dest)) : 0;
-    hd_k[tex] = k > 1 && upload_hd(tex, px, src, k) ? k : 0;
-    SDL_UpdateTexture(native[tex], &(SDL_Rect){0, 0, w, SCREEN_H}, px, w * 4);
+    const VideoHd *src = shown ? hd_source(v, tex) : NULL;
+    SDL_FRect dest = dest_rect(v);
+    int k = src ? SDL_min(gfxmod_hd_scale(), internal_scale(v, &dest)) : 0;
+    v->hd_k[tex] = k > 1 && upload_hd(v, tex, px, src, k) ? k : 0;
+    SDL_UpdateTexture(v->native[tex], &(SDL_Rect){0, 0, w, SCREEN_H}, px, w * 4);
     if (SETTING(SET_FILTER) == FILTER_SMOOTH) {
         scale2x(px, w, SCREEN_H, scale2x_tmp);
         scale2x(scale2x_tmp, w * 2, SCREEN_H * 2, scaled);
-        SDL_UpdateTexture(smooth[tex], &(SDL_Rect){0, 0, w * SMOOTH_SCALE, SCREEN_H * SMOOTH_SCALE}, scaled,
+        SDL_UpdateTexture(v->smooth[tex], &(SDL_Rect){0, 0, w * SMOOTH_SCALE, SCREEN_H * SMOOTH_SCALE}, scaled,
                           w * SMOOTH_SCALE * 4);
     }
 }
@@ -490,14 +529,11 @@ static void upload(int tex, const uint32_t *px, int shown) {
 #define LCD_BRIGHTEN_SCANLINES 16.0f
 #define LCD_BRIGHTEN_STRIPES 4.0f
 
-static SDL_Texture *lcd_mask;
-static int lcd_mask_n;
-
-static SDL_Texture *lcd_grid(int n) {
-    if (lcd_mask && lcd_mask_n == n) return lcd_mask;
-    SDL_DestroyTexture(lcd_mask);
-    lcd_mask = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, n, n);
-    lcd_mask_n = n;
+static SDL_Texture *lcd_grid(View *v, int n) {
+    if (v->lcd_mask && v->lcd_mask_n == n) return v->lcd_mask;
+    SDL_DestroyTexture(v->lcd_mask);
+    SDL_Texture *lcd_mask = v->lcd_mask = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, n, n);
+    v->lcd_mask_n = n;
     if (!lcd_mask) return NULL;
     static const float phase[3] = {SDL_PI_F / 2, SDL_PI_F / 2 - 2 * SDL_PI_F / 3, SDL_PI_F / 2 - 4 * SDL_PI_F / 3};
     uint32_t *px = SDL_malloc((size_t)n * n * 4);
@@ -521,8 +557,8 @@ static SDL_Texture *lcd_grid(int n) {
     return lcd_mask;
 }
 
-/* *t as a w x h render target, made again when its size differs. */
-static SDL_Texture *sized_target(SDL_Texture **t, int w, int h) {
+/* *t as a w x h render target of ren, made again when its size differs. */
+static SDL_Texture *sized_target(SDL_Renderer *ren, SDL_Texture **t, int w, int h) {
     float tw = 0, th = 0;
     if (*t) SDL_GetTextureSize(*t, &tw, &th);
     if ((int)tw != w || (int)th != h) {
@@ -537,6 +573,7 @@ static SDL_Texture *sized_target(SDL_Texture **t, int w, int h) {
 /* The shown screens through the shader, each from its place in the internal target (native size) to its place
  * in the window. 0 if the shader cannot run: nothing is drawn. */
 static int draw_shaded(const SDL_FRect *shown, const int *screens, int nshown, int cw, int ch, const SDL_FRect *dest) {
+    SDL_Renderer *ren = primary.ren;
     float kx = dest->w / cw, ky = dest->h / ch;
     SDL_FRect at[2];
     for (int i = 0; i < nshown; i++) {
@@ -544,11 +581,12 @@ static int draw_shaded(const SDL_FRect *shown, const int *screens, int nshown, i
         at[i] = (SDL_FRect){SDL_roundf(dest->x + r->x * kx), SDL_roundf(dest->y + r->y * ky), SDL_roundf(r->w * kx),
                             SDL_roundf(r->h * ky)};
         int s = screens[i];
-        if (!sized_target(&shader_in[s], (int)r->w, (int)r->h) || !sized_target(&shader_out[s], (int)at[i].w, (int)at[i].h)) {
+        if (!sized_target(ren, &shader_in[s], (int)r->w, (int)r->h) ||
+            !sized_target(ren, &shader_out[s], (int)at[i].w, (int)at[i].h)) {
             return 0;
         }
         SDL_SetRenderTarget(ren, shader_in[s]);
-        SDL_RenderTexture(ren, internal, r, NULL);
+        SDL_RenderTexture(ren, primary.internal, r, NULL);
         SDL_SetRenderTarget(ren, NULL);
         if (!shader_run(s, SETTING(SET_SHADER) - 1, shader_in[s], shader_out[s], shader_frames)) return 0;
     }
@@ -557,15 +595,19 @@ static int draw_shaded(const SDL_FRect *shown, const int *screens, int nshown, i
     return 1;
 }
 
-/* Draws the shown screens into the internal target, then the target into the window (through the shader if one
- * is chosen: then the target is the native size). */
-static void draw_screens(void) {
+/* Draws the view's shown screens into its internal target, then the target into its window (through the shader
+ * if one is chosen: then the target is the native size). */
+static void draw_screens(View *v) {
+    SDL_Renderer *ren = v->ren;
+    SDL_Texture **native = v->native, **smooth = v->smooth, **hd_tex = v->hd_tex;
+    const int *hd_k = v->hd_k;
     int cw, ch;
-    content_size(&cw, &ch);
-    SDL_FRect dest = dest_rect();
-    int shader = SETTING(SET_SHADER) != 0;
-    int n = shader ? 1 : internal_scale(&dest);
-    if (!sized_target(&internal, cw * n, ch * n)) return;
+    content_size(v, &cw, &ch);
+    SDL_FRect dest = dest_rect(v);
+    int shader = view_shader(v);
+    int n = shader ? 1 : internal_scale(v, &dest);
+    SDL_Texture *internal = sized_target(ren, &v->internal, cw * n, ch * n);
+    if (!internal) return;
     SDL_SetRenderTarget(ren, internal);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
@@ -573,8 +615,8 @@ static void draw_screens(void) {
     int screens[2], nshown = 0;
     for (int screen = 0; screen < 2; screen++) {
         int x, y;
-        if (!screen_slot(screen, &x, &y)) continue;
-        int tex = screen == 0 && main_shown() ? 2 : screen; /* the main screen alone */
+        if (!screen_slot(v, screen, &x, &y)) continue;
+        int tex = screen == 0 && main_shown(v) ? 2 : screen; /* the main screen alone */
         int k = hd_k[tex] ? hd_k[tex] : !shader && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
         SDL_Texture *t = hd_k[tex] ? hd_tex[tex] : k > 1 ? smooth[tex] : native[tex];
         if (tex != 2 || !main_guard) {
@@ -604,7 +646,7 @@ static void draw_screens(void) {
                               &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n});
         }
     }
-    SDL_Texture *grid = !shader && SETTING(SET_FILTER) == FILTER_LCD ? lcd_grid(n) : NULL;
+    SDL_Texture *grid = !shader && SETTING(SET_FILTER) == FILTER_LCD ? lcd_grid(v, n) : NULL;
     for (int i = 0; grid && i < nshown; i++) SDL_RenderTextureTiled(ren, grid, NULL, 1, &shown[i]);
     SDL_SetRenderTarget(ren, NULL);
     if (shader && draw_shaded(shown, screens, nshown, cw, ch, &dest)) return;
@@ -625,20 +667,131 @@ static void list_shaders(void) {
     settings[SET_SHADER] = (Setting){"shader", "Shader", n + 1, v > 0 ? v : 0, shader_names, NULL};
 }
 
+/* The view's screen textures (the first count of top, bottom, main, party). */
+static int create_textures(View *v, int count) {
+    for (int i = 0; i < count; i++) {
+        int w = i >= 2 ? VIDEO_LINE_MAX : SCREEN_W;
+        v->native[i] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w, SCREEN_H);
+        v->smooth[i] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING,
+                                         w * SMOOTH_SCALE, SCREEN_H * SMOOTH_SCALE);
+        if (!v->native[i] || !v->smooth[i]) return 0;
+        SDL_SetTextureScaleMode(v->native[i], SDL_SCALEMODE_NEAREST);
+        SDL_SetTextureScaleMode(v->smooth[i], SDL_SCALEMODE_LINEAR);
+    }
+    if (count > 3) {
+        SDL_SetTextureBlendMode(v->native[3], SDL_BLENDMODE_BLEND); /* the party layer is transparent elsewhere */
+        SDL_SetTextureBlendMode(v->smooth[3], SDL_BLENDMODE_BLEND);
+    }
+    return 1;
+}
+
+/* ---- second screen window ---- */
+
+/* r is mostly on a monitor (a saved place whose monitor is gone is not). */
+static int on_a_display(const SDL_Rect *r) {
+    SDL_Rect b, in;
+    SDL_DisplayID d = SDL_GetDisplayForRect(r);
+    return d && SDL_GetDisplayUsableBounds(d, &b) && SDL_GetRectIntersection(r, &b, &in) && in.w * 2 >= r->w &&
+           in.h * 2 >= r->h;
+}
+
+/* First time: centred on a monitor other than the main window's; with none, beside the main window where it
+ * fits. */
+static void default_second_place(SDL_Rect *r) {
+    SDL_DisplayID mine = SDL_GetDisplayForWindow(primary.win), other = 0;
+    int n = 0;
+    SDL_DisplayID *ds = SDL_GetDisplays(&n);
+    for (int i = 0; ds && i < n && !other; i++) {
+        if (ds[i] != mine) other = ds[i];
+    }
+    SDL_free(ds);
+    SDL_Rect b;
+    if (!SDL_GetDisplayUsableBounds(other ? other : mine, &b)) b = (SDL_Rect){0, 0, 1280, 720};
+    r->w = SDL_min(SCREEN_W * WINDOW_SCALE, b.w);
+    r->h = SDL_min(SCREEN_H * WINDOW_SCALE, b.h);
+    r->x = b.x + (b.w - r->w) / 2;
+    r->y = b.y + (b.h - r->h) / 2;
+    int mx, my, mw, mh;
+    if (other || !SDL_GetWindowPosition(primary.win, &mx, &my) || !SDL_GetWindowSize(primary.win, &mw, &mh)) return;
+    if (mx + mw + r->w <= b.x + b.w) r->x = mx + mw;
+    else if (mx - r->w >= b.x) r->x = mx - r->w;
+    r->y = SDL_clamp(my, b.y, b.y + b.h - r->h);
+}
+
+/* Keeps the second window's place, while it is a plain window. */
+static void remember_second_place(void) {
+    if (!secondary.win ||
+        (SDL_GetWindowFlags(secondary.win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED))) {
+        return;
+    }
+    SDL_Rect r;
+    if (SDL_GetWindowPosition(secondary.win, &r.x, &r.y) && SDL_GetWindowSize(secondary.win, &r.w, &r.h)) second_rect = r;
+}
+
+static void close_second(void) {
+    remember_second_place();
+    SDL_DestroyRenderer(secondary.ren); /* and its textures */
+    SDL_DestroyWindow(secondary.win);
+    secondary = (View){0};
+    SDL_ResetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS);
+    ss_set_enabled(1);
+}
+
+/* Opens the second window where it was last (or default_second_place), in Window mode on a monitor of its own.
+ * 0 if it cannot. */
+static int open_second(void) {
+    /* Exclusive fullscreen would otherwise minimize the main window whenever the other one takes the focus. */
+    SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+    SDL_Rect r = second_rect;
+    if (!r.w || !on_a_display(&r)) default_second_place(&r);
+    secondary.win = SDL_CreateWindow("Egg of Time - Second screen", r.w, r.h,
+                                     SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+    if (!secondary.win || !(secondary.ren = SDL_CreateRenderer(secondary.win, NULL)) || !create_textures(&secondary, 2)) {
+        fprintf(stderr, "Second screen window: %s\n", SDL_GetError());
+        close_second();
+        return 0;
+    }
+    SDL_SetWindowPosition(secondary.win, r.x, r.y);
+    SDL_ShowWindow(secondary.win);
+    apply_second_mode();
+    ss_set_enabled(0); /* both DS screens as they are, not laid out for one */
+    return 1;
+}
+
+void display_event(const SDL_Event *e) {
+    if (e->type < SDL_EVENT_WINDOW_FIRST || e->type > SDL_EVENT_WINDOW_LAST || !secondary.win) return;
+    int second = e->window.windowID == SDL_GetWindowID(secondary.win);
+    switch (e->type) {
+    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+        if (second) {
+            display_setting_set(SET_SECOND, 0);
+        } else { /* SDL quits by itself only when the last window closes */
+            SDL_PushEvent(&(SDL_Event){.type = SDL_EVENT_QUIT});
+        }
+        break;
+    case SDL_EVENT_WINDOW_DISPLAY_CHANGED: apply_second_mode(); break;
+    case SDL_EVENT_WINDOW_MOVED:
+    case SDL_EVENT_WINDOW_RESIZED:
+        if (second) second_moved = SDL_GetTicks();
+        break;
+    }
+}
+
 int display_init(void) {
     snprintf(ini_path, sizeof ini_path, "%seggoftime.ini", rt_data_dir());
     load_settings();
     shader_scan();
+    force_windowed = SDL_getenv("EGG_WINDOWED") != NULL;
     int cw, ch;
-    content_size(&cw, &ch);
-    win = SDL_CreateWindow("Egg of Time", cw * WINDOW_SCALE, ch * WINDOW_SCALE,
+    content_size(&primary, &cw, &ch);
+    SDL_Window *win = primary.win = SDL_CreateWindow("Egg of Time", cw * WINDOW_SCALE, ch * WINDOW_SCALE,
                            SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE | (shader_count() ? SDL_WINDOW_OPENGL : 0));
     if (!win) {
         fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         return 0;
     }
     /* Shaders run on the OpenGL renderer; without them (or OpenGL 3.3), SDL's default renderer. */
-    ren = shader_count() ? SDL_CreateRenderer(win, "opengl") : NULL;
+    SDL_Renderer *ren = shader_count() ? SDL_CreateRenderer(win, "opengl") : NULL;
     if (ren && !shader_init(ren)) {
         SDL_DestroyRenderer(ren);
         ren = NULL;
@@ -647,21 +800,16 @@ int display_init(void) {
         fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
         return 0;
     }
+    primary.ren = ren;
     list_shaders();
     SDL_SetRenderVSync(ren, SETTING(SET_VSYNC));
     if (SETTING(SET_WINDOW) != WINDOW_WINDOWED) last_full = SETTING(SET_WINDOW);
-    if (!SDL_getenv("EGG_WINDOWED")) apply_window_mode(SETTING(SET_WINDOW));
-    for (int i = 0; i < 4; i++) {
-        int w = i >= 2 ? VIDEO_LINE_MAX : SCREEN_W;
-        native[i] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w, SCREEN_H);
-        smooth[i] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w * SMOOTH_SCALE,
-                                      SCREEN_H * SMOOTH_SCALE);
-        if (!native[i] || !smooth[i]) return 0;
-        SDL_SetTextureScaleMode(native[i], SDL_SCALEMODE_NEAREST);
-        SDL_SetTextureScaleMode(smooth[i], SDL_SCALEMODE_LINEAR);
+    if (!force_windowed) apply_window_mode(win, SETTING(SET_WINDOW));
+    if (!create_textures(&primary, 4)) return 0;
+    if (SETTING(SET_SECOND)) {
+        if (!open_second()) SETTING(SET_SECOND) = 0;
+        resize_window();
     }
-    SDL_SetTextureBlendMode(native[3], SDL_BLENDMODE_BLEND); /* the party layer is transparent elsewhere */
-    SDL_SetTextureBlendMode(smooth[3], SDL_BLENDMODE_BLEND);
     return 1;
 }
 
@@ -671,7 +819,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, int 
     main_guard = asked_guard && width == SCREEN_W + 2 * asked_margin ? asked_guard : 0;
     slide_x = main_guard ? slide_dx : 0;
     slide_y = main_guard ? slide_dy : 0;
-    asked_guard = camera_smoothing() && EGG_SINGLE_SCREEN && main_shown() ? VIDEO_SLIDE_MAX : 0;
+    asked_guard = camera_smoothing() && ss_enabled() && main_shown(&primary) ? VIDEO_SLIDE_MAX : 0;
     asked_margin = SDL_min(wide_margin() + asked_guard, VIDEO_MARGIN_MAX);
     video_set_wide_margin(asked_margin);
     video_set_fill_sides(SETTING(SET_FILL));
@@ -681,17 +829,26 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, int 
     if (new_frame || reupload) {
         hd_frame = hd;
         int shown[3] = {0};
-        for (int screen = 0, x, y; screen < 2; screen++) {
-            if (screen_slot(screen, &x, &y)) shown[screen == 0 && main_shown() ? 2 : screen] = 1;
+        View *at[3] = {&primary, &primary, &primary}; /* the window each screen is uploaded to */
+        View *views[2] = {&primary, &secondary};
+        for (int i = 0; i < 2; i++) {
+            for (int screen = 0, x, y; screen < 2; screen++) {
+                if (!screen_slot(views[i], screen, &x, &y)) continue;
+                int tex = screen == 0 && main_shown(views[i]) ? 2 : screen;
+                shown[tex] = 1;
+                at[tex] = views[i];
+            }
         }
-        for (int i = 0; i < 3; i++) upload(i, screens[i], shown[i]);
-        if (party_on) upload(3, party, shown[2]);
+        for (int i = 0; i < 3; i++) upload(at[i], i, screens[i], shown[i]);
+        if (party_on) upload(&primary, 3, party, shown[2]);
         hd_frame = NULL;
         reupload = 0;
     }
+    SDL_Renderer *ren = primary.ren;
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
-    if (!movie_draw(ren)) draw_screens();
+    int movie = movie_draw(ren);
+    if (!movie) draw_screens(&primary);
     draw_message();
     if (capture_path[0]) {
         SDL_Surface *shot = SDL_RenderReadPixels(ren, NULL);
@@ -702,17 +859,33 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, int 
         capture_path[0] = 0;
     }
     SDL_RenderPresent(ren);
+    if (secondary.win) { /* black while a cutscene plays in the main window */
+        SDL_SetRenderDrawColor(secondary.ren, 0, 0, 0, 255);
+        SDL_RenderClear(secondary.ren);
+        if (!movie) draw_screens(&secondary);
+        SDL_RenderPresent(secondary.ren);
+    }
+    if (second_moved && SDL_GetTicks() - second_moved >= 500) {
+        second_moved = 0;
+        remember_second_place();
+        save_settings();
+    }
 }
 
 int display_key(SDL_Scancode sc) {
     switch (sc) {
     case SDL_SCANCODE_F2:
+        if (secondary.win) {
+            show_message("%s", "Layout: one screen per window");
+            return 1;
+        }
         layout = (layout + 1) % LAYOUT_COUNT;
         resize_window();
         show_message("Layout: %s", layout_labels[layout]);
         break;
     case SDL_SCANCODE_F3:
         swapped = !swapped;
+        reupload = 1; /* with the second window, the screens change windows */
         show_message("%s", swapped ? "Screens swapped" : "Screens in normal order");
         break;
     case SDL_SCANCODE_F4:
@@ -749,7 +922,7 @@ const char *display_setting_label(int id, int v) {
     if (v == 0) return "Auto";
     static char buf[32];
     int cw, ch;
-    content_size(&cw, &ch);
+    content_size(&primary, &cw, &ch);
     snprintf(buf, sizeof buf, "%dx (%dx%d)", v, cw * v, ch * v);
     return buf;
 }
@@ -757,8 +930,18 @@ const char *display_setting_label(int id, int v) {
 void display_setting_set(int id, int v) {
     settings[id].value = v;
     switch (id) {
-    case SET_WINDOW: apply_window_mode(v); break;
-    case SET_VSYNC: SDL_SetRenderVSync(ren, v); break;
+    case SET_WINDOW:
+        if (v != WINDOW_WINDOWED) last_full = v;
+        apply_window_mode(primary.win, v);
+        apply_second_mode();
+        break;
+    case SET_SECOND:
+        if (v && !secondary.win && !open_second()) settings[id].value = 0;
+        if (!v && secondary.win) close_second();
+        resize_window();
+        reupload = 1;
+        break;
+    case SET_VSYNC: SDL_SetRenderVSync(primary.ren, v); break;
     case SET_FILTER:
     case SET_COLOR: reupload = 1; break;
     }
@@ -775,10 +958,11 @@ uint64_t display_frame_ns(void) {
 int display_touch(float wx, float wy, int *x, int *y) {
     int cw, ch, sx, sy;
     float px, py;
-    if (!screen_slot(1, &sx, &sy)) return 0;
-    content_size(&cw, &ch);
-    SDL_RenderCoordinatesFromWindow(ren, wx, wy, &px, &py);
-    SDL_FRect d = dest_rect();
+    View *v = secondary.win && SDL_GetMouseFocus() == secondary.win ? &secondary : &primary; /* the pointer's window */
+    if (!screen_slot(v, 1, &sx, &sy)) return 0;
+    content_size(v, &cw, &ch);
+    SDL_RenderCoordinatesFromWindow(v->ren, wx, wy, &px, &py);
+    SDL_FRect d = dest_rect(v);
     float cx = (px - d.x) * cw / d.w - sx, cy = (py - d.y) * ch / d.h - sy; /* native pixels in the screen */
     if (cx < 0 || cy < 0 || cx >= SCREEN_W || cy >= SCREEN_H) return 0;
     *x = (int)cx;

@@ -43,6 +43,7 @@
 static const char *const descriptions[ROW_COUNT] = {
     [SET_LANGUAGE] = "Game text. Applies at the next start.",
     [SET_WINDOW] = "How the game window is shown.",
+    [SET_SECOND] = "The other screen in its own window.",
     [SET_RESOLUTION] = "Size the screens are drawn at.",
     [SET_ASPECT] = "Wider shows more of the world.",
     [SET_FILL] = "Repeat small rooms' tiles beside them.",

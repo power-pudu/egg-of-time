@@ -12,7 +12,7 @@ static void game_settings_defaults(CPU *cpu) { rt_call_wrapped(cpu, "ov007", 0x0
  * that *(0x020708d0) points to: Game Mode byte 2 bit 7 (1 = Classic), Battle Mode byte 0 bit 6
  * (1 = Wait), Movies byte 2 bits 3-4 (0 = On). r0 is the scene object. */
 void rt_ct_settings_defaults(CPU *cpu) {
-    if (!EGG_SINGLE_SCREEN) {
+    if (!ss_enabled()) {
         game_settings_defaults(cpu);
         return;
     }

@@ -284,9 +284,15 @@ static uint32_t arena_keys(uint32_t keys) {
     return (keys & ~(KEY_LEFT | KEY_RIGHT)) | moved;
 }
 
+static SDL_AtomicInt turned_off;
+
+int ss_enabled(void) { return EGG_SINGLE_SCREEN && !SDL_GetAtomicInt(&turned_off); }
+void ss_set_enabled(int on) { SDL_SetAtomicInt(&turned_off, !on); }
+
 uint32_t ss_game_keys(uint32_t keys) {
     static int seen = SCENE_OTHER;
     Scene sc = current();
+    if (!ss_enabled()) sc.kind = SCENE_OTHER;
     if (sc.kind != seen) { /* a scene started */
         seen = sc.kind;
         title_held = keys;
@@ -1090,12 +1096,18 @@ int ss_in_overworld(void) { return current().kind == SCENE_OVERWORLD; }
 int ss_in_race(void) { return current().kind == SCENE_RACE; }
 int ss_bottom_shift(int *rows) {
     *rows = AGES_SELECTOR_ROWS;
-    return current().kind == SCENE_AGES ? AGES_SHIFT : 0;
+    return ss_enabled() && current().kind == SCENE_AGES ? AGES_SHIFT : 0;
 }
 
 static SDL_AtomicInt menu_place;
 
 int ss_menu_place(void) { return SDL_GetAtomicInt(&menu_place); }
+
+/* The field paused: how to open the System Settings menu, at the bottom of the main screen (w columns). */
+static void pause_hint(uint32_t *main, int w) {
+    const char *hint = rt_french() ? "Appuyez sur SELECT pour les options syst\xC3\xA8me" : "Press SELECT to open System Settings";
+    ui_draw_text_in(main, w, hint, (w - ui_text_width(hint)) / 2, SCREEN_H - UI_FONT_H - 6, 0xFFFFFFFFu);
+}
 
 int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, const uint32_t *wide, int wide_w,
                const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from) {
@@ -1104,19 +1116,22 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
     if (sc.kind != SCENE_EQUIP) equip_portrait = -1; /* the page opens with its member's portrait */
     int paused = EGG_SINGLE_SCREEN && sc.kind == SCENE_FIELD && field_paused();
     int title_menu = sc.kind == SCENE_TITLE && rt_r16(sc.obj + TITLE_PHASE) == TITLE_MENU;
-    int settings = sc.kind == SCENE_SETTINGS || sc.kind == SCENE_OPTIONS; /* SELECT relabelled "System settings" */
+    /* SELECT relabelled "System settings" (off, it stays the game's "Defaults") */
+    int settings = ss_enabled() && (sc.kind == SCENE_SETTINGS || sc.kind == SCENE_OPTIONS);
     SDL_SetAtomicInt(&menu_place, settings     ? SS_MENU_GAME_SETTINGS
                                   : paused     ? SS_MENU_PAUSE
                                   : title_menu ? SS_MENU_TITLE
                                                : SS_MENU_NONE);
+    if (!ss_enabled()) {
+        memcpy(main, top, SCREEN_W * SCREEN_H * 4);
+        *from = SS_FROM_TOP;
+        if (paused) pause_hint(main, SCREEN_W);
+        return SCREEN_W;
+    }
     if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE) { /* widescreen: the top screen with its margins */
         memcpy(main, wide, (size_t)wide_w * SCREEN_H * 4);
         *from = SS_FROM_WIDE;
-        if (paused) {
-            const char *hint = rt_french() ? "Appuyez sur SELECT pour les options syst\xC3\xA8me"
-                                           : "Press SELECT to open System Settings";
-            ui_draw_text_in(main, wide_w, hint, (wide_w - ui_text_width(hint)) / 2, SCREEN_H - UI_FONT_H - 6, 0xFFFFFFFFu);
-        }
+        if (paused) pause_hint(main, wide_w);
         return wide_w;
     }
     switch (sc.kind) {
