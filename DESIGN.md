@@ -105,6 +105,13 @@ original bytes, and caches the result per region until the region is written.
     game itself drew in the Millennial Fair. A layer is filled only while its BG scroll agrees with its ring origin
     (on the tile: the margins take the tiles every filled layer shows at its own fine scroll; on Zenan Bridge BG0
     stays at 0, 0 while BG2 and BG3 sit 6 rows lower and show a 25th tile row).
+    A layer is also filled only while the model reproduces what the game itself drew in the 4:3 view (9 cells in
+    10, priority tiles left out; `bg_holds_layer`): some rooms put a picture of their own on BG0 or BG3 that never
+    scrolls, so its ring origin stays 0, 0 and agrees with its scroll. The prison bridge: BG3 holds a fixed
+    256-wide sky (tiles 0x199.. in order), BG0 is mostly empty, the room on BG2 pans; filled from the room map,
+    the margins showed that map scrolling with the camera beside the still sky. Such a BG at scroll 0
+    (`ws_picture_bgs`) shows the screen reflected in its margins (`mirror_bg`, as the battle bolts), so the sky
+    and its mountains go on at both sides and hold still.
   - Rooms narrower than the view: the margins show what the map holds beside the room, its tiles repeated (the
     map wraps at its masks) or neighbouring rooms (a house's map holds several). Fill screen sides (System
     Settings, shown with a wide aspect ratio): Yes keeps that; No (the default) draws black beyond the room
@@ -255,7 +262,11 @@ original bytes, and caches the result per region until the region is written.
     picture without the slide (`video_copy_frame`'s party output). The text box is screen-fixed too: on its
     lines (BG0/BG1 switched to one-screen maps, see Text boxes; in every frame of a glide) its pixels go to the party layer, and the slid
     picture shows the room under it (those layers as the frame started), so the box holds still while walking
-    with it open. The renderer draws 8 hidden
+    with it open. BGs that hold still on screen while the room pans (`ws_picture_bgs`, the prison bridge's sky:
+    see Widescreen) get a still layer the same way: where such a BG or the backdrop is on top, not blended with a
+    layer that slides, the pixel goes to the still layer and the main picture is transparent there; the host draws
+    the still layer without the slide under the slid picture (all main textures blend), so the sky no longer
+    moves a fraction of a pixel with the bridge and jumps back each game frame. The renderer draws 8 hidden
     columns each side for it (`VIDEO_SLIDE_MAX`, part of the widescreen margins); a vertical slide repeats the
     edge row for its pixel or two. Measured at 144 Hz while walking: the view advances ~0.83 px per window
     frame (the game's 2 px per frame over 2.4 refreshes), the game at 60. (Frame interpolation, blending

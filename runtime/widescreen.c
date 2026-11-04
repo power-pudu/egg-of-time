@@ -112,6 +112,31 @@ static void put(int bg, int slot, int row, uint16_t v) {
     if (p) memcpy(p, &v, 2);
 }
 
+/* The BG holds what the room map gives for layer L: the cells the game itself drew in the 4:3 view (the ring's
+ * columns 1-30 from the origin, the screen's rows), priority tiles left out (BG1 holds those), agree with the model
+ * (9 in 10, so a few cells the game changed on its own do not stop it). Not so on the prison bridge:
+ * BG3 holds a fixed 256-wide sky (tiles 0x199.. in order) and BG0 is mostly empty, both at scroll 0, 0 and
+ * so on their (unmoving) ring origins; filled from the room map, the margins showed that map scrolling with the
+ * camera beside a still sky. */
+static int bg_holds_layer(int bg, uint32_t scroll, uint32_t tilesets, int L) {
+    int camc = rt_r16(scroll + 4), camr = rt_r16(scroll + 8), oc = rt_r8(scroll + 0x8e + 2 * L), orow = rt_r8(scroll + 0x8f + 2 * L);
+    uint32_t dispcnt = io_get32(0), cnt = io_get16(0x08 + 2 * bg);
+    uint32_t base = 0x06000000u + ((dispcnt >> 27) & 7) * 0x10000u + ((cnt >> 8) & 0x1F) * 0x800u;
+    int cells = 0, same = 0;
+    for (int k = 1; k < 31; k++) {
+        int slot = (oc + k) & 63;
+        for (int r = 0; r < SCREEN_H / 8; r++) {
+            uint32_t t = room_tile(scroll, tilesets, L, camc + k, camr + r);
+            if (L < 2 && (t >> 16) & 0xFF) continue;
+            const uint8_t *p = video_vram_ptr(base + (uint32_t)(slot >> 5) * 0x800u + (uint32_t)((orow + r) & 31) * 64 + (uint32_t)(slot & 31) * 2);
+            uint16_t v = 0;
+            if (p) memcpy(&v, p, 2);
+            cells++, same += v == map_entry(L, t);
+        }
+    }
+    return cells && same * 10 >= cells * 9;
+}
+
 /* The BG agrees with layer L's ring origin and is a 512x256 text map. */
 static int bg_follows(int bg, uint32_t scroll, int L) {
     uint16_t cnt = io_get16(0x08 + 2 * bg);
@@ -221,6 +246,9 @@ static uint32_t repeat_room; /* the room the layers were seen moving in (room ma
 
 int ws_repeat_bgs(void) { return repeat_bgs; }
 
+static int picture_bgs;
+int ws_picture_bgs(void) { return picture_bgs; }
+
 /* 0: not a 512x256 text BG; 1: one on layer L's ring origin; 2: one off it. */
 static int scrolls_alone(int bg, uint32_t scroll, int L) {
     if ((io_get16(0x08 + 2 * bg) >> 14) != 1) return 0;
@@ -317,7 +345,7 @@ void ws_fill_margins(int margin) {
     set_sprite_view(field_margin);
     if (ss_in_field()) set_screen_view(field_margin);
     int seen = repeat_bgs;
-    repeat_bgs = 0;
+    repeat_bgs = picture_bgs = 0;
     if (!field) return;
     uint32_t scroll = rt_r32(SCROLL), room = rt_r32(ROOM), tilesets = rt_r32(TILESETS);
     if (!ram_ptr(scroll) || !ram_ptr(room) || !ram_ptr(tilesets)) return;
@@ -334,9 +362,13 @@ void ws_fill_margins(int margin) {
         if (((bld >> 6) & 3) == 1 && (bld >> 8 & repeat_bgs)) repeat_bgs |= bld & 9; /* BG0, BG3 blended onto them */
     }
     int ok0 = bg_follows(2, scroll, 0), ok1 = bg_follows(3, scroll, 1), ok2 = bg_follows(0, scroll, 2);
-    int okhi = ok0 && ok1 && bg_follows(1, scroll, 0);
     if (!ok0 && !ok1 && !ok2) return;
     copy_room_rows(scroll, room);
+    ok0 = ok0 && bg_holds_layer(2, scroll, tilesets, 0);
+    int pic1 = ok1 && !bg_holds_layer(3, scroll, tilesets, 1), pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
+    ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
+    picture_bgs = (pic1 && !(io_get16(0x1c) & 0x1FF)) << 3 | (pic2 && !(io_get16(0x10) & 0x1FF));
+    int okhi = ok0 && bg_follows(1, scroll, 0); /* BG1: the priority tiles of the filled layers 0 and 1 */
     int camc = rt_r16(scroll + 4), camr = rt_r16(scroll + 8);
     /* The tiles the filled layers show: they agree on the tile, not always on the pixel (Zenan Bridge: BG0 still
      * at 0, 0, BG2 and BG3 6 rows down, so they show a 25th row). */
@@ -360,7 +392,7 @@ void ws_fill_margins(int margin) {
                 int slot = (rt_r8(scroll + 0x8e + 2 * L) + c - camc) & 63, row = (rt_r8(scroll + 0x8f + 2 * L) + r - camr) & 31;
                 uint32_t t = L == 0 ? t0 : L == 1 ? t1 : room_tile(scroll, tilesets, 2, c, r);
                 put(bg_of[L], slot, row, L == 0 && pri0 ? 0 : L == 1 && pri1 ? 0 : map_entry(L, t));
-                if (L == 0 && okhi) put(1, slot, row, pri1 ? map_entry(1, t1) : pri0 ? map_entry(0, t0) : 0);
+                if (L == 0 && okhi) put(1, slot, row, ok1 && pri1 ? map_entry(1, t1) : pri0 ? map_entry(0, t0) : 0);
             }
         }
     }

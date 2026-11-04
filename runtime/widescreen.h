@@ -13,6 +13,9 @@ int ws_room_span(int *x0, int *x1);
 /* In the field: the BGs (bit per BG) whose 256 columns repeat into the margins, in a room one screen wide where
  * they scroll on their own (beyond the room the other BGs are then empty); 0 otherwise. */
 int ws_repeat_bgs(void);
+/* In the field: the BGs (bit per BG: BG0, BG3) at scroll 0 that hold a picture of their own, not the room map's
+ * layer (the prison bridge's sky); their margins show the screen reflected. 0 otherwise. */
+int ws_picture_bgs(void);
 /* The field camera's position in the room (pixels); 0 outside the field. */
 int ws_camera(int *x, int *y);
 /* The window positions of each line of the coming frame (WIN0H | WIN1H << 16), when the game's software HDMA

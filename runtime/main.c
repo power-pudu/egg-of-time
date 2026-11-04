@@ -164,12 +164,13 @@ static uint32_t top_px[SCREEN_W * SCREEN_H], bottom_px[SCREEN_W * SCREEN_H], mai
 static const uint32_t *const screens[3] = {top_px, bottom_px, main_px};
 static int main_w = SCREEN_W; /* main_px: rows of this width (widescreen) */
 static uint32_t party_px[VIDEO_LINE_MAX * SCREEN_H]; /* main screen's party layer (camera smoothing) */
+static uint32_t still_px[VIDEO_LINE_MAX * SCREEN_H]; /* main screen's still layer (camera smoothing) */
 /* The screens' sources for HD graphics mods (gfx_mod.c). */
 static VideoHd hd_top[SCREEN_W * SCREEN_H], hd_bottom[SCREEN_W * SCREEN_H], hd_main[VIDEO_LINE_MAX * SCREEN_H],
-    hd_party[VIDEO_LINE_MAX * SCREEN_H];
+    hd_party[VIDEO_LINE_MAX * SCREEN_H], hd_still[VIDEO_LINE_MAX * SCREEN_H];
 static uint16_t hd_palette[RT_PALETTE_SIZE / 2];
-static VideoHdFrame hd = {hd_top, hd_bottom, hd_main, hd_party, hd_palette, 0};
-static int party_on;
+static VideoHdFrame hd = {hd_top, hd_bottom, hd_main, hd_party, hd_still, hd_palette, 0};
+static int party_on, still_on;
 
 
 /* EGG_SHOTS=<dir>: save the screens (top, bottom, and the main screen of single screen mode, which may be
@@ -370,7 +371,8 @@ int main(int argc, char **argv) {
             }
             shown_serial = serial;
             shown_t = frame_t;
-            main_w = video_copy_frame(top_px, bottom_px, main_px, party_px, &party_on, gfxmod_hd_scale() ? &hd : NULL);
+            main_w = video_copy_frame(top_px, bottom_px, main_px, party_px, &party_on, still_px, &still_on,
+                                      gfxmod_hd_scale() ? &hd : NULL);
             if (cam_cut || !display_camera_smoothing()) {
                 glide_x = glide_y = (Glide){0};
             } else {
@@ -385,12 +387,12 @@ int main(int argc, char **argv) {
         float lag_y = display_camera_smoothing() ? glide_lag(&glide_y, now_ns) : 0;
         if (sysmenu_is_open()) {
             main_w = SCREEN_W;
-            party_on = 0;
+            party_on = still_on = 0;
             sysmenu_draw(main_px);
             memcpy(top_px, main_px, sizeof top_px); /* layouts other than top-only show it too */
             new_frame = 1;
         }
-        display_frame(screens, party_on ? party_px : NULL, main_w, new_frame, lag_x, lag_y,
+        display_frame(screens, party_on ? party_px : NULL, still_on ? still_px : NULL, main_w, new_frame, lag_x, lag_y,
                       hd.on && !sysmenu_is_open() ? &hd : NULL);
         presented++;
         if (log_fps && SDL_GetTicks() >= fps_at) {

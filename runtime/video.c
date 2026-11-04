@@ -116,6 +116,8 @@ typedef struct Engine {
                                    * top) in the last frame and in this one so far, text box lines left out */
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
     int sliding;    /* camera smoothing: the display may slide this frame (the camera moved within VIDEO_GLIDE_FRAMES) */
+    int still_bgs;  /* camera smoothing: BGs that hold still on screen while the room slides (ws_picture_bgs, the
+                     * prison bridge's sky): their pixels, and the backdrop's, go to the still layer when on top */
     int sel_shift, sel_rows; /* single screen's age selector: a second picture with the sprites starting above
                               * row sel_rows drawn sel_shift columns left (ss_bottom_shift, shifted_frame), with
                               * the widescreen margins */
@@ -150,6 +152,9 @@ static uint8_t prev_oam[0x400];     /* the top screen's sprites in the previous 
 static uint32_t party_frame[VIDEO_LINE_MAX * SCREEN_H]; /* party layer of the top screen (alpha 0: none) */
 static uint32_t present_party[VIDEO_LINE_MAX * SCREEN_H];
 static int present_party_on;
+static uint32_t still_frame[VIDEO_LINE_MAX * SCREEN_H]; /* still layer of the top screen (alpha 0: none) */
+static uint32_t present_still[VIDEO_LINE_MAX * SCREEN_H];
+static int present_still_on;
 
 /* HD graphics mods (gfx_mod.c): while HD tiles are loaded, each pixel also records where its colour came from
  * (VideoHd), so the display can draw it again from the HD art. A layer pixel's source is its tile (looked up by
@@ -162,9 +167,10 @@ typedef struct HdCache { uint32_t *stamp, *val; } HdCache;
 static int hd_on;                 /* this frame records sources */
 static uint32_t hd_stamp = 1;     /* the frame, for hd_cache */
 static HdCache hd_cache[2][2][2]; /* by engine, sprite, 8 bits per pixel: VRAM address / 32 -> gfxmod tile */
-static VideoHd hd_frame[2][VIDEO_LINE_MAX * SCREEN_H], hd_party[VIDEO_LINE_MAX * SCREEN_H];
+static VideoHd hd_frame[2][VIDEO_LINE_MAX * SCREEN_H], hd_party[VIDEO_LINE_MAX * SCREEN_H], hd_still[VIDEO_LINE_MAX * SCREEN_H];
 static VideoHd present_hd[2][SCREEN_W * SCREEN_H], present_hd_wide[VIDEO_LINE_MAX * SCREEN_H];
-static VideoHd present_hd_main[VIDEO_LINE_MAX * SCREEN_H], present_hd_party[VIDEO_LINE_MAX * SCREEN_H];
+static VideoHd present_hd_main[VIDEO_LINE_MAX * SCREEN_H], present_hd_party[VIDEO_LINE_MAX * SCREEN_H],
+    present_hd_still[VIDEO_LINE_MAX * SCREEN_H];
 static uint16_t present_palette[RT_PALETTE_SIZE / 2];
 static int present_hd_on;
 
@@ -320,6 +326,9 @@ static inline void copy_col(uint16_t *out, HdLine *hd, int to, int from) {
     out[to] = out[from];
     if (hd) hd->src[to] = hd->src[from], hd->pal[to] = hd->pal[from];
 }
+
+/* Layer (0-3 BG, 4 OBJ, 5 backdrop) holds still on screen while camera smoothing slides the room (Engine.still_bgs). */
+static int still_layer(const Engine *e, int layer) { return layer == 5 || (layer < 4 && (e->still_bgs >> layer & 1)); }
 
 static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *out, HdLine *hd) {
     int m = e->margin;
@@ -839,7 +848,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         e->sel_shift = e->id == !a_top ? 0 : ss_bottom_shift(&e->sel_rows);
         /* Widescreen: the top screen, and the bottom one when the age selector's picture is the main screen. */
         e->margin = e->id == !a_top || e->sel_shift ? SDL_GetAtomicInt(&wide_margin) : 0;
-        e->party = e->sliding = 0;
+        e->party = e->sliding = e->still_bgs = 0;
         for (int bg = 0; bg < 4; bg++) {
             e->frame_bg[bg][0] = reg16(e, 0x08 + 2 * bg);
             e->frame_bg[bg][1] = reg16(e, 0x10 + 4 * bg);
@@ -852,6 +861,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             if (win_ext_on) window_margins();
             e->mirror_bg = 0;
             for (int bg = 0; bg < 4 && win_ext_on; bg++) e->mirror_bg |= (uint8_t)(picture_256(e, bg, dispcnt) << bg);
+            if (e->margin) e->mirror_bg |= (uint8_t)ws_picture_bgs();
             e->obj_origin = ws_sprite_origin(); /* sprites placed from the left margin (widened view) */
             e->obj_stretch = e->margin && ss_in_warp();
             e->repeat_256 = e->margin && ss_in_race();
@@ -871,6 +881,11 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             frames_since_step = frame_dx || frame_dy ? 0 : frame_cut ? VIDEO_GLIDE_FRAMES : SDL_min(frames_since_step + 1, VIDEO_GLIDE_FRAMES);
             int gliding = frames_since_step < VIDEO_GLIDE_FRAMES;
             if (SDL_GetAtomicInt(&party_wanted)) find_party(e, frame_dx, frame_dy, gliding), e->sliding = gliding;
+            e->still_bgs = e->sliding && e->margin ? ws_picture_bgs() : 0;
+            if (e->still_bgs) {
+                memset(still_frame, 0, sizeof still_frame);
+                if (hd_on) memset(hd_still, 0, sizeof hd_still);
+            }
         }
     }
     int m = e->margin, width = SCREEN_W + 2 * m;
@@ -1036,10 +1051,16 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             }
             if (pass && e->sel_shift) shifted_sprite[y * VIDEO_LINE_MAX + x] = (uint8_t)sprite_shows;
             if (beyond && !e->repeat_bgs) dst[x] = pass ? 0 : 0xFF000000u;
+            /* The still layer: a pixel of a still BG or the backdrop on top, not blended with a layer that slides. */
+            int to_still = !pass && e->still_bgs && !(beyond && !e->repeat_bgs) && still_layer(e, layer[0]) &&
+                           (!blended || still_layer(e, layer[1]));
+            if (to_still) still_frame[y * VIDEO_LINE_MAX + x] = dst[x], dst[x] = 0;
             if (hd) {
                 const HdLine *h = layer[0] == 4 ? &o->hd : layer[0] < 4 && src[layer[0]] == bgline[layer[0]] ? &bghd[layer[0]] : NULL;
-                uint32_t s = h && dst[x] && !(beyond && !e->repeat_bgs) ? h->src[x] : 0;
-                hd[x] = s ? (VideoHd){s, h->pal[x], (uint8_t)weight, added, found > 1 ? col[1] : backdrop} : (VideoHd){0};
+                uint32_t s = h && (dst[x] || to_still) && !(beyond && !e->repeat_bgs) ? h->src[x] : 0;
+                VideoHd r = s ? (VideoHd){s, h->pal[x], (uint8_t)weight, added, found > 1 ? col[1] : backdrop} : (VideoHd){0};
+                if (to_still) hd_still[y * VIDEO_LINE_MAX + x] = r, hd[x] = (VideoHd){0};
+                else hd[x] = r;
             }
         }
         }
@@ -1055,9 +1076,11 @@ advance:
     int f = mb & 31, mmode = mb >> 14;
     if (f > 16) f = 16;
     if (f && (mmode == 1 || mmode == 2)) {
-        for (int pass = 0; pass < (e->party || e->sel_shift ? 2 : 1); pass++) {
-            uint32_t *line = !pass ? out : e->sel_shift ? &shifted_frame[y * VIDEO_LINE_MAX] : &party_frame[y * VIDEO_LINE_MAX];
-            VideoHd *hd = !hd_on ? NULL : !pass ? hd_row : e->sel_shift ? NULL : &hd_party[y * VIDEO_LINE_MAX];
+        int layers = e->party || e->sel_shift ? 2 : 1;
+        for (int pass = 0; pass < layers + (e->still_bgs != 0); pass++) {
+            int still = pass == layers; /* the still layer, after the others */
+            uint32_t *line = still ? &still_frame[y * VIDEO_LINE_MAX] : !pass ? out : e->sel_shift ? &shifted_frame[y * VIDEO_LINE_MAX] : &party_frame[y * VIDEO_LINE_MAX];
+            VideoHd *hd = !hd_on ? NULL : still ? &hd_still[y * VIDEO_LINE_MAX] : !pass ? hd_row : e->sel_shift ? NULL : &hd_party[y * VIDEO_LINE_MAX];
             for (int x = 0; hd && x < width; x++) {
                 VideoHd *r = &hd[x];
                 if (!r->tile) continue;
@@ -1067,7 +1090,7 @@ advance:
             }
             for (int x = 0; x < width; x++) {
                 uint32_t p = line[x];
-                if (!p) continue; /* transparent (party layer) */
+                if (!p) continue; /* transparent (party and still layers, main where the still layer shows) */
                 uint32_t r = p & 0xFF, g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF;
                 if (mmode == 1) { r += ((255 - r) * f) >> 4; g += ((255 - g) * f) >> 4; b += ((255 - b) * f) >> 4; }
                 else { r -= (r * f) >> 4; g -= (g * f) >> 4; b -= (b * f) >> 4; }
@@ -1110,6 +1133,10 @@ void video_end_frame(void) {
     for (int y = 0; present_party_on && y < SCREEN_H; y++) {
         memcpy(&present_party[y * w], &party_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);
     }
+    present_still_on = engines[a_top ? 0 : 1].still_bgs && present_main_w == w;
+    for (int y = 0; present_still_on && y < SCREEN_H; y++) {
+        memcpy(&present_still[y * w], &still_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);
+    }
     present_hd_on = hd_on;
     if (hd_on) {
         const VideoHd *ht = hd_frame[a_top ? 0 : 1], *hb = hd_frame[a_top ? 1 : 0];
@@ -1118,6 +1145,7 @@ void video_end_frame(void) {
             memcpy(&present_hd[1][y * SCREEN_W], &hb[y * VIDEO_LINE_MAX + mb], SCREEN_W * sizeof *hb);
             memcpy(&present_hd_wide[y * w], &ht[y * VIDEO_LINE_MAX], (size_t)w * sizeof *ht);
             if (present_party_on) memcpy(&present_hd_party[y * w], &hd_party[y * VIDEO_LINE_MAX], (size_t)w * sizeof *hd_party);
+            if (present_still_on) memcpy(&present_hd_still[y * w], &hd_still[y * VIDEO_LINE_MAX], (size_t)w * sizeof *hd_still);
         }
         /* The main screen: a straight copy of one of them (ss_compose), its pixels' sources where they are as there
          * (not under the runtime's texts). */
@@ -1136,7 +1164,8 @@ void video_end_frame(void) {
     SDL_UnlockMutex(present_lock);
 }
 
-int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *party, int *party_on, VideoHdFrame *hd) {
+int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *party, int *party_on, uint32_t *still,
+                     int *still_on, VideoHdFrame *hd) {
     SDL_LockMutex(present_lock);
     memcpy(top, present[0], sizeof present[0]);
     memcpy(bottom, present[1], sizeof present[1]);
@@ -1144,11 +1173,14 @@ int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *
     int w = present_main_w;
     *party_on = present_party_on;
     if (present_party_on) memcpy(party, present_party, (size_t)w * SCREEN_H * 4);
+    *still_on = present_still_on;
+    if (present_still_on) memcpy(still, present_still, (size_t)w * SCREEN_H * 4);
     if (hd && (hd->on = present_hd_on)) {
         memcpy(hd->top, present_hd[0], sizeof present_hd[0]);
         memcpy(hd->bottom, present_hd[1], sizeof present_hd[1]);
         memcpy(hd->main, present_hd_main, (size_t)w * SCREEN_H * sizeof *present_hd_main);
         if (present_party_on) memcpy(hd->party, present_hd_party, (size_t)w * SCREEN_H * sizeof *present_hd_party);
+        if (present_still_on) memcpy(hd->still, present_hd_still, (size_t)w * SCREEN_H * sizeof *present_hd_still);
         memcpy(hd->palette, present_palette, sizeof present_palette);
     }
     SDL_UnlockMutex(present_lock);

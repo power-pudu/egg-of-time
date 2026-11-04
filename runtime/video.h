@@ -22,7 +22,7 @@ typedef struct VideoHd {
     uint16_t below;    /* BGR555 under it: shown where the HD art is transparent */
 } VideoHd;
 /* The shown screens' sources (as video_copy_frame's buffers) and the palette RAM of the frame. */
-typedef struct VideoHdFrame { VideoHd *top, *bottom, *main, *party; uint16_t *palette; int on; } VideoHdFrame;
+typedef struct VideoHdFrame { VideoHd *top, *bottom, *main, *party, *still; uint16_t *palette; int on; } VideoHdFrame;
 
 /* VRAM as seen by the CPU (0x06000000-0x06FFFFFF); NULL where no bank is mapped. */
 uint8_t *video_vram_ptr(uint32_t addr);
@@ -43,8 +43,12 @@ void video_set_fill_sides(int on);
  * VIDEO_LINE_MAX). Copies under a lock. */
 /* party (when *party_on): the main screen's party layer, same size, transparent (0) where the party is not:
  * the sprites the camera follows, left out of main so camera smoothing slides only the scenery. */
+/* still (when *still_on): the main screen's still layer, same size, transparent (0) elsewhere: the pixels of BGs
+ * that hold still on screen while the room slides (the prison bridge's sky) and of the backdrop, left out of main
+ * (transparent there) so camera smoothing slides only the room over them. */
 /* hd (NULL: not wanted): the pixels' sources for HD graphics mods, when the frame has them (hd->on). */
-int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *party, int *party_on, VideoHdFrame *hd);
+int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *party, int *party_on, uint32_t *still,
+                     int *still_on, VideoHdFrame *hd);
 /* Camera smoothing on: the field's camera-following sprites get the party layer (any thread). */
 void video_set_camera_smoothing(int on);
 /* Serial of the latest frame; also how far the field camera moved since the previous frame (pixels; 0 outside

@@ -123,9 +123,9 @@ static Setting settings[SET_COUNT] = {
 typedef struct View {
     SDL_Window *win;
     SDL_Renderer *ren;
-    SDL_Texture *native[4], *smooth[4], *internal;
-    SDL_Texture *hd_tex[4]; /* the screens drawn from HD art (graphics mods) */
-    int hd_k[4];            /* their scale; 0: not drawn this way */
+    SDL_Texture *native[5], *smooth[5], *internal; /* top, bottom, main, party, still */
+    SDL_Texture *hd_tex[5]; /* the screens drawn from HD art (graphics mods) */
+    int hd_k[5];            /* their scale; 0: not drawn this way */
     SDL_Texture *lcd_mask;  /* LCD filter: one pixel's grid at lcd_mask_n */
     int lcd_mask_n;
 } View;
@@ -140,6 +140,7 @@ static SDL_Texture *shader_in[2], *shader_out[2];      /* per screen: its pictur
 static uint64_t shader_frames;
 static char saved_shader[1024];                        /* eggoftime.ini's shader, until the list is known */
 static int party_on;                                   /* the party layer is shown (camera smoothing) */
+static int still_on;                                   /* the still layer is shown (camera smoothing) */
 static int main_w = SCREEN_W;                          /* the main screen's width (widescreen) */
 static int main_guard;                                 /* hidden columns each side of it (camera smoothing) */
 static float slide_x, slide_y;                         /* camera smoothing: where the view is shown from */
@@ -542,7 +543,8 @@ static void compose_hd(const HdJob *job) {
 /* The screen's sources, when the view draws it from HD art now (not through a shader, and Mods on). */
 static const VideoHd *hd_source(const View *v, int tex) {
     if (!hd_frame || !hd_frame->on || view_shader(v) || !SETTING(SET_MODS) || !gfxmod_hd_scale()) return NULL;
-    return tex == 0 ? hd_frame->top : tex == 1 ? hd_frame->bottom : tex == 2 ? hd_frame->main : hd_frame->party;
+    return tex == 0 ? hd_frame->top : tex == 1 ? hd_frame->bottom : tex == 2 ? hd_frame->main
+           : tex == 3 ? hd_frame->party : hd_frame->still;
 }
 
 /* Draws and uploads screen `tex` (its pixels px with the Color setting applied) from HD art at k times its size,
@@ -558,7 +560,7 @@ static int upload_hd(View *v, int tex, const uint32_t *px, const VideoHd *src, i
         hd_tex[tex] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, full_w, oh);
         if (!hd_tex[tex]) return 0;
         SDL_SetTextureScaleMode(hd_tex[tex], SDL_SCALEMODE_LINEAR);
-        SDL_SetTextureBlendMode(hd_tex[tex], tex == 3 ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
+        SDL_SetTextureBlendMode(hd_tex[tex], tex >= 2 ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE); /* see create_textures */
     }
     static size_t have;
     size_t need = (size_t)VIDEO_LINE_MAX * SCREEN_H * k * k;
@@ -701,6 +703,11 @@ static void draw_screens(View *v) {
         float vw = (float)(main_w - 2 * main_guard), sx = ((float)main_guard + slide_x) * k, o = slide_y;
         screens[nshown] = screen;
         shown[nshown++] = (SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n};
+        if (still_on) { /* what holds still on screen (the prison bridge's sky): under the slid picture, not slid */
+            SDL_RenderTexture(ren, hd_k[2] ? (hd_k[4] == k ? hd_tex[4] : native[4]) : k > 1 ? smooth[4] : native[4],
+                              &(SDL_FRect){(float)main_guard * k, 0, vw * k, (float)SCREEN_H * k},
+                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n});
+        }
         float rows = SCREEN_H - SDL_fabsf(o), top = o < 0 ? -o : 0;
         SDL_RenderTexture(ren, t, &(SDL_FRect){sx, (o > 0 ? o : 0) * k, vw * k, rows * k},
                           &(SDL_FRect){(float)x * n, (top + y) * n, vw * n, rows * n});
@@ -736,7 +743,8 @@ static void list_shaders(void) {
     settings[SET_SHADER] = (Setting){"shader", "Shader", n + 1, v > 0 ? v : 0, shader_names, NULL};
 }
 
-/* The view's screen textures (the first count of top, bottom, main, party). */
+/* The view's screen textures (the first count of top, bottom, main, party, still). The main screen is opaque
+ * except where the still layer shows through it; the party and still layers are transparent elsewhere. */
 static int create_textures(View *v, int count) {
     for (int i = 0; i < count; i++) {
         int w = i >= 2 ? VIDEO_LINE_MAX : SCREEN_W;
@@ -747,9 +755,9 @@ static int create_textures(View *v, int count) {
         SDL_SetTextureScaleMode(v->native[i], SDL_SCALEMODE_NEAREST);
         SDL_SetTextureScaleMode(v->smooth[i], SDL_SCALEMODE_LINEAR);
     }
-    if (count > 3) {
-        SDL_SetTextureBlendMode(v->native[3], SDL_BLENDMODE_BLEND); /* the party layer is transparent elsewhere */
-        SDL_SetTextureBlendMode(v->smooth[3], SDL_BLENDMODE_BLEND);
+    for (int i = 2; i < count; i++) {
+        SDL_SetTextureBlendMode(v->native[i], SDL_BLENDMODE_BLEND);
+        SDL_SetTextureBlendMode(v->smooth[i], SDL_BLENDMODE_BLEND);
     }
     return 1;
 }
@@ -874,7 +882,7 @@ int display_init(void) {
     SDL_SetRenderVSync(ren, SETTING(SET_VSYNC));
     if (SETTING(SET_WINDOW) != WINDOW_WINDOWED) last_full = SETTING(SET_WINDOW);
     if (!force_windowed) apply_window_mode(win, SETTING(SET_WINDOW));
-    if (!create_textures(&primary, 4)) return 0;
+    if (!create_textures(&primary, 5)) return 0;
     if (SETTING(SET_SECOND)) {
         if (!open_second()) SETTING(SET_SECOND) = 0;
         resize_window();
@@ -882,8 +890,8 @@ int display_init(void) {
     return 1;
 }
 
-void display_frame(const uint32_t *const screens[3], const uint32_t *party, int width, int new_frame, float slide_dx,
-                   float slide_dy, const VideoHdFrame *hd) {
+void display_frame(const uint32_t *const screens[3], const uint32_t *party, const uint32_t *still, int width,
+                   int new_frame, float slide_dx, float slide_dy, const VideoHdFrame *hd) {
     /* A main screen of the margin asked for (plus guard) is the field: its guard columns are hidden. */
     main_guard = asked_guard && width == SCREEN_W + 2 * asked_margin ? asked_guard : 0;
     slide_x = main_guard ? slide_dx : 0;
@@ -895,6 +903,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, int 
     video_set_camera_smoothing(asked_guard != 0);
     main_w = width;
     party_on = main_guard && party;
+    still_on = main_guard && still;
     if (new_frame || reupload) {
         hd_frame = hd;
         int shown[3] = {0};
@@ -910,6 +919,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, int 
         }
         for (int i = 0; i < 3; i++) upload(at[i], i, screens[i], shown[i]);
         if (party_on) upload(&primary, 3, party, shown[2]);
+        if (still_on) upload(&primary, 4, still, shown[2]);
         hd_frame = NULL;
         reupload = 0;
     }
