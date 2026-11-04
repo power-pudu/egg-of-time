@@ -51,6 +51,8 @@ target_include_directories(rcheevos PUBLIC ${rcheevos_SOURCE_DIR}/include)
 # rc_client identifies the game by its hash; only cartridge hashes (the DS ROM's) are built.
 target_compile_definitions(rcheevos PUBLIC RC_CLIENT_SUPPORTS_HASH RC_HASH_NO_DISC RC_HASH_NO_ZIP RC_HASH_NO_ENCRYPTED)
 target_compile_options(rcheevos PRIVATE -w)
+# rcheevos calls POSIX strdup and strncasecmp, which glibc hides under strict -std=c11: gnu11 for it.
+set_target_properties(rcheevos PROPERTIES C_EXTENSIONS ON)
 if(WIN32)
     # rc_client's clock, mingw's clock_gettime, is in winpthreads: linked in statically, so no DLL beside the executable.
     target_link_libraries(rcheevos PUBLIC -l:libwinpthread.a)
