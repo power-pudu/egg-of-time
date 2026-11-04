@@ -251,8 +251,32 @@ void dma_trigger(int start_mode) {
 #define FRAME_HOLD_MAX 128u /* lines */
 static int game_waiting; /* the game thread is in rt_halt */
 
+/* Fast forward: the game waits for VBlank discarding any already raised (OS_WaitVBlankIntr), so a frame whose
+ * work is not done by line 192 loses the VBlank and a whole frame of game time. At 2x a frame has half the host
+ * time, and heavy frames (map columns streamed in while walking, events) overran: walking in fast forward went
+ * at 1.0-1.7x and felt slower than normal. Emulated time now holds at the end of line 191 while the game is still
+ * busy, for up to the host time a frame has at normal speed (FF_HOLD_MAX_NS), and the held time is dropped, not
+ * caught up: fast forward runs as fast as the host allows, up to its speed, and not below normal speed. */
+#define FF_HOLD_MAX_NS (SDL_NS_PER_SECOND / 60)
+static Uint64 ff_hold_since; /* host time the hold began (0: not holding) */
+
+static int ff_hold(uint64_t *now) {
+    uint64_t at = (line_done + 1) * RT_LINE_CYCLES; /* the start of the next line */
+    if (speed < 2 || game_waiting || line_phase != LINE_HBLANK || (line_done + 1) % RT_FRAME_LINES != 192 || *now < at) {
+        ff_hold_since = 0;
+        return 0;
+    }
+    Uint64 t = SDL_GetTicksNS();
+    if (!ff_hold_since) ff_hold_since = t;
+    if (t - ff_hold_since >= FF_HOLD_MAX_NS) return 0; /* the game never waited: go on (until the next frame) */
+    base_ns = t, base_cycles = at - 1; /* time stays here */
+    *now = at - 1;
+    return 1;
+}
+
 void sched_update(void) {
     uint64_t now = sched_now();
+    ff_hold(&now);
     uint64_t line = now / RT_LINE_CYCLES;
     if (line > line_done + RT_FRAME_LINES) { /* host stall: drop old lines */
         line_done = line - RT_FRAME_LINES;

@@ -583,6 +583,12 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
   forward beside the gate, none after). A frame also starts (line 0) only once the game waits for an interrupt
   (`rt_halt`), up to 128 lines late: in fast forward the game was sometimes still updating at line 0, and the
   frame showed half of it (sprites gone, the gate's OBJ window square). Held lines catch up after, so speed holds.
+  In fast forward the game also loses whole frames: it waits for VBlank discarding any already raised
+  (`OS_WaitVBlankIntr`), and a frame has half the host time, so heavy ones (map columns streamed in while walking)
+  were still busy at line 192 and skipped a VBlank; walking in fast forward went at 1.0-1.7x (prison corridor,
+  measured by the camera), slower than it felt at normal speed. Time now holds at the end of line 191 while the game
+  is busy (`ff_hold`), up to a normal-speed frame's host time (16.7 ms), and the held time is dropped: fast forward
+  runs as fast as the host allows up to 2x, never below 1x (the same walk: 1.9x in every run).
 - Audio: `EGG_MUTE=1` skips the audio device; `EGG_WAV=<file>` records the mixed output.
 - Debug environment variables: `EGG_LOG_IO=1` logs the first read/write of each I/O register; `EGG_LOG_FPS=1`
   logs window and game frames per second;
