@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "cheevos.h"
 #include "dispatch.h"
 #include "display.h"
 #include "rt.h"
@@ -81,6 +82,7 @@ int rt_console_mac_missing(void) {
 void rt_boot(CPU *cpu) {
     uint32_t arm9_off = rom32(0x20), arm9_entry = rom32(0x24), arm9_addr = rom32(0x28), arm9_size = rom32(0x2C);
     if ((uint64_t)arm9_off + arm9_size > rt_rom.size) rt_fatal(cpu, "ARM9 binary outside ROM");
+    cheevos_reset(); /* powered on again: achievements watch the new run */
 
     /* The firmware copies the cartridge header to 0x027FFE00 and the ARM9 binary (still compressed) to RAM. */
     for (uint32_t i = 0; i < 0x170; i++) rt_w8(0x027FFE00u + i, rt_rom.data[i]);

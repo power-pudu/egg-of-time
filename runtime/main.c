@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include "cheevos.h"
 #include "controls.h"
 #include "display.h"
 #include "game_build.h"
@@ -201,6 +202,7 @@ int main(int argc, char **argv) {
     if (!display_init()) return 1;
     controls_init();
     if (!game_build_prepare(argc > 1 ? argv[1] : NULL)) return 1; /* the ROM and the game code */
+    cheevos_init(); /* RetroAchievements: logs in with the saved login */
     if (display_setting_get(SET_MODS)) gfxmod_load(); /* graphics mods: into the ROM in memory, and HD art */
     spu_open_output();
 
@@ -257,6 +259,7 @@ int main(int argc, char **argv) {
             display_event(&e);
             if (e.type == SDL_EVENT_QUIT) running = 0;
             else if (controls_capture(&e)) continue; /* System Settings > Controls: rebinding */
+            else if (sysmenu_text_event(&e)) continue; /* System Settings > RetroAchievements: typing */
             else if (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
                      e.type == SDL_EVENT_MOUSE_WHEEL) {
                 mouse_used = SDL_GetTicks();
@@ -297,6 +300,7 @@ int main(int argc, char **argv) {
         } else {
             esc_since = 0;
         }
+        cheevos_poll();
         rt_keys = sysmenu_input(controls_read(pad) | (autok & ~AUTO_HOST));
         /* Fast forward (2x) while its key or button is held (default: Left Shift, the right trigger). */
         int ff = controls_fast_forward(pad) || (autok & AUTO_FF);

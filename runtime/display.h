@@ -24,6 +24,12 @@ void display_event(const SDL_Event *e);
 int display_touch(float wx, float wy, int *x, int *y);
 /* Shows text in the window's message box for ms milliseconds (replacing any current message). */
 void display_message(const char *text, unsigned ms);
+/* Shows a popup in the window's top right corner for ms milliseconds (replacing any current one), sliding in and out:
+ * an image (size pixels square, ABGR8888 with alpha; NULL: none) left of two lines of text, the first bright. */
+void display_popup(const uint32_t *image, int size, const char *line1, const char *line2, unsigned ms);
+/* Starts (1) or stops (0) text input in the main window: SDL_EVENT_TEXT_INPUT events, and the on-screen keyboard
+ * where the system has one. */
+void display_text_input(int on);
 /* Saves the next presented window as a BMP file. */
 void display_capture(const char *path);
 

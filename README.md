@@ -140,10 +140,25 @@ it with B or SELECT. Changes apply immediately and are saved in `eggoftime.ini`.
 two the USA release has) needs the game to restart: the menu asks whether to restart now (unsaved progress is
 lost) or keep the change for the next start.
 
-**Controls**, the last row, remaps the buttons: each DS button and fast forward has a keyboard key and a gamepad
+**Controls** remaps the buttons: each DS button and fast forward has a keyboard key and a gamepad
 button. Left/Right pick the column, A waits for the new key or button (Escape cancels). Choosing one that another
 button already uses swaps the two. The last row, Reset to defaults, restores the table below. The mapping is
 saved in `controls.ini`.
+
+### RetroAchievements
+
+Egg of Time supports [RetroAchievements](https://retroachievements.org): unlocks pop up in the window as
+you play, and your profile shows what you are doing. Log in under System Settings > **RetroAchievements**: A on Name
+or Password types it with the keyboard (Enter when done), then Log in. Without a keyboard, write
+
+```ini
+username = <your name>
+password = <your password>
+```
+
+into `retroachievements.ini`, beside `eggoftime.ini`: the next start logs in and replaces the password with a login token.
+Only the token is ever saved. Achievements count as softcore (save states and fast forward stay usable). Your ROM
+must be a dump the set knows; Egg of Time identifies it the way RetroAchievements' emulators do.
 
 ### Fast forward
 
@@ -232,6 +247,13 @@ For development, or to play on Linux and macOS.
     executable.
   - macOS: `brew install ffmpeg`.
   - Linux (Debian/Ubuntu): `libavformat-dev libavcodec-dev libswscale-dev libswresample-dev`.
+- libcurl, for RetroAchievements:
+  - Windows: `curl-*-win64-mingw.zip` from [curl.se/windows](https://curl.se/windows/), added to
+    `CMAKE_PREFIX_PATH`. The build copies its DLL next to the executable.
+  - macOS: the system's.
+  - Linux (Debian/Ubuntu): `libcurl4-openssl-dev`.
+
+  [rcheevos](https://github.com/RetroAchievements/rcheevos) is downloaded and built by CMake.
 - [ds-decomp (dsd) v0.12.1](https://github.com/AetiasHax/ds-decomp/releases), in `tools/dsd/` or on your `PATH`.
 - [xdelta3](https://github.com/jmacd/xdelta) only to bundle it in a release: `scripts/package.py --xdelta`
   puts it in `kit/xdelta3/` (the release workflow does).
@@ -249,10 +271,10 @@ For development, or to play on Linux and macOS.
 3. **Build.** The build generates the C code from `extract/` and `config/` (the dsd analysis, included in this
    repository), then compiles it. The first build takes a few minutes.
    - Linux / macOS: `scripts/build.sh` (output in `build/`).
-   - Windows (llvm-mingw, SDL3 zip, FFmpeg build):
+   - Windows (llvm-mingw, SDL3 zip, FFmpeg and curl builds):
 
      ```sh
-     cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang "-DCMAKE_PREFIX_PATH=<SDL3>/x86_64-w64-mingw32;<FFmpeg>"
+     cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang "-DCMAKE_PREFIX_PATH=<SDL3>/x86_64-w64-mingw32;<FFmpeg>;<curl>"
      cmake --build build
      ```
 
@@ -280,6 +302,7 @@ their own licenses. See [LICENSE.md](LICENSE.md).
 - [ds-decomp](https://github.com/AetiasHax/ds-decomp) and [dsd-ghidra](https://github.com/AetiasHax/dsd-ghidra)
   by AetiasHax, for the analysis the recompiler builds on.
 - [SDL3](https://libsdl.org), [FFmpeg](https://ffmpeg.org) (LGPL, linked dynamically),
+  [rcheevos](https://github.com/RetroAchievements/rcheevos) (MIT) and [curl](https://curl.se) for RetroAchievements,
   [minicoro](https://github.com/edubart/minicoro) (bundled in `runtime/third_party/`, under its own license),
   [xdelta3](https://github.com/jmacd/xdelta) (Apache 2.0, bundled in release kits for xdelta translation
   patches), [Capstone](https://www.capstone-engine.org), and [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)

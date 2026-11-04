@@ -3,7 +3,8 @@
 The release holds no game code or data: runtime/game_build.c makes the game library from the player's ROM with
 the tools in kit/ (see DESIGN.md, "Release builds"). This script copies
 
-  <build>/Egg of Time.exe, SDL3 and FFmpeg DLLs, mods/   the runtime (a build with -DEGG_RUNTIME_ONLY=OFF or ON)
+  <build>/Egg of Time.exe, SDL3, FFmpeg and libcurl DLLs,  the runtime (a build with -DEGG_RUNTIME_ONLY=OFF or ON)
+  mods/
   librashader.dll (--librashader)                         librashader, which runs Slang shader mods
   kit/lib/libeggoftime.a                                  its import library, which the game library links against
   kit/include, kit/recomp, kit/config                     the recompiler and its inputs (runtime/recomp.h, dispatch.h)
@@ -16,17 +17,18 @@ the tools in kit/ (see DESIGN.md, "Release builds"). This script copies
 and writes kit/kit.id, a hash of what decides the generated code, so a release with other code rebuilds it.
 
 The Linux release (made on Linux) holds "Egg of Time" (SDL3 linked in statically), the FFmpeg shared libraries it
-finds next to itself (RPATH $ORIGIN), kit/include, kit/recomp, kit/config and kit/dsd: the player's python3 and C
+finds next to itself (RPATH $ORIGIN; libcurl is the system's), kit/include, kit/recomp, kit/config and kit/dsd: the player's python3 and C
 compiler do the rest, and the game library needs no import library. It is a .tar.gz, which keeps the executable bits,
 and (--appimage) the same files as an AppImage: AppRun, a .desktop file and the icon added, packed by appimagetool
 with the given type 2 runtime. The AppImage is read-only, so there the runtime keeps its data in
 ~/.local/share/EggOfTime/ (rt_data_dir, runtime/main.c).
 
 Usage: python -I scripts/package.py --build <dir> --llvm <llvm-mingw dir> --python-embed <python-*-embed-amd64.zip>
-           --dsd <dsd.exe> --dsd-license <file> --sdl <SDL3 dir> --ffmpeg <FFmpeg dir> --out <dir> [--zip <file>]
+           --dsd <dsd.exe> --dsd-license <file> --sdl <SDL3 dir> --ffmpeg <FFmpeg dir> --curl <curl dir>
+           --rcheevos <rcheevos source dir> --out <dir> [--zip <file>]
            [--xdelta <xdelta3.exe> --xdelta-license <file>] [--librashader <dll> --librashader-license <file>]
        python3 -I scripts/package.py --build <dir> --dsd <dsd> --dsd-license <file> --sdl <SDL3 source dir>
-           --ffmpeg <FFmpeg shared build dir> --out <dir> [--tar <file.tar.gz>] [--xdelta <xdelta3> --xdelta-license <file>]
+           --ffmpeg <FFmpeg shared build dir> --rcheevos <rcheevos source dir> --out <dir> [--tar <file.tar.gz>] [--xdelta <xdelta3> --xdelta-license <file>]
            [--appimage <file.AppImage> --appimagetool <appimagetool> --appimage-runtime <runtime-x86_64>]
            [--librashader <librashader.so> --librashader-license <file>]
 """
@@ -155,9 +157,9 @@ def kit_id(kit):
 
 def main():
     ap = argparse.ArgumentParser()
-    for a in ("build", "dsd", "dsd-license", "sdl", "ffmpeg", "out"):
+    for a in ("build", "dsd", "dsd-license", "sdl", "ffmpeg", "rcheevos", "out"):
         ap.add_argument("--" + a, required=True)
-    for a in ("llvm", "python-embed"):
+    for a in ("llvm", "python-embed", "curl"):
         ap.add_argument("--" + a, required=WINDOWS)
     ap.add_argument("--xdelta")
     ap.add_argument("--xdelta-license")
@@ -176,7 +178,7 @@ def main():
     # The runtime.
     exe = "Egg of Time.exe" if WINDOWS else "Egg of Time"
     if WINDOWS:
-        for pattern in (exe, "SDL3.dll", "av*.dll", "sw*.dll"):
+        for pattern in (exe, "SDL3.dll", "av*.dll", "sw*.dll", "libcurl*.dll"):
             for f in glob.glob(os.path.join(args.build, pattern)):
                 copy(f, os.path.join(out, os.path.basename(f)))
     else:
@@ -229,11 +231,13 @@ def main():
             copy(os.path.join(args.llvm, rel), os.path.join(kit, "llvm", rel))
         copy(os.path.join(args.llvm, "LICENSE.TXT"), os.path.join(lic, "llvm-mingw.txt"))
         copy(os.path.join(kit, "python", "LICENSE.txt"), os.path.join(lic, "python.txt"))
+        copy(os.path.join(args.curl, "COPYING.txt"), os.path.join(lic, "curl.txt"))
     else:
         os.chmod(os.path.join(kit, "dsd", "dsd"), 0o755)
     copy(args.dsd_license, os.path.join(lic, "dsd.txt"))
     copy(os.path.join(args.sdl, "LICENSE.txt"), os.path.join(lic, "SDL3.txt"))
     copy(os.path.join(args.ffmpeg, "LICENSE.txt"), os.path.join(lic, "FFmpeg.txt"))
+    copy(os.path.join(args.rcheevos, "LICENSE"), os.path.join(lic, "rcheevos.txt"))
     if args.librashader_license:
         copy(args.librashader_license, os.path.join(lic, "librashader.txt"))
 

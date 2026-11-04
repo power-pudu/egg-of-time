@@ -10,6 +10,8 @@
  * Optional blocks come last: a state saved before they existed ends before them and loads without them.
  * Saving waits for a poll where every thread can be described this way (normally within a frame). */
 #include <stdio.h>
+
+#include "cheevos.h"
 #include <stdlib.h>
 
 #include "rt.h"
@@ -144,4 +146,5 @@ void rt_state_poll(CPU *cpu) {
 void rt_state_apply_requested(void) {
     if (!run(rt_state_load_path, MODE_APPLY)) rt_fatal(NULL, "state: loading %s failed after checking it", rt_state_load_path);
     rt_log("state: loaded %s (frame %llu)", rt_state_load_path, (unsigned long long)rt_frame_count);
+    cheevos_reset();
 }

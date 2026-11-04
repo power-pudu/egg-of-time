@@ -36,6 +36,9 @@ patch is applied to your ROM when the game is built, in memory: rom/CT.nds stays
 dump. Patches made for Chrono Trigger (Japan) or (Europe) work too, with your dump of that version
 beside them. RetroArch shaders go in mods/shaders/glsl (.glslp, .glsl) and mods/shaders/slang
 (.slangp, .slang), and are chosen in System Settings > Shader.
+RetroAchievements: log in under System Settings > RetroAchievements, or write "username = <name>"
+and "password = <password>" into retroachievements.ini, beside eggoftime.ini: the next start logs
+in and keeps only a login token. Achievements count as softcore.
 System Settings > Dump graphics saves the game's sprites, backgrounds and text fonts as PNG files
 in mods/graphics/dump, for making graphics mods: edited copies in mods/graphics replace them, at the
 original size or in HD (see the readme there).

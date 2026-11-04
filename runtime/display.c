@@ -41,6 +41,7 @@
 #include "rt.h"
 #include "shader.h"
 #include "single_screen.h"
+#include "ui_font.h"
 #include "video.h"
 
 #define WINDOW_SCALE 3
@@ -155,10 +156,23 @@ static char ini_path[1024];
 static char capture_path[1024]; /* save the next presented window here (bring-up aid) */
 static char message[64];
 static Uint64 message_until;
+/* The popup (display_popup): drawn into popup_px with the runtime's pixel font, shown scaled like the message box. */
+#define POPUP_W 200
+#define POPUP_H 41
+#define POPUP_SLIDE_MS 250
+static uint32_t popup_px[POPUP_W * POPUP_H];
+static int popup_w, popup_dirty;
+static Uint64 popup_from, popup_until;
+static SDL_Texture *popup_tex;
 
 static void show_message(const char *fmt, const char *arg) {
     snprintf(message, sizeof message, fmt, arg);
     message_until = SDL_GetTicks() + MESSAGE_MS;
+}
+
+void display_text_input(int on) {
+    if (on) SDL_StartTextInput(primary.win);
+    else SDL_StopTextInput(primary.win);
 }
 
 void display_message(const char *text, unsigned ms) {
@@ -181,6 +195,61 @@ static void draw_message(void) {
     SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
     SDL_RenderDebugText(ren, 8, 8, message);
     SDL_SetRenderScale(ren, 1, 1);
+}
+
+void display_popup(const uint32_t *image, int size, const char *line1, const char *line2, unsigned ms) {
+    enum { PAD = 6, GAP = 6 };
+    size = image ? SDL_min(size, POPUP_H - 2 * PAD) : 0;
+    int tx = PAD + (size ? size + GAP : 0), tw = POPUP_W - tx - PAD;
+    char a[128], b[128];
+    snprintf(a, sizeof a, "%s", line1);
+    snprintf(b, sizeof b, "%s", line2);
+    for (char *t = a; ui_text_width(t) > tw;) t[strlen(t) - 1] = 0; /* cut to the widest popup */
+    for (char *t = b; ui_text_width(t) > tw;) t[strlen(t) - 1] = 0;
+    popup_w = tx + SDL_max(ui_text_width(a), ui_text_width(b)) + PAD;
+    for (int y = 0; y < POPUP_H; y++) { /* a dark translucent panel with a light rim and a teal line at the top */
+        for (int x = 0; x < popup_w; x++) {
+            int rim = x == 0 || y == 0 || x == popup_w - 1 || y == POPUP_H - 1;
+            popup_px[y * popup_w + x] = y < 2 ? 0xFFADC618u : rim ? 0xF0707070u : 0xE0201C18u;
+        }
+    }
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            uint32_t c = image[y * size + x], *d = &popup_px[(PAD + 1 + y) * popup_w + PAD + x], al = c >> 24, out = 0;
+            for (int k = 0; k < 32; k += 8) out |= (((c >> k & 0xFF) * al + (*d >> k & 0xFF) * (255 - al)) / 255) << k;
+            *d = out | 0xFF000000u;
+        }
+    }
+    ui_draw_text_in(popup_px, popup_w, a, tx, 10, 0xFFFFFFFFu);
+    ui_draw_text_in(popup_px, popup_w, b, tx, 23, 0xFFB0B0B0u);
+    popup_from = SDL_GetTicks();
+    popup_until = popup_from + ms;
+    popup_dirty = 1;
+}
+
+/* The popup, top right, scaled as the message box is, sliding in from the right edge and back out. */
+static void draw_popup(void) {
+    Uint64 now = SDL_GetTicks();
+    if (!popup_w || now >= popup_until) return;
+    SDL_Renderer *ren = primary.ren;
+    if (!popup_tex) {
+        popup_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, POPUP_W, POPUP_H);
+        if (!popup_tex) return;
+        SDL_SetTextureBlendMode(popup_tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(popup_tex, SDL_SCALEMODE_NEAREST);
+    }
+    if (popup_dirty) {
+        SDL_UpdateTexture(popup_tex, &(SDL_Rect){0, 0, popup_w, POPUP_H}, popup_px, popup_w * 4);
+        popup_dirty = 0;
+    }
+    int ww, wh;
+    SDL_GetRenderOutputSize(ren, &ww, &wh);
+    float k = SDL_max(2.0f, SDL_floorf(wh / 270.0f)), w = popup_w * k;
+    Uint64 edge = SDL_min(now - popup_from, popup_until - now); /* ms from the nearer end */
+    float in = edge >= POPUP_SLIDE_MS ? 1.0f : (float)edge / POPUP_SLIDE_MS;
+    in = 1 - (1 - in) * (1 - in); /* eased */
+    SDL_FRect dst = {ww - (4 * k + w) * in, 4 * k, w, POPUP_H * k};
+    SDL_RenderTexture(ren, popup_tex, &(SDL_FRect){0, 0, (float)popup_w, POPUP_H}, &dst);
 }
 
 static int lookup(const char *const *names, int n, const char *v) {
@@ -850,6 +919,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, int 
     int movie = movie_draw(ren);
     if (!movie) draw_screens(&primary);
     draw_message();
+    draw_popup();
     if (capture_path[0]) {
         SDL_Surface *shot = SDL_RenderReadPixels(ren, NULL);
         if (shot) {

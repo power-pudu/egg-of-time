@@ -12,7 +12,13 @@
  * while; Yes starts the dump on its own thread. While it runs, the menu shows its progress and the time left (from
  * the pace so far); the menu can be closed meanwhile, and the message box says when the dump is done.
  *
- * A on the last row, Controls, opens the button mapping: a row per DS button and fast forward, with its keyboard
+ * A on RetroAchievements opens its login page (cheevos.c): the player's name and password, typed with the keyboard
+ * (or the system's on-screen keyboard) after A on their row, Enter or Esc ending the typing, and Log in; once logged
+ * in, the name, Log out and the game's achievements, unlocked ones first, each with its badge (cheevos_badge, blank
+ * while it downloads), title, points and description; Left/Right turn a page. The password shows as stars and is
+ * forgotten once sent. B or SELECT goes back.
+ *
+ * A on Controls opens the button mapping: a row per DS button and fast forward, with its keyboard
  * key and gamepad button. Left/Right pick the key or the button, A waits for the new one (controls_capture), a
  * last row restores the defaults; B or SELECT goes back to the settings. After a rebinding, input is kept from
  * the menu until every key is released, so the new key does not act on the menu.
@@ -22,6 +28,7 @@
  * highlighted row's label lit and its value framed in the game's cursor teal. */
 #include <SDL3/SDL.h>
 
+#include "cheevos.h"
 #include "controls.h"
 #include "display.h"
 #include "gfx_dump.h"
@@ -36,9 +43,13 @@
 #define RESUME_MS 100 /* START held for the game after closing from the pause */
 
 #define ROW_CONTROLS SET_COUNT /* after the display settings */
-#define ROW_DUMP (SET_COUNT + 1)
-#define ROW_COUNT (SET_COUNT + 2)
+#define ROW_CHEEVOS (SET_COUNT + 1)
+#define ROW_DUMP (SET_COUNT + 2)
+#define ROW_COUNT (SET_COUNT + 3)
 #define ROW_RESET CTL_COUNT /* the Controls page's last row */
+#define ROWS_SHOWN 8        /* between the header and the footer */
+#define CH_SLOT 2           /* rows an achievement takes on the RetroAchievements page */
+#define CH_PAGE (ROWS_SHOWN / CH_SLOT - 1)
 
 static const char *const descriptions[ROW_COUNT] = {
     [SET_LANGUAGE] = "Game text. Applies at the next start.",
@@ -56,6 +67,7 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_FF_MUSIC] = "Normal speed may delay music cues.",
     [SET_FF_SOUND] = "Music only mutes sound effects.",
     [ROW_CONTROLS] = "Keyboard keys and gamepad buttons.",
+    [ROW_CHEEVOS] = "Achievements of retroachievements.org.",
     [ROW_DUMP] = "Saves the graphics for mods, as PNG.",
 };
 
@@ -67,7 +79,10 @@ static int top;           /* the first row shown (rows: the shown settings, in o
 static int confirm, yes;  /* the question open (CONFIRM_*); Yes is chosen */
 static Uint64 dump_since; /* when the graphics dump started */
 static int controls_page, ctl_cursor, ctl_pad, ctl_top; /* ctl_pad: the gamepad column is chosen */
-static int released_wait; /* a rebinding ended: the menu ignores input until every key is released */
+static int cheevos_page, ch_cursor, ch_top; /* the RetroAchievements page, its row and the first row shown */
+static int typing;                  /* the text field typed in (CH_NAME, CH_PASSWORD; 0: none) */
+static char ch_name[64], ch_password[256];
+static int released_wait; /* a rebinding or typing ended: the menu ignores input until every key is released */
 static uint32_t prev_keys, blocked; /* blocked: held since the menu closed, kept from the game until released */
 static Uint64 repeat_at, resume_until;
 
@@ -88,13 +103,96 @@ static void controls_input(uint32_t act) {
     }
 }
 
+/* The RetroAchievements page's rows: name, password and Log in, or, logged in, the name and Log out. */
+enum { CH_NAME = 1, CH_PASSWORD, CH_LOGIN, CH_LOGOUT };
+static int ch_rows(int *rows) {
+    int n = 0;
+    rows[n++] = CH_NAME;
+    if (cheevos_state() == CHEEVOS_LOGGED_IN) {
+        rows[n++] = CH_LOGOUT;
+    } else {
+        rows[n++] = CH_PASSWORD;
+        rows[n++] = CH_LOGIN;
+    }
+    return n;
+}
+
+/* The page's rows: ch_rows', then, logged in, the game's achievements (*items, from row *fixed on). */
+static int ch_total(int *rows, int *fixed, const CheevosItem **items) {
+    *fixed = ch_rows(rows);
+    *items = NULL;
+    return *fixed + (cheevos_state() == CHEEVOS_LOGGED_IN ? cheevos_list(items) : 0);
+}
+
+static void typing_end(void) {
+    if (!typing) return;
+    if (typing == CH_NAME) ch_cursor = 1; /* on to the password */
+    typing = 0;
+    display_text_input(0);
+    released_wait = 1;
+}
+
+int sysmenu_text_event(const SDL_Event *e) {
+    if (!typing) return 0;
+    char *text = typing == CH_NAME ? ch_name : ch_password;
+    size_t size = typing == CH_NAME ? sizeof ch_name : sizeof ch_password, len = SDL_strlen(text);
+    switch (e->type) {
+    case SDL_EVENT_TEXT_INPUT:
+        if (len + SDL_strlen(e->text.text) < size) SDL_strlcat(text, e->text.text, size);
+        return 1;
+    case SDL_EVENT_KEY_DOWN:
+        if (e->key.scancode == SDL_SCANCODE_BACKSPACE) {
+            while (len && (text[--len] & 0xC0) == 0x80) {} /* a whole UTF-8 character */
+            text[len] = 0;
+        } else if (e->key.scancode == SDL_SCANCODE_RETURN || e->key.scancode == SDL_SCANCODE_KP_ENTER ||
+                   e->key.scancode == SDL_SCANCODE_ESCAPE || e->key.scancode == SDL_SCANCODE_TAB) {
+            typing_end();
+        }
+        return 1;
+    case SDL_EVENT_KEY_UP: return 1;
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: typing_end(); return 1;
+    default: return 0;
+    }
+}
+
+static void cheevos_input(uint32_t act) {
+    int rows[3], fixed;
+    const CheevosItem *items;
+    int n = ch_total(rows, &fixed, &items);
+    ch_cursor = SDL_min(ch_cursor, n - 1); /* the rows change with logging in and out */
+    if (act & (KEY_B | KEY_SELECT)) cheevos_page = 0;
+    if (act & KEY_UP) ch_cursor = (ch_cursor + n - 1) % n;
+    if (act & KEY_DOWN) ch_cursor = (ch_cursor + 1) % n;
+    if (act & KEY_LEFT) ch_cursor = SDL_max(ch_cursor - CH_PAGE, 0); /* a page up or down the list */
+    if (act & KEY_RIGHT) ch_cursor = SDL_min(ch_cursor + CH_PAGE, n - 1);
+    if (!(act & KEY_A) || ch_cursor >= fixed || cheevos_state() == CHEEVOS_LOGGING_IN) return;
+    switch (rows[ch_cursor]) {
+    case CH_NAME:
+        if (cheevos_state() == CHEEVOS_LOGGED_OUT) typing = CH_NAME, display_text_input(1);
+        break;
+    case CH_PASSWORD: typing = CH_PASSWORD, display_text_input(1); break;
+    case CH_LOGIN:
+        if (!ch_name[0] || !ch_password[0]) {
+            display_message("RetroAchievements: type your name and password", 2500);
+            break;
+        }
+        cheevos_login(ch_name, ch_password);
+        SDL_memset(ch_password, 0, sizeof ch_password);
+        break;
+    case CH_LOGOUT:
+        cheevos_logout();
+        ch_cursor = 0;
+        break;
+    }
+}
+
 static uint32_t input(uint32_t keys) {
     uint32_t pressed = keys & ~prev_keys;
     Uint64 now = SDL_GetTicks();
     prev_keys = keys;
     if (place == SS_MENU_NONE) {
         if ((pressed & KEY_SELECT) && (place = ss_menu_place()) != SS_MENU_NONE) {
-            cursor = top = confirm = controls_page = 0;
+            cursor = top = confirm = controls_page = cheevos_page = 0;
             return 0;
         }
         blocked &= keys;
@@ -108,6 +206,10 @@ static uint32_t input(uint32_t keys) {
         repeat_at = now + REPEAT_MS;
     }
     int left = ss_menu_place() != place; /* the game moved on */
+    if (typing) {
+        if (!left) return 0;
+        typing_end();
+    }
     if (controls_capturing()) {
         if (!left) {
             released_wait = 1;
@@ -141,6 +243,10 @@ static uint32_t input(uint32_t keys) {
         controls_input(act);
         return 0;
     }
+    if (cheevos_page && !left) {
+        cheevos_input(act);
+        return 0;
+    }
     if ((act & (KEY_B | KEY_SELECT)) || left) {
         if (place == SS_MENU_PAUSE && !left) resume_until = now + RESUME_MS;
         place = SS_MENU_NONE;
@@ -152,6 +258,8 @@ static uint32_t input(uint32_t keys) {
     if (act & KEY_DOWN) do cursor = (cursor + 1) % ROW_COUNT; while (!row_shown(cursor));
     if (cursor == ROW_CONTROLS) {
         if (act & KEY_A) controls_page = 1, ctl_cursor = ctl_pad = ctl_top = 0;
+    } else if (cursor == ROW_CHEEVOS) {
+        if (act & KEY_A) cheevos_page = 1, ch_cursor = ch_top = 0;
     } else if (cursor == ROW_DUMP) {
         if ((act & KEY_A) && !gfxdump_running()) confirm = CONFIRM_DUMP, yes = 0;
     } else if (act & (KEY_LEFT | KEY_RIGHT)) {
@@ -252,7 +360,6 @@ static void b_sign(uint32_t *s, int cx, int cy) {
 #define ROW_Y 27
 #define ROW_PITCH 17
 #define ROW_H 16
-#define ROWS_SHOWN 8 /* between the header and the footer */
 
 /* A small arrow in the header's right end: up (dir -1) or down (+1), lit when more rows lie that way. */
 static void scroll_arrow(uint32_t *s, int dir, int lit) {
@@ -286,9 +393,11 @@ static void centered(uint32_t *s, const char *text, Rect r, uint32_t color) {
     ui_draw_text(s, text, r.x + (r.w - ui_text_width(text)) / 2, r.y + 4, color);
 }
 
-/* A row's label and value: a display setting's, or an action's (Controls, Dump graphics). */
+/* A row's label and value: a display setting's, or an action's (Controls, RetroAchievements, Dump graphics). */
 static const char *row_title(int i) {
-    return i == ROW_CONTROLS ? "Controls" : i == ROW_DUMP ? "Dump graphics" : display_setting_title(i);
+    if (i == ROW_CONTROLS) return "Controls";
+    if (i == ROW_CHEEVOS) return "RetroAchievements";
+    return i == ROW_DUMP ? "Dump graphics" : display_setting_title(i);
 }
 
 static const char *row_value(int i, int w) {
@@ -296,6 +405,10 @@ static const char *row_value(int i, int w) {
     int done, total;
     float share;
     if (i == ROW_CONTROLS) return "A: change";
+    if (i == ROW_CHEEVOS) {
+        int st = cheevos_state();
+        return st == CHEEVOS_LOGGED_IN ? fit(cheevos_user(), w) : st == CHEEVOS_LOGGING_IN ? "Logging in..." : "A: log in";
+    }
     if (i != ROW_DUMP) return fit(display_setting_label(i, display_setting_get(i)), w);
     if (!gfxdump_running()) return "A: dump";
     gfxdump_progress(&done, &total, &share);
@@ -366,6 +479,155 @@ static void draw_controls(uint32_t *s) {
     }
 }
 
+/* A text field's value: the text (the password as stars), with a cursor while typed in, else a hint. */
+static const char *field_value(int row, int w) {
+    static char buf[80];
+    const char *text = row == CH_NAME ? ch_name : ch_password;
+    if (row == CH_NAME && cheevos_state() == CHEEVOS_LOGGED_IN) return fit(cheevos_user(), w);
+    if (!text[0] && typing != row) return "A: type";
+    size_t n = 0;
+    if (row == CH_PASSWORD) {
+        for (const char *p = text; *p && n < 40; p++) {
+            if ((*p & 0xC0) != 0x80) buf[n++] = '*';
+        }
+        buf[n] = 0;
+    } else {
+        SDL_strlcpy(buf, text, sizeof buf - 1);
+        n = SDL_strlen(buf);
+    }
+    if (typing != row) return fit(buf, w);
+    buf[n] = '_', buf[n + 1] = 0;
+    const char *v = buf; /* while typing, the end of the text stays in view */
+    while (*v && ui_text_width(v) > w) v++;
+    return v;
+}
+
+/* text in at most two lines w pixels wide from (x, y), broken between words, the second cut with ".." if too long. */
+static void draw_lines(uint32_t *s, const char *text, int x, int y, int w, uint32_t color) {
+    if (ui_text_width(text) <= w) {
+        ui_draw_text(s, text, x, y, color);
+        return;
+    }
+    char line[256];
+    size_t len = SDL_strlcpy(line, text, sizeof line), cut = 0;
+    for (size_t i = 1; i < len && i < sizeof line - 1; i++) { /* the longest first line ending before a space */
+        if (line[i] != ' ') continue;
+        line[i] = 0;
+        int fits = ui_text_width(line) <= w;
+        line[i] = ' ';
+        if (!fits) break;
+        cut = i;
+    }
+    if (!cut) {
+        ui_draw_text(s, fit(text, w), x, y, color);
+        return;
+    }
+    line[cut] = 0;
+    ui_draw_text(s, line, x, y, color);
+    ui_draw_text(s, fit(line + cut + 1, w), x, y + 10, color);
+}
+
+/* An achievement's slot: its badge (coloured once unlocked, greyed before), the title with its points or, locked,
+ * how far along it is, and the description below. */
+static void draw_achievement(uint32_t *s, const CheevosItem *a, int y, int sel) {
+    Rect b = {6, y, 244, CH_SLOT * ROW_PITCH - 1};
+    panel(s, b, sel ? &BUTTON_LIT : &BUTTON);
+    if (sel) frame(s, b, TEAL);
+    Rect img = {b.x + 3, y + 2, CHEEVOS_BADGE, CHEEVOS_BADGE};
+    const uint32_t *badge = cheevos_badge(a->image_url);
+    for (int py = 0; py < img.h; py++) {
+        for (int px = 0; px < img.w; px++) {
+            uint32_t *d = &s[(img.y + py) * SCREEN_W + img.x + px], c = badge ? badge[py * img.w + px] : 0xFF101010u;
+            uint32_t al = c >> 24, out = 0xFF000000u;
+            for (int k = 0; k < 24; k += 8) { /* over the panel by the badge's alpha */
+                out |= (((c >> k & 0xFF) * al + (*d >> k & 0xFF) * (255 - al)) / 255) << k;
+            }
+            *d = out;
+        }
+    }
+    char right[32];
+    if (a->progress[0]) SDL_snprintf(right, sizeof right, "%s", a->progress);
+    else SDL_snprintf(right, sizeof right, "%u %s", a->points, a->points == 1 ? "pt" : "pts");
+    int tx = img.x + img.w + 5, tw = b.x + b.w - 6 - tx, rw = ui_text_width(right);
+    uint32_t color = a->unlocked ? (sel ? YELLOW : WHITE) : (sel ? WHITE : GREY);
+    ui_draw_text(s, fit(a->title, tw - rw - 6), tx, y + 3, color);
+    ui_draw_text(s, right, tx + tw - rw, y + 3, color);
+    draw_lines(s, a->description, tx, y + 14, tw, sel ? WHITE : GREY);
+}
+
+/* Rows an entry of the RetroAchievements page takes. */
+static int ch_height(int r, int fixed) { return r < fixed ? 1 : CH_SLOT; }
+
+/* Keeps the chosen entry of n in view of ROWS_SHOWN rows from ch_top, and lights the header's arrows. */
+static void ch_scroll(uint32_t *s, int n, int fixed) {
+    int used = 0;
+    ch_top = SDL_min(ch_top, ch_cursor);
+    for (int r = ch_top; r <= ch_cursor; r++) used += ch_height(r, fixed);
+    for (; used > ROWS_SHOWN; ch_top++) used -= ch_height(ch_top, fixed);
+    for (int r = ch_cursor + 1; r < n; r++) used += ch_height(r, fixed);
+    if (ch_top > 0 || used > ROWS_SHOWN) scroll_arrow(s, -1, ch_top > 0), scroll_arrow(s, 1, used > ROWS_SHOWN);
+}
+
+static void draw_cheevos(uint32_t *s) {
+    int rows[3], fixed;
+    const CheevosItem *items;
+    int n = ch_total(rows, &fixed, &items), unlocked = 0;
+    char title[48] = "RetroAchievements";
+    for (int i = 0; i < n - fixed; i++) unlocked += items[i].unlocked;
+    if (n > fixed) SDL_snprintf(title, sizeof title, "Achievements: %d of %d", unlocked, n - fixed);
+    ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
+    ch_cursor = SDL_min(ch_cursor, n - 1);
+    ch_scroll(s, n, fixed);
+    for (int r = ch_top, used = 0; r < n && used + ch_height(r, fixed) <= ROWS_SHOWN; used += ch_height(r++, fixed)) {
+        int y = ROW_Y + used * ROW_PITCH, sel = r == ch_cursor;
+        if (r >= fixed) {
+            draw_achievement(s, &items[r - fixed], y, sel);
+            continue;
+        }
+        if (rows[r] == CH_LOGIN || rows[r] == CH_LOGOUT) {
+            Rect b = {6, y, 244, ROW_H};
+            panel(s, b, sel ? &BUTTON_LIT : &BUTTON);
+            if (sel) frame(s, b, TEAL);
+            const char *label = rows[r] == CH_LOGOUT                       ? "Log out"
+                                : cheevos_state() == CHEEVOS_LOGGING_IN ? "Logging in..."
+                                                                        : "Log in";
+            centered(s, label, b, sel ? WHITE : GREY);
+            continue;
+        }
+        Rect lr = {6, y, 112, ROW_H}, vr = {122, y, 128, ROW_H};
+        panel(s, lr, sel ? &BUTTON_LIT : &BUTTON);
+        panel(s, vr, &BUTTON);
+        if (sel) frame(s, vr, TEAL);
+        const char *label = rows[r] == CH_PASSWORD ? "Password" : cheevos_state() == CHEEVOS_LOGGED_IN ? "Player" : "Name";
+        ui_draw_text(s, label, lr.x + 6, y + 4, sel ? WHITE : GREY);
+        const char *v = field_value(rows[r], vr.w - 12);
+        ui_draw_text(s, v, vr.x + (vr.w - ui_text_width(v)) / 2, y + 4, sel ? YELLOW : WHITE);
+    }
+}
+
+static const char *cheevos_footer(void) {
+    int rows[3], fixed;
+    const CheevosItem *items;
+    ch_total(rows, &fixed, &items);
+    if (typing) return "Type, then Enter.";
+    if (cheevos_state() == CHEEVOS_LOGGING_IN) return "Logging in...";
+    if (ch_cursor >= fixed) {
+        const CheevosItem *a = &items[ch_cursor - fixed];
+        static char buf[64];
+        if (a->unlocked) return "Unlocked.";
+        if (!a->progress[0]) return "Not unlocked yet.";
+        SDL_snprintf(buf, sizeof buf, "Not unlocked yet: %s so far.", a->progress);
+        return buf;
+    }
+    switch (rows[ch_cursor]) {
+    case CH_NAME:
+        return cheevos_state() == CHEEVOS_LOGGED_IN ? "Achievements unlock as you play." : "Your retroachievements.org name.";
+    case CH_PASSWORD: return "Only a login token is saved.";
+    case CH_LOGIN: return "No keyboard? See retroachievements.ini";
+    default: return "A: log out.";
+    }
+}
+
 void sysmenu_draw(uint32_t *s) {
     for (int y = 0; y < SCREEN_H; y++) { /* backdrop: the game's brushed dark stripes */
         for (int x = 0; x < SCREEN_W; x++) s[y * SCREEN_W + x] = (y & 1) ? rgb(24, 24, 24) : rgb(16, 16, 16);
@@ -373,6 +635,8 @@ void sysmenu_draw(uint32_t *s) {
     panel(s, (Rect){0, 0, 256, 24}, &BAR);
     if (controls_page) {
         draw_controls(s);
+    } else if (cheevos_page) {
+        draw_cheevos(s);
     } else {
         const char *title = "System Settings";
         ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
@@ -401,11 +665,12 @@ void sysmenu_draw(uint32_t *s) {
     const char *footer = descriptions[cursor];
     if (cursor == SET_SHADER && display_shader_path()) footer = fit(display_shader_path(), 208);
     if (confirm) footer = "A: confirm.  B: not now.";
-    else if (gfxdump_running() && !controls_page) footer = "Closing the menu leaves it running.";
+    else if (gfxdump_running() && !controls_page && !cheevos_page) footer = "Closing the menu leaves it running.";
     else if (controls_page && controls_capturing()) footer = ctl_pad ? "Press a gamepad button. Esc: cancel." : "Press a key. Esc: cancel.";
     else if (controls_page) footer = ctl_cursor == ROW_RESET ? "A: restore the default controls." : "A: change.  Left/Right: key or pad.";
+    else if (cheevos_page) footer = cheevos_footer();
     panel(s, (Rect){0, 166, 222, 26}, &BAR);
-    ui_draw_text(s, footer, 8, 175, WHITE);
+    draw_lines(s, footer, 8, ui_text_width(footer) <= 208 ? 175 : 170, 208, WHITE);
     panel(s, (Rect){224, 166, 32, 26}, &BAR);
     b_sign(s, 240, 179);
     if (confirm) {
@@ -422,7 +687,7 @@ void sysmenu_draw(uint32_t *s) {
             const char *label = i == 0 ? "Yes" : "No";
             ui_draw_text(s, label, b.x + (b.w - ui_text_width(label)) / 2, b.y + 6, sel ? WHITE : GREY);
         }
-    } else if (gfxdump_running() && !controls_page) {
+    } else if (gfxdump_running() && !controls_page && !cheevos_page) {
         draw_dump_progress(s);
     }
 }

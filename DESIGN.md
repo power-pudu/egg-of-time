@@ -439,6 +439,20 @@ original bytes, and caches the result per region until the region is written.
   records, controls by their distance from the glyph count. Glyphs the USA font lacks (Portuguese ã, õ, ...) are
   drawn over glyphs no USA text uses, so the glyph count and the control codes stay put. Changed files go past the
   last file in the ROM, the FAT points at them; the header and code are untouched.
+- **RetroAchievements** (`runtime/cheevos.c`): rcheevos' `rc_client` (v12.5.0, fetched and built by CMake as a
+  static library, cartridge hashes only) with libcurl for its server calls, each on a detached thread of its own.
+  `rc_client_do_frame` runs on the game thread at VBlank (`sched.c`), so achievements read memory between frames;
+  background reads are off. rcheevos' DS addresses map to main RAM (0) and DTCM (0x1000000). The game is
+  identified by rcheevos' hash of the ROM file (`rt_rom.path`, unmodified by mods). Softcore only, so save
+  states, fast forward and mods need no lockout; a reboot (`rt_boot`) or loaded state calls `rc_client_reset`.
+  The login (name and token, never the password) is in `retroachievements.ini`, not `eggoftime.ini`, which
+  display.c rewrites whole; a password written there by hand is swapped for the token after logging in.
+  Events queue messages for the host thread (`cheevos_poll`), shown one at a time in the message box; unlocks queue
+  popups instead (`display_popup`: badge, title, points, top right, sliding in), each shown once its badge is in or
+  after 3 s without it. The
+  System Settings page types its fields with SDL text input (`display_text_input`, `sysmenu_text_event`); logged in, it
+  lists the set's achievements (`cheevos_list`, a copy refreshed twice a second) with their badges, downloaded a few
+  at a time when first shown and cached as the server's PNGs in the data folder's `cache/badges`.
 - **Save states** (F5 save, F7 load; one slot: `<rom>.state` next to the ROM; `EGG_LOAD_STATE=<file>` starts
   from a state): `runtime/state.c`. A state holds emulated state only (memory, device state, and per game thread its
   ARM registers and the address it continues at), so it stays loadable after rebuilding, as long as the tagged
@@ -465,7 +479,7 @@ original bytes, and caches the result per region until the region is written.
   and stored as a file next to the executable.
 
 ## Build
-- CMake ≥ 3.25 + Ninja, clang or gcc (llvm-mingw on Windows), SDL3, Python 3 + capstone. SDL3 comes from an
+- CMake ≥ 3.25 + Ninja, clang or gcc (llvm-mingw on Windows), SDL3, FFmpeg, libcurl, Python 3 + capstone. SDL3 comes from an
   installed package (Windows SDK zip, Homebrew, distro); if none is found CMake builds SDL 3.4.18 from its pinned
   source release (e.g. Ubuntu 24.04, which has no SDL3 package; that needs the X11/Wayland and ALSA/PulseAudio
   development packages for a window and sound).
@@ -518,7 +532,7 @@ original bytes, and caches the result per region until the region is written.
 ```sh
 export PATH="$LOCALAPPDATA/Programs/llvm-mingw-20261020-ucrt-x86_64/bin:$APPDATA/Python/Python311/Scripts:$PATH"
 cmake -S . -B "$LOCALAPPDATA/EggOfTime-build" -G Ninja -DCMAKE_C_COMPILER=clang \
-      -DCMAKE_PREFIX_PATH="$LOCALAPPDATA/Programs/SDL3-3.4.18/x86_64-w64-mingw32"
+      "-DCMAKE_PREFIX_PATH=$LOCALAPPDATA/Programs/SDL3-3.4.18/x86_64-w64-mingw32;$LOCALAPPDATA/Programs/ffmpeg-8.1;$LOCALAPPDATA/Programs/curl-8.23.0_8-win64-mingw"
 cmake --build "$LOCALAPPDATA/EggOfTime-build"
 "$LOCALAPPDATA/EggOfTime-build/Egg of Time.exe" [rom.nds]   # run from the project root
 ```

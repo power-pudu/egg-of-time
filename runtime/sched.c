@@ -6,6 +6,7 @@
  * on time), everything up to "now" is raised. A host timer requests a poll every millisecond. */
 #include <SDL3/SDL.h>
 
+#include "cheevos.h"
 #include "rt.h"
 #include "single_screen.h"
 #include "video.h"
@@ -89,6 +90,7 @@ static void video_line_start(uint64_t abs_line) {
     if (line == 192) {
         rt_frame_count++;
         video_end_frame();
+        cheevos_frame();
         uint32_t keys = ss_game_keys(rt_keys);
         /* PAD_Read ORs this into KEYINPUT: X = bit 10, Y = bit 11, debug = bit 13 (1 = released);
          * bit 15 = lid closed. */

@@ -33,6 +33,32 @@ foreach(lib avformat avcodec avutil swscale swresample)
     find_library(FFMPEG_${lib}_LIBRARY ${lib} REQUIRED)
     list(APPEND FFMPEG_LIBRARIES ${FFMPEG_${lib}_LIBRARY})
 endforeach()
+
+# RetroAchievements (runtime/cheevos.c): rcheevos, built from its pinned source release, talks to the server through
+# libcurl: Windows, curl's official mingw build in CMAKE_PREFIX_PATH (its DLL is copied next to the executable);
+# macOS, the system's; Linux, the distro's development package.
+find_package(CURL REQUIRED)
+include(FetchContent)
+FetchContent_Declare(rcheevos
+    URL https://github.com/RetroAchievements/rcheevos/archive/refs/tags/v12.5.0.tar.gz
+    URL_HASH SHA256=e6df83de4e18f0a19206e711e1e589624dcfcf6bf529c14f6dd2bb2d1ced983f)
+FetchContent_MakeAvailable(rcheevos)
+file(GLOB RCHEEVOS_SOURCES ${rcheevos_SOURCE_DIR}/src/*.c ${rcheevos_SOURCE_DIR}/src/rapi/*.c
+     ${rcheevos_SOURCE_DIR}/src/rcheevos/*.c ${rcheevos_SOURCE_DIR}/src/rhash/*.c)
+list(FILTER RCHEEVOS_SOURCES EXCLUDE REGEX "/(rc_libretro|cdreader|hash_disc|hash_zip|hash_encrypted|aes)\.c$")
+add_library(rcheevos STATIC ${RCHEEVOS_SOURCES})
+target_include_directories(rcheevos PUBLIC ${rcheevos_SOURCE_DIR}/include)
+# rc_client identifies the game by its hash; only cartridge hashes (the DS ROM's) are built.
+target_compile_definitions(rcheevos PUBLIC RC_CLIENT_SUPPORTS_HASH RC_HASH_NO_DISC RC_HASH_NO_ZIP RC_HASH_NO_ENCRYPTED)
+target_compile_options(rcheevos PRIVATE -w)
+if(WIN32)
+    # rc_client's clock, mingw's clock_gettime, is in winpthreads: linked in statically, so no DLL beside the executable.
+    target_link_libraries(rcheevos PUBLIC -l:libwinpthread.a)
+endif()
+
+# The version the runtime gives RetroAchievements (its user agent); releases set it to their tag.
+set(EGG_VERSION "dev" CACHE STRING "Version of this build")
+
 set(RUNTIME_SOURCES
     runtime/main.c
     runtime/boot.c
@@ -44,6 +70,7 @@ set(RUNTIME_SOURCES
     runtime/gfx_mod.c
     runtime/gfx_rom.c
     runtime/card.c
+    runtime/cheevos.c
     runtime/hw.c
     runtime/memory.c
     runtime/movie.c
@@ -95,7 +122,8 @@ if(WIN32)
 endif()
 target_compile_options(eggoftime PRIVATE -Wall -Wextra -fwrapv $<$<BOOL:${EGG_RUNTIME_ONLY}>:-Werror>)
 target_include_directories(eggoftime PRIVATE ${FFMPEG_INCLUDE_DIR})
-target_link_libraries(eggoftime PRIVATE SDL3::SDL3 ${FFMPEG_LIBRARIES})
+target_compile_definitions(eggoftime PRIVATE EGG_VERSION="${EGG_VERSION}")
+target_link_libraries(eggoftime PRIVATE SDL3::SDL3 ${FFMPEG_LIBRARIES} rcheevos CURL::libcurl)
 if(UNIX)
     target_link_libraries(eggoftime PRIVATE m)
 endif()
@@ -117,6 +145,12 @@ if(WIN32)
     if(FFMPEG_DLLS)
         add_custom_command(TARGET eggoftime POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FFMPEG_DLLS} $<TARGET_FILE_DIR:eggoftime>)
+    endif()
+    get_filename_component(CURL_ROOT_DIR ${CURL_INCLUDE_DIRS} DIRECTORY)
+    file(GLOB CURL_DLLS ${CURL_ROOT_DIR}/bin/libcurl*.dll)
+    if(CURL_DLLS)
+        add_custom_command(TARGET eggoftime POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CURL_DLLS} $<TARGET_FILE_DIR:eggoftime>)
     endif()
 endif()
 

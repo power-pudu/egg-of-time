@@ -17,6 +17,7 @@ env:
   SDL: SDL3-3.4.18
   FFMPEG: ffmpeg-n8.1-latest-win64-lgpl-shared-8.1
   FFMPEG_LINUX: ffmpeg-n8.1-latest-linux64-lgpl-shared-8.1
+  CURL: curl-8.23.0_8-win64-mingw
   LIBRASHADER: librashader-v0.12.0
 
 jobs:
@@ -34,12 +35,13 @@ jobs:
           curl -sSLfo llvm.zip https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/$LLVM.zip
           curl -sSLfo sdl.zip https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-devel-3.4.18-mingw.zip
           curl -sSLfo ffmpeg.zip https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FFMPEG.zip
+          curl -sSLfo curl.zip https://curl.se/windows/dl-8.23.0_8/$CURL.zip
           curl -sSLfo python-embed.zip https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
           curl -sSLfo dsd.exe https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-windows-x86_64.exe
           curl -sSLfo dsd-LICENSE.txt https://raw.githubusercontent.com/AetiasHax/ds-decomp/v0.12.1/LICENSE
           curl -sSLfo xdelta3.zip https://github.com/jmacd/xdelta/releases/download/v3.2.2/xdelta3-3.2.2-windows-x86_64.zip
           curl -sSLfo xdelta3-LICENSE.txt https://raw.githubusercontent.com/jmacd/xdelta/v3.2.2/xdelta3/LICENSE
-          for z in llvm sdl ffmpeg xdelta3; do python -m zipfile -e $z.zip .; done
+          for z in llvm sdl ffmpeg curl xdelta3; do python -m zipfile -e $z.zip .; done
           pip install ninja
 
       # Slang shader mods (runtime/shader.c): librashader with only its OpenGL runtime, and the C runtime linked in,
@@ -57,13 +59,15 @@ jobs:
           # CMake needs Windows paths: Git Bash leaves /d/a/... unconverted in a ;-separated list.
           DEPS="$(pwd -W)/deps"
           cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang -DEGG_RUNTIME_ONLY=ON \
-            "-DCMAKE_PREFIX_PATH=$DEPS/$SDL/x86_64-w64-mingw32;$DEPS/$FFMPEG"
+            "-DCMAKE_PREFIX_PATH=$DEPS/$SDL/x86_64-w64-mingw32;$DEPS/$FFMPEG;$DEPS/$CURL" \
+            "-DEGG_VERSION=$GITHUB_REF_NAME" "-DFETCHCONTENT_BASE_DIR=$DEPS/fetch"
           cmake --build build
 
       - name: Package
         run: |
           python -I scripts/package.py --build build --llvm deps/$LLVM --python-embed deps/python-embed.zip \
             --dsd deps/dsd.exe --dsd-license deps/dsd-LICENSE.txt --sdl deps/$SDL --ffmpeg deps/$FFMPEG \
+            --curl deps/$CURL --rcheevos deps/fetch/rcheevos-src \
             --xdelta deps/xdelta3-3.2.2-windows-x86_64/xdelta3.exe --xdelta-license deps/xdelta3-LICENSE.txt \
             --librashader deps/librashader/target/optimized/librashader.dll --librashader-license deps/librashader/LICENSE.md \
             --out "dist/Egg of Time" --zip "dist/EggOfTime-${GITHUB_REF_NAME}-windows-x64.zip"
@@ -85,7 +89,7 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev             libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl1-mesa-dev             libgl1-mesa-dev libdrm-dev libgbm-dev libudev-dev libdbus-1-dev libasound2-dev libpulse-dev
+          sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev             libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl1-mesa-dev             libgl1-mesa-dev libdrm-dev libgbm-dev libudev-dev libdbus-1-dev libasound2-dev libpulse-dev             libcurl4-openssl-dev
           mkdir -p deps && cd deps
           curl -sSLfo ffmpeg.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FFMPEG_LINUX.tar.xz
           curl -sSLfo dsd https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-linux-x86_64
@@ -106,12 +110,12 @@ jobs:
 
       - name: Build the runtime
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Release -DEGG_RUNTIME_ONLY=ON             -DCMAKE_PREFIX_PATH="$PWD/deps/$FFMPEG_LINUX" -DFETCHCONTENT_BASE_DIR="$PWD/deps/fetch"
+          cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Release -DEGG_RUNTIME_ONLY=ON             -DCMAKE_PREFIX_PATH="$PWD/deps/$FFMPEG_LINUX" -DFETCHCONTENT_BASE_DIR="$PWD/deps/fetch"             -DEGG_VERSION="$GITHUB_REF_NAME"
           cmake --build build
 
       - name: Package
         run: |
-          python3 -I scripts/package.py --build build --dsd deps/dsd --dsd-license deps/dsd-LICENSE.txt             --sdl deps/fetch/sdl3-src --ffmpeg deps/$FFMPEG_LINUX             --xdelta deps/xdelta3-3.2.2-linux-x86_64/xdelta3 --xdelta-license deps/xdelta3-LICENSE.txt             --librashader deps/librashader/target/optimized/librashader.so             --librashader-license deps/librashader/LICENSE.md             --out "dist/Egg of Time" --tar "dist/EggOfTime-${GITHUB_REF_NAME}-linux-x64.tar.gz"             --appimage "dist/EggOfTime-${GITHUB_REF_NAME}-x86_64.AppImage" --appimagetool deps/appimagetool             --appimage-runtime deps/runtime-x86_64
+          python3 -I scripts/package.py --build build --dsd deps/dsd --dsd-license deps/dsd-LICENSE.txt             --sdl deps/fetch/sdl3-src --ffmpeg deps/$FFMPEG_LINUX             --rcheevos deps/fetch/rcheevos-src             --xdelta deps/xdelta3-3.2.2-linux-x86_64/xdelta3 --xdelta-license deps/xdelta3-LICENSE.txt             --librashader deps/librashader/target/optimized/librashader.so             --librashader-license deps/librashader/LICENSE.md             --out "dist/Egg of Time" --tar "dist/EggOfTime-${GITHUB_REF_NAME}-linux-x64.tar.gz"             --appimage "dist/EggOfTime-${GITHUB_REF_NAME}-x86_64.AppImage" --appimagetool deps/appimagetool             --appimage-runtime deps/runtime-x86_64
 
       - name: Upload the package
         uses: actions/upload-artifact@v4
