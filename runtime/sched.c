@@ -241,7 +241,15 @@ void dma_trigger(int start_mode) {
 
 /* ---- scheduling ---- */
 
-#define VIDEO_MAX_LAG 64u /* lines */
+#define VIDEO_MAX_LAG 192u /* lines */
+/* A frame starts drawing once the game waits for an interrupt (rt_halt), up to FRAME_HOLD_MAX lines late. The
+ * game prepares a frame (sprites, registers) and then waits for VBlank; on the DS it always gets there before
+ * line 0. Here emulated time follows the host clock, so a host hiccup, or fast forward halving the time a frame
+ * has, can leave the game mid-update at line 0, and the frame was drawn half updated: sprites gone, the time
+ * gate's OBJ window square, a BG missing (fast forward beside the gate after Lucca arrives). Held lines catch up
+ * once it waits, so game speed does not change. */
+#define FRAME_HOLD_MAX 128u /* lines */
+static int game_waiting; /* the game thread is in rt_halt */
 
 void sched_update(void) {
     uint64_t now = sched_now();
@@ -255,13 +263,22 @@ void sched_update(void) {
      * handler has run: its register writes then reach the right line instead of one up to a poll later.
      * This includes while interrupts are masked by CPSR or IME (another handler running, SDK critical
      * sections). Video also holds while a handler runs: catching up while e.g. the VBlank handler is still
-     * re-arming HBlank DMA would shift the per-line register table. Both up to VIDEO_MAX_LAG lines, so code
-     * that waits for VCOUNT with interrupts off still sees time pass. */
+     * re-arming HBlank DMA would shift the per-line register table. Up to VIDEO_MAX_LAG lines behind the host
+     * clock; further behind (the game thread held up by the host, more often in fast forward), one line per
+     * call, so code that waits for VCOUNT with interrupts off still sees time pass, but a stall is never caught
+     * up in one go inside a handler or with interrupts masked: the HBlank interrupts of those lines merged, the
+     * game's software HDMA (HBlank handler) missed the line ending the text box, and the rest of the frame was
+     * drawn with the box's one-screen BG0/BG1 and no window (the field's trees and the time gate gone). */
+    int stepped = 0; /* went on past a pending interrupt or a running handler (far behind) */
     for (;;) {
         int in_handler = rt_cur_cpu && (rt_cur_cpu->cpsr_ctl & 0x1F) == 0x12; /* IRQ mode */
-        if (line_phase != LINE_DRAWN && line - line_done < VIDEO_MAX_LAG && (irq_wanted() || in_handler)) {
-            rt_poll_pending = 1;
-            break;
+        if (line_phase != LINE_DRAWN && (irq_wanted() || in_handler)) {
+            if (line - line_done >= VIDEO_MAX_LAG && !stepped) {
+                stepped = 1;
+            } else {
+                rt_poll_pending = 1;
+                break;
+            }
         }
         if (line_phase == LINE_STARTED) {
             uint32_t l = (uint32_t)(line_done % RT_FRAME_LINES);
@@ -272,6 +289,8 @@ void sched_update(void) {
         } else if (line_phase == LINE_DRAWN) {
             video_line_hblank(line_done);
             line_phase = LINE_HBLANK;
+        } else if ((line_done + 1) % RT_FRAME_LINES == 0 && !game_waiting && line - line_done < FRAME_HOLD_MAX) {
+            break; /* the next frame: the game is still preparing it */
         } else {
             video_line_start(++line_done);
             line_phase = LINE_STARTED;
@@ -351,6 +370,7 @@ static uint64_t next_event_delay(void) {
 }
 
 void rt_halt(CPU *cpu) {
+    game_waiting = 1;
     for (;;) {
         park_on_quit();
         sched_update();
@@ -358,6 +378,7 @@ void rt_halt(CPU *cpu) {
         uint64_t cycles = next_event_delay();
         SDL_DelayPrecise((Uint64)((double)cycles * (1e9 / RT_CLOCK_HZ) / speed) + 1);
     }
+    game_waiting = 0;
     rt_poll(cpu);
 }
 

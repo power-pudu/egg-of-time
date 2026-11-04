@@ -550,10 +550,17 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
   `HW_BUTTON_XY_BUF` (0x027FFFA8, X = bit 10, Y = bit 11), which `PAD_Read` ORs into KEYINPUT.
 - Video timing: each scanline steps through start (VBlank/VCount IRQs) -> draw -> HBlank (IRQ, HBlank DMA), with
   VCOUNT reading that line throughout. Lines follow host time, but a step waits while an enabled interrupt is pending
-  (IE & IF, also while CPSR/IME mask it) or while the CPU is in an interrupt handler, up to 64 lines behind (so code
-  waiting on VCOUNT with interrupts off still sees time pass). The game's text boxes are a mid-frame split fed by
-  HBlank DMA tables that the VBlank handler re-arms each frame; without this ordering the split jittered by up to
-  ~30 lines (sprites vanished every other frame), then by one line (the box's top row flickered).
+  (IE & IF, also while CPSR/IME mask it) or while the CPU is in an interrupt handler, up to 192 lines behind; further
+  behind, one line per call (so code waiting on VCOUNT with interrupts off still sees time pass). The game's text
+  boxes are a mid-frame split fed by HBlank DMA tables that the VBlank handler re-arms each frame; without this
+  ordering the split jittered by up to ~30 lines (sprites vanished every other frame), then by one line (the box's
+  top row flickered). In the field the split is the game's software HDMA (HBlank handler), which reads VCOUNT: with
+  the old 64-line limit, a game thread held up by the host (often in fast forward, where a line takes half the host
+  time) ran lines past their HBlank handler inside it, the line ending the box was missed, and the rest of the frame
+  showed the box's BG0/BG1 and no window (the trees and the time gate gone for a frame; 77 of 2700 frames in fast
+  forward beside the gate, none after). A frame also starts (line 0) only once the game waits for an interrupt
+  (`rt_halt`), up to 128 lines late: in fast forward the game was sometimes still updating at line 0, and the
+  frame showed half of it (sprites gone, the gate's OBJ window square). Held lines catch up after, so speed holds.
 - Audio: `EGG_MUTE=1` skips the audio device; `EGG_WAV=<file>` records the mixed output.
 - Debug environment variables: `EGG_LOG_IO=1` logs the first read/write of each I/O register; `EGG_LOG_FPS=1`
   logs window and game frames per second;
