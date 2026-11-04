@@ -108,7 +108,12 @@ typedef struct Engine {
     int repeat_256; /* 256-wide text BGs repeat into the margins (the race's sky, single_screen.c) */
     int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
     int repeat_bgs; /* BGs whose screen columns repeat into the margins, the others empty beyond the room
-                     * (ws_repeat_bgs: a one-screen room's layer scrolling on its own, the clouds of the Epoch's flight) */
+                     * (ws_repeat_bgs: a one-screen room's layer scrolling on its own, the clouds of the Epoch's flight),
+                     * only those seen at the screen's sides the frame before (shown_bgs), which the margins go on
+                     * from: a layer the room covers stays hidden (location 0x71: bubbles drifting on BG0, priority 3,
+                     * under the opaque room, seen only through the time gate's hole in the middle) */
+    uint8_t shown_bgs, shown_now; /* BGs seen in the screen's SIDE_COLS side columns (on top, or blended under the
+                                   * top) in the last frame and in this one so far, text box lines left out */
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
     int sliding;    /* camera smoothing: the display slides this frame (the camera moved into it) */
     int sel_shift, sel_rows; /* single screen's age selector: a second picture with the sprites starting above
@@ -121,6 +126,7 @@ typedef struct Engine {
 } Engine;
 
 static Engine engines[2];
+#define SIDE_COLS 8 /* the screen columns at each side whose layers may repeat into the margins (repeat_bgs) */
 static SDL_AtomicInt wide_margin; /* requested by the display (video_set_wide_margin) */
 static uint32_t frame[2][VIDEO_LINE_MAX * SCREEN_H]; /* by engine, VIDEO_LINE_MAX apart */
 static uint32_t present[2][SCREEN_W * SCREEN_H];      /* top, bottom */
@@ -838,7 +844,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             e->obj_origin = ws_sprite_origin(); /* sprites placed from the left margin (widened view) */
             e->obj_stretch = e->margin && ss_in_warp();
             e->repeat_256 = e->margin && ss_in_race();
-            e->repeat_bgs = e->margin ? ws_repeat_bgs() : 0;
+            e->shown_bgs = e->shown_now, e->shown_now = 0;
+            e->repeat_bgs = e->margin ? ws_repeat_bgs() & e->shown_bgs : 0;
             e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs) &&
                            ws_room_span(&e->room_x0, &e->room_x1);
             int cx = 0, cy = 0, known = ws_camera(&cx, &cy); /* camera motion into this frame (camera smoothing) */
@@ -988,12 +995,15 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             int sprite_shows = layer[0] == 4; /* the sprite on top, or seen through a translucent layer on top */
             int weight = 16;    /* the top layer's share, and the colour added (HD sources) */
             uint16_t added = 0;
+            int blended = 0;    /* the second layer shows through the top one */
             if (layer[0] == 4 && o->alpha[x] != 0xFF && second) {
+                blended = 1;
                 int ea = o->alpha[x] == 0xFE ? eva : o->alpha[x], eb = o->alpha[x] == 0xFE ? evb : 16 - o->alpha[x];
                 c = blend(col[0], col[1], ea, eb);
                 weight = ea, added = blend(col[1], 0, eb, 0);
             } else if ((ctl & 0x20) && first) {
                 if (effect == 1 && second) {
+                    blended = 1;
                     c = blend(col[0], col[1], eva, evb), sprite_shows |= layer[1] == 4;
                     weight = eva, added = blend(col[1], 0, evb, 0);
                 } else if (effect == 2) {
@@ -1005,6 +1015,10 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 }
             }
             dst[x] = pass && !e->sel_shift && !(sprite_shows && o->party[x]) && !still ? 0 : to_rgba(c);
+            if (!pass && !side && !margin_kept && (wx < SIDE_COLS || wx >= SCREEN_W - SIDE_COLS)) { /* what the screen shows of each BG (repeat_bgs) */
+                if (layer[0] < 4) e->shown_now |= (uint8_t)(1 << layer[0]);
+                if (layer[1] < 4 && blended) e->shown_now |= (uint8_t)(1 << layer[1]);
+            }
             if (pass && e->sel_shift) shifted_sprite[y * VIDEO_LINE_MAX + x] = (uint8_t)sprite_shows;
             if (beyond && !e->repeat_bgs) dst[x] = pass ? 0 : 0xFF000000u;
             if (hd) {

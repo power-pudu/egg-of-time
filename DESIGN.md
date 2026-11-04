@@ -124,7 +124,10 @@ original bytes, and caches the result per region until the region is written.
     the bare water). The clouds tile without a seam; the
     water shows a faint one, its map not quite periodic. A layer once seen off its origin keeps repeating while
     the room stays: in passing, its scroll meets the origin (the clouds at VOFS 0 and 256, a frame each), which
-    blanked the sides.
+    blanked the sides. Only a layer the screen shows at its sides repeats (seen in the 4:3 picture's 8 side
+    columns the frame before, on top or blended under the top, text box lines left out): at location 0x71 (Marle
+    back, beside the gate) BG0 holds bubbles drifting at priority 3 under the opaque room, seen only through the
+    time gate's hole mid-screen, and they had filled the sides.
   - Rooms whose bounds hold more than the room (`narrow_rooms`, by location id, the halfword at 0x020720a0: 0x1d0
     the End of Time, 0x1d9 the parked Epoch, 0x1b0 the Epoch in flight): the parked Epoch's bounds are metatiles
     0-31, but its map's right half holds a second Epoch (its wing showed in the right margin), so the room ends at
