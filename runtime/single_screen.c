@@ -1122,17 +1122,17 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
                                   : paused     ? SS_MENU_PAUSE
                                   : title_menu ? SS_MENU_TITLE
                                                : SS_MENU_NONE);
+    if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE) { /* widescreen: the top screen with its margins (also with single screen mode off: the second window) */
+        memcpy(main, wide, (size_t)wide_w * SCREEN_H * 4);
+        *from = SS_FROM_WIDE;
+        if (paused) pause_hint(main, wide_w);
+        return wide_w;
+    }
     if (!ss_enabled()) {
         memcpy(main, top, SCREEN_W * SCREEN_H * 4);
         *from = SS_FROM_TOP;
         if (paused) pause_hint(main, SCREEN_W);
         return SCREEN_W;
-    }
-    if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE) { /* widescreen: the top screen with its margins */
-        memcpy(main, wide, (size_t)wide_w * SCREEN_H * 4);
-        *from = SS_FROM_WIDE;
-        if (paused) pause_hint(main, wide_w);
-        return wide_w;
     }
     switch (sc.kind) {
     case SCENE_LOGOS:

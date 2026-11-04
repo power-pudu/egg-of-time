@@ -8,8 +8,8 @@
  *
  * Aspect ratio is widescreen, not stretching: 5:3, 16:9, 21:9 or the window's own shape ("Fit screen") ask the
  * renderer (video_set_wide_margin) to draw the top screen wider, showing more of the world where single
- * screen mode allows it (the field); the main screen then arrives wider than 256 columns. Other scenes, and
- * Original, stay 4:3. Pixels keep their shape everywhere.
+ * screen mode allows it (the field), also in the main window beside the second screen window; the main screen
+ * then arrives wider than 256 columns. Other scenes, and Original, stay 4:3. Pixels keep their shape everywhere.
  *
  * Each window frame draws the shown screens into an internal target of N times the layout's native size
  * (Auto: the next integer multiple of the size on screen, up to 11x = 2112 rows, the largest within 4K),
@@ -324,9 +324,13 @@ static int view_shader(const View *v) { return v == &primary && SETTING(SET_SHAD
  * edge row for its one or two pixels. */
 static int camera_smoothing(void) { return fps_values[SETTING(SET_FRAMERATE)] != 60 && fps_values[SETTING(SET_FRAMERATE)] != 30; }
 
+/* The main window shows the main screen of a layout that can be wide: single screen mode's, or the top screen
+ * beside the second window (its field is as wide as in single screen mode). */
+static int wide_view(void) { return (ss_enabled() || secondary.win) && main_shown(&primary); }
+
 /* Columns beyond each side of the top screen for the chosen aspect ratio (only the main screen shows them). */
 static int wide_margin(void) {
-    if (!ss_enabled() || !main_shown(&primary)) return 0;
+    if (!wide_view()) return 0;
     float ratio = aspect_ratios[SETTING(SET_ASPECT)];
     if (ratio == 0) {
         int ww, wh;
@@ -896,7 +900,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
     main_guard = asked_guard && width == SCREEN_W + 2 * asked_margin ? asked_guard : 0;
     slide_x = main_guard ? slide_dx : 0;
     slide_y = main_guard ? slide_dy : 0;
-    asked_guard = camera_smoothing() && ss_enabled() && main_shown(&primary) ? VIDEO_SLIDE_MAX : 0;
+    asked_guard = camera_smoothing() && wide_view() ? VIDEO_SLIDE_MAX : 0;
     asked_margin = SDL_min(wide_margin() + asked_guard, VIDEO_MARGIN_MAX);
     video_set_wide_margin(asked_margin);
     video_set_fill_sides(SETTING(SET_FILL));

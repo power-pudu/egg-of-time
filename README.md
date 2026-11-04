@@ -100,8 +100,9 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 - The two-screen layouts are still there (F2): stacked, side by side, or swapped (F3).
 - **Second monitor**: System Settings > Second screen window shows the other DS screen in a window of its own.
   Drag it to your second monitor: it goes fullscreen there with the Window mode setting, and opens there again
-  next time. The game then shows both DS screens as the DS does, without the one-screen layouts (and without
-  widescreen): the main window shows the top screen, the second window the bottom one, and F3 swaps them.
+  next time. The game then shows both DS screens as the DS does, without the one-screen layouts: the main
+  window shows the top screen (widescreen in the field with the Aspect ratio setting), the second window the
+  bottom one, and F3 swaps them.
   You can touch the bottom screen with the mouse in either window. Shaders apply to the main window only.
 
 ### Graphics

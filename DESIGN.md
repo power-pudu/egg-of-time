@@ -198,8 +198,9 @@ original bytes, and caches the result per region until the region is written.
   in a window of its own (a `View`: window, renderer and the screen textures it draws with, since SDL
   textures belong to one renderer). While it is open single screen mode is off at run time
   (`ss_set_enabled`): the main screen is the top screen, the keys reach the game unchanged, Game Settings
-  defaults are the game's and its SELECT stays "Defaults", and no widescreen margin is asked for; scenes are
-  still told apart, so SELECT opens System Settings on the title menu and while the field is paused. The
+  defaults are the game's and its SELECT stays "Defaults"; scenes are still told apart, so SELECT opens System
+  Settings on the title menu and while the field is paused, and the widescreen scenes (the field, the warp, the
+  world map, the race) keep their margins in the main window while it shows the top screen. The
   main window then uses the top-only layout; the second is top-only
   with the swap inverted, so F3 exchanges the windows' screens and F2 does nothing. Each screen is uploaded to the window showing it, through the same
   pipeline (internal resolution, filter, HD art); shaders run on the main window only. The second window has no
