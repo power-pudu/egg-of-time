@@ -12,15 +12,19 @@
  * FFmpeg demuxes and decodes it, on the hardware decoder the codec offers (D3D11VA, VideoToolbox, VAAPI, ...)
  * when one opens, else in software on every core. Frames are paced by the audio actually played (by the wall
  * clock where there is no audio), handed to the host thread as YUV planes and drawn over the whole window, keeping
- * the video's shape. The audio track (any codec FFmpeg reads, downmixed to stereo) plays through its own SDL
- * audio stream. START or a touch skips, as with the game's player (the intro: any button or a touch); that also sets
- * the game's "skipped" byte. */
+ * the video's shape. The file is read ahead of the video, which waits in a packet queue, so AUDIO_AHEAD of sound is
+ * always queued: a 4K frame's copy back from the GPU alone takes most of a 60 fps frame's time, and with only the
+ * audio up to the frame on screen queued, every slow frame let the queue run dry and the sound stuttered. Frames
+ * already too late to show are dropped before that copy, so decoding catches up. The audio track (any codec
+ * FFmpeg reads, downmixed to stereo) plays through its own SDL audio stream. START or a touch skips, as with the
+ * game's player (the intro: any button or a touch); that also sets the game's "skipped" byte. */
 #include <stdio.h>
 #include <string.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/fifo.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
@@ -33,6 +37,8 @@
 
 #define SKIPPED_FLAG 0x0207b3d0u /* set by the game's per-frame callbacks when the player skips */
 #define LATE_DROP 0.1            /* seconds: a frame this late is not shown (decoding is behind) */
+#define AUDIO_AHEAD 0.3          /* seconds of audio kept queued ahead of the speakers */
+#define VIDEO_AHEAD 240          /* packets: the most video read ahead of decoding to reach that audio */
 #define INTRO_FRAME 0x02199930u  /* the intro's per-frame callback (ov017): it skips on any button (0x02199894) */
 
 /* ---- frame hand-over to the host thread ---- */
@@ -235,6 +241,9 @@ static void show_video(Player *p, AVFrame *f) {
     double t = f->best_effort_timestamp == AV_NOPTS_VALUE
                    ? clock_now(p)
                    : f->best_effort_timestamp * av_q2d(p->fmt->streams[p->vstream]->time_base);
+    /* Too late to show: dropped here, before the copy and conversion (a 4K copy takes most of a frame's time, and
+     * dropping after it kept decoding behind). */
+    if (t - clock_now(p) <= -LATE_DROP) return;
     AVFrame *out = av_frame_alloc();
     if (!out) return;
     if (f->format == p->hw_fmt) { /* copy back from the GPU (NV12, or P010 for 10-bit) */
@@ -263,7 +272,7 @@ static void show_video(Player *p, AVFrame *f) {
         if (skip_pressed(p)) break;
         double wait = t - clock_now(p);
         if (wait <= 0) {
-            if (wait > -LATE_DROP) publish(out);
+            publish(out); /* on time when the copy began (show_video's start) */
             break;
         }
         SDL_DelayPrecise((Uint64)(SDL_min(wait, 0.002) * 1e9));
@@ -359,12 +368,33 @@ static int play_file(const char *path, uint32_t skip_keys) {
     SDL_SetAtomicInt(&playing, 1);
     AVPacket *pkt = av_packet_alloc();
     AVFrame *f = av_frame_alloc();
+    /* Video packets read ahead of decoding, so the audio, decoded as it is read, stays AUDIO_AHEAD queued. */
+    AVFifo *ahead = av_fifo_alloc2(VIDEO_AHEAD, sizeof(AVPacket *), 0);
+    int eof = !ahead;
     while (!skip_pressed(&p)) {
-        if (av_read_frame(p.fmt, pkt) < 0) break;
-        if (pkt->stream_index == p.vstream) decode(&p, p.vdec, pkt, f);
-        else if (pkt->stream_index == p.astream) decode(&p, p.adec, pkt, f);
-        av_packet_unref(pkt);
+        size_t queued = ahead ? av_fifo_can_read(ahead) : 0;
+        int audio_low = p.adec && (!p.audio || SDL_GetAudioStreamQueued(p.audio) < p.audio_rate * 8 * AUDIO_AHEAD);
+        if (!eof && (!queued || (audio_low && av_fifo_can_write(ahead)))) {
+            if (av_read_frame(p.fmt, pkt) < 0) {
+                eof = 1;
+            } else if (pkt->stream_index == p.vstream) {
+                AVPacket *v = av_packet_clone(pkt);
+                if (v) av_fifo_write(ahead, &v, 1);
+            } else if (pkt->stream_index == p.astream) {
+                decode(&p, p.adec, pkt, f);
+            }
+            av_packet_unref(pkt);
+        } else if (queued) {
+            AVPacket *v;
+            av_fifo_read(ahead, &v, 1);
+            decode(&p, p.vdec, v, f);
+            av_packet_free(&v);
+        } else {
+            break; /* read and decoded to the end */
+        }
     }
+    for (AVPacket *v; ahead && av_fifo_read(ahead, &v, 1) >= 0;) av_packet_free(&v); /* skipped */
+    av_fifo_freep2(&ahead);
     decode(&p, p.vdec, NULL, f);
     decode(&p, p.adec, NULL, f);
     if (p.audio) SDL_FlushAudioStream(p.audio); /* the resampler's last samples too */
