@@ -115,7 +115,7 @@ typedef struct Engine {
     uint8_t shown_bgs, shown_now; /* BGs seen in the screen's SIDE_COLS side columns (on top, or blended under the
                                    * top) in the last frame and in this one so far, text box lines left out */
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
-    int sliding;    /* camera smoothing: the display slides this frame (the camera moved into it) */
+    int sliding;    /* camera smoothing: the display may slide this frame (the camera moved within VIDEO_GLIDE_FRAMES) */
     int sel_shift, sel_rows; /* single screen's age selector: a second picture with the sprites starting above
                               * row sel_rows drawn sel_shift columns left (ss_bottom_shift, shifted_frame), with
                               * the widescreen margins */
@@ -137,9 +137,13 @@ static int present_shifted_on;
 static int present_main_w;
 static SDL_Mutex *present_lock;
 static uint64_t present_serial, present_time;
-static int present_dx, present_dy;  /* camera motion into the published frame */
+static int present_dx, present_dy, present_cut; /* camera motion into the published frame; a cut (no motion known) */
 static int camera_known, camera_x, camera_y; /* the field camera at the last frame */
-static int frame_dx, frame_dy;      /* camera motion into the frame being drawn */
+/* The camera read at the last frame: the game moves its camera (0x020760f8) a frame before the BG scroll and OAM
+ * that show it (written at the next VBlank), so the camera a frame shows is the one read a frame earlier. */
+static int read_known, read_x, read_y;
+static int frame_dx, frame_dy, frame_cut; /* camera motion into the frame being drawn; a cut */
+static int frames_since_step = VIDEO_GLIDE_FRAMES; /* frames since the camera last moved (display gliding before that) */
 static SDL_AtomicInt party_wanted;  /* camera smoothing is on (video_set_camera_smoothing) */
 static SDL_AtomicInt fill_sides; /* video_set_fill_sides */
 static uint8_t prev_oam[0x400];     /* the top screen's sprites in the previous frame */
@@ -535,11 +539,14 @@ static int wrap_delta(int p, int c, int bits) {
 
 static int sprite_hidden(uint16_t a0) { return !(a0 & 0x100) && (a0 & 0x200); }
 
-static void find_party(Engine *e, int dx, int dy) {
+/* gliding: the camera did not move into this frame, but the display still glides toward its last step; a sprite
+ * then follows if its match followed in the previous frame. */
+static void find_party(Engine *e, int dx, int dy, int gliding) {
+    static uint8_t prev_follows[128];
     const uint8_t *c = &rt_oam[e->oam];
     e->party = 0;
     memset(e->follows, 0, sizeof e->follows);
-    for (int i = 0; (dx || dy) && i < 128; i++) {
+    for (int i = 0; (dx || dy || gliding) && i < 128; i++) {
         uint16_t c0, c1, c2;
         memcpy(&c0, c + i * 8, 2), memcpy(&c1, c + i * 8 + 2, 2), memcpy(&c2, c + i * 8 + 4, 2);
         if (sprite_hidden(c0)) continue;
@@ -551,9 +558,13 @@ static void find_party(Engine *e, int dx, int dy) {
             int mx = wrap_delta(p1 & 0x1FF, c1 & 0x1FF, 9), my = wrap_delta(p0 & 0xFF, c0 & 0xFF, 8);
             if (best < 0 || SDL_abs(mx) + SDL_abs(my) < SDL_abs(bx) + SDL_abs(by)) best = j, bx = mx, by = my;
         }
-        if (best >= 0 && SDL_abs(bx) + SDL_abs(by) < SDL_abs(bx + dx) + SDL_abs(by + dy)) e->follows[i] = 1, e->party = 1;
+        if (best < 0) continue;
+        if (dx || dy ? SDL_abs(bx) + SDL_abs(by) < SDL_abs(bx + dx) + SDL_abs(by + dy) : prev_follows[best]) {
+            e->follows[i] = 1, e->party = 1;
+        }
     }
     memcpy(prev_oam, c, sizeof prev_oam);
+    memcpy(prev_follows, e->follows, sizeof prev_follows);
 }
 
 void video_set_camera_smoothing(int on) { SDL_SetAtomicInt(&party_wanted, on); }
@@ -848,14 +859,18 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             e->repeat_bgs = e->margin ? ws_repeat_bgs() & e->shown_bgs : 0;
             e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs) &&
                            ws_room_span(&e->room_x0, &e->room_x1);
-            int cx = 0, cy = 0, known = ws_camera(&cx, &cy); /* camera motion into this frame (camera smoothing) */
-            frame_dx = frame_dy = 0;
+            int rx = 0, ry = 0, rk = ws_camera(&rx, &ry); /* camera motion into this frame (camera smoothing) */
+            int cx = read_x, cy = read_y, known = read_known;
+            read_known = rk, read_x = rx, read_y = ry;
+            frame_dx = frame_dy = 0, frame_cut = 1;
             if (known && camera_known) {
-                frame_dx = cx - camera_x, frame_dy = cy - camera_y;
-                if (SDL_abs(frame_dx) > VIDEO_SLIDE_MAX || SDL_abs(frame_dy) > VIDEO_SLIDE_MAX) frame_dx = frame_dy = 0; /* a cut */
+                frame_dx = cx - camera_x, frame_dy = cy - camera_y, frame_cut = 0;
+                if (SDL_abs(frame_dx) > VIDEO_SLIDE_MAX || SDL_abs(frame_dy) > VIDEO_SLIDE_MAX) frame_dx = frame_dy = 0, frame_cut = 1;
             }
             camera_known = known, camera_x = cx, camera_y = cy;
-            if (SDL_GetAtomicInt(&party_wanted)) find_party(e, frame_dx, frame_dy), e->sliding = frame_dx || frame_dy;
+            frames_since_step = frame_dx || frame_dy ? 0 : frame_cut ? VIDEO_GLIDE_FRAMES : SDL_min(frames_since_step + 1, VIDEO_GLIDE_FRAMES);
+            int gliding = frames_since_step < VIDEO_GLIDE_FRAMES;
+            if (SDL_GetAtomicInt(&party_wanted)) find_party(e, frame_dx, frame_dy, gliding), e->sliding = gliding;
         }
     }
     int m = e->margin, width = SCREEN_W + 2 * m;
@@ -1115,7 +1130,7 @@ void video_end_frame(void) {
         memcpy(present_palette, rt_palette, sizeof present_palette);
         hd_stamp++;
     }
-    present_dx = frame_dx, present_dy = frame_dy;
+    present_dx = frame_dx, present_dy = frame_dy, present_cut = frame_cut;
     present_time = SDL_GetTicksNS();
     present_serial++;
     SDL_UnlockMutex(present_lock);
@@ -1140,10 +1155,10 @@ int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *
     return w;
 }
 
-uint64_t video_frame_serial(int *camera_dx, int *camera_dy, uint64_t *time_ns) {
+uint64_t video_frame_serial(int *camera_dx, int *camera_dy, int *cut, uint64_t *time_ns) {
     SDL_LockMutex(present_lock);
     uint64_t s = present_serial;
-    *camera_dx = present_dx, *camera_dy = present_dy, *time_ns = present_time;
+    *camera_dx = present_dx, *camera_dy = present_dy, *cut = present_cut, *time_ns = present_time;
     SDL_UnlockMutex(present_lock);
     return s;
 }
@@ -1156,6 +1171,6 @@ void video_state(RtStateIO *s) {
     }
     if (rt_state_loading(s)) {
         video_vramcnt_written(); /* VRAM bank mapping follows the restored VRAMCNT */
-        camera_known = 0;        /* no camera motion across the load */
+        camera_known = read_known = 0; /* no camera motion across the load */
     }
 }

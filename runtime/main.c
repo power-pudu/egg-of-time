@@ -176,6 +176,25 @@ static int party_on;
  * wider, stacked, native, black beside narrower ones) and the presented window as BMP files, every
  * EGG_SHOT_MS ms (default 3000) starting EGG_SHOT_FROM ms after start (bring-up aid; EGG_SHOT_MS=1 captures
  * every presented frame). */
+/* Camera smoothing, one axis: the view is shown `lag` pixels from the camera of the frame on screen. A camera step
+ * leaves the view where it was (the lag grows by the step), then the lag glides to 0, linearly, over the time the
+ * camera took for its previous step: one game frame while walking (2 px a frame), four in a slow pan that moves
+ * 1 px every fourth frame, so that pan advances a quarter pixel a frame instead of a pixel then three stops.
+ * Longer gaps than VIDEO_GLIDE_FRAMES: the camera was at rest, the step glides over one frame. */
+typedef struct Glide { float from; uint64_t t0, dur, last_step; } Glide;
+
+static float glide_lag(const Glide *g, uint64_t t) {
+    if (t >= g->t0 + g->dur) return 0;
+    return t <= g->t0 ? g->from : g->from * (1.0f - (float)(t - g->t0) / (float)g->dur);
+}
+
+static void glide_step(Glide *g, int step, uint64_t t, uint64_t period) {
+    if (!step) return;
+    uint64_t frames = g->last_step && t > g->last_step ? (t - g->last_step + period / 2) / period : 0;
+    float lag = SDL_clamp(glide_lag(g, t) - (float)step, (float)-VIDEO_SLIDE_MAX, (float)VIDEO_SLIDE_MAX);
+    *g = (Glide){lag, t, (frames >= 1 && frames <= VIDEO_GLIDE_FRAMES ? frames : 1) * period, t};
+}
+
 static void save_shot(const char *dir, int n) {
     SDL_Surface *s = SDL_CreateSurface(main_w, SCREEN_H * 3, SDL_PIXELFORMAT_ABGR8888);
     if (!s) return;
@@ -242,6 +261,7 @@ int main(int argc, char **argv) {
     uint32_t auto_prev = 0;
     SDL_Gamepad *pad = NULL;
     uint64_t shown_serial = 0, shown_t = 0, game_period = SDL_NS_PER_SECOND / 60;
+    Glide glide_x = {0}, glide_y = {0};
     int running = 1;
     uint64_t next_present = SDL_GetTicksNS();
     /* EGG_LOG_FPS=1: log window frames and game frames (VBlanks) per second. */
@@ -341,8 +361,8 @@ int main(int argc, char **argv) {
         }
         rt_touch_down = touching;
 
-        int cam_dx, cam_dy;
-        uint64_t frame_t, serial = video_frame_serial(&cam_dx, &cam_dy, &frame_t);
+        int cam_dx, cam_dy, cam_cut;
+        uint64_t frame_t, serial = video_frame_serial(&cam_dx, &cam_dy, &cam_cut, &frame_t);
         int new_frame = serial != shown_serial;
         if (new_frame) {
             if (shown_serial && frame_t > shown_t) { /* measured game frame period */
@@ -351,10 +371,18 @@ int main(int argc, char **argv) {
             shown_serial = serial;
             shown_t = frame_t;
             main_w = video_copy_frame(top_px, bottom_px, main_px, party_px, &party_on, gfxmod_hd_scale() ? &hd : NULL);
+            if (cam_cut || !display_camera_smoothing()) {
+                glide_x = glide_y = (Glide){0};
+            } else {
+                glide_step(&glide_x, cam_dx, frame_t, game_period);
+                glide_step(&glide_y, cam_dy, frame_t, game_period);
+            }
         }
-        /* Camera smoothing: show the view slid back by the share of the camera's last step still to come, timed from
-         * the frame's arrival (so every window frame lands at its own position, whatever the refresh rate). */
-        float behind = display_camera_smoothing() ? 1.0f - SDL_min(1.0f, (float)(SDL_GetTicksNS() - shown_t) / game_period) : 0;
+        /* Camera smoothing: the view glides between the camera's steps, timed from the frames' arrival (so every
+         * window frame lands at its own position, whatever the refresh rate). */
+        uint64_t now_ns = SDL_GetTicksNS();
+        float lag_x = display_camera_smoothing() ? glide_lag(&glide_x, now_ns) : 0;
+        float lag_y = display_camera_smoothing() ? glide_lag(&glide_y, now_ns) : 0;
         if (sysmenu_is_open()) {
             main_w = SCREEN_W;
             party_on = 0;
@@ -362,7 +390,7 @@ int main(int argc, char **argv) {
             memcpy(top_px, main_px, sizeof top_px); /* layouts other than top-only show it too */
             new_frame = 1;
         }
-        display_frame(screens, party_on ? party_px : NULL, main_w, new_frame, -cam_dx * behind, -cam_dy * behind,
+        display_frame(screens, party_on ? party_px : NULL, main_w, new_frame, lag_x, lag_y,
                       hd.on && !sysmenu_is_open() ? &hd : NULL);
         presented++;
         if (log_fps && SDL_GetTicks() >= fps_at) {

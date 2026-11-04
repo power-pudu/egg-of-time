@@ -228,21 +228,32 @@ original bytes, and caches the result per region until the region is written.
     keeps its emulated 60 Hz clock. Measured with `EGG_LOG_FPS=1`: 30/60/90/144 exact, unlimited ~1000-2000 with
     V-Sync off, the display's rate with it on; the game stays at 60 in every case.
   - Camera smoothing (framerates above 60): each published frame carries how far the field camera moved
-    (`video_frame_serial`; camera at 0x020760f8, steps over 8 pixels count as cuts). The host shows the field
-    picture slid back by that step times the share of the game frame still to come, timed from the frame's
-    arrival and the measured game frame period, so the view moves on every window frame at even pace whatever
-    the refresh rate, in sub-pixel steps of the internal resolution (one game frame of extra delay). Background
+    (`video_frame_serial`; camera at 0x020760f8, steps over 8 pixels, and frames outside the field, count as
+    cuts). The game moves that camera a frame before the BG scroll and OAM that show it (written at the next
+    VBlank: in the trial's pan, camera y 23 to 24 one frame, VOFS 7 to 8 the next), so a frame's camera is the one
+    read a frame earlier; taken from the same frame, every step slid a picture that had not moved yet, back a
+    pixel then forward. The host keeps the view's lag behind the shown frame's camera per axis (main.c `Glide`): a camera step
+    leaves the view where it was (the lag grows by the step), then the lag glides linearly to 0 over the time the
+    camera took for its previous step, in whole game frames (measured period) up to `VIDEO_GLIDE_FRAMES` (8;
+    longer: the camera was at rest, one frame), timed from the frames' arrival; a cut drops the lag. So the view
+    moves on every window frame at even pace whatever the refresh rate, in sub-pixel steps of the internal
+    resolution: walking (2 px every frame) glides each step over one frame (one game frame of extra delay), and
+    slow scripted pans glide over their own cadence (the trial's pan down moves 1 px every fourth frame: gliding
+    over one frame showed a quarter-second rhythm of 1 px moves and three-frame stops; now 0.125 px every
+    refresh at 120 Hz, stdev 0.02, at up to four frames of delay). Background
     and sprites slide together (nothing is blended or redrawn), except the party layer: sprites the camera follows
     (the party) hold still on screen while the world moves, so sliding them would shake them back and forth. A
     sprite counts as followed when, matched to the previous frame's OAM (same tile and palette, shape and size,
-    nearest), its screen step is smaller than its step in the room (screen step plus camera step). The renderer
+    nearest), its screen step is smaller than its step in the room (screen step plus camera step); in frames
+    without a camera step within `VIDEO_GLIDE_FRAMES` of the last one (the view still gliding), when its match
+    was followed. The renderer
     leaves those out of the field picture and composes them a second time into a transparent layer (only where
     they win the top layer, so backgrounds in front still cover them, or are seen blended under a translucent
     top layer: dark rooms lay a darkness BG0 at priority 0 over
     everything, alpha-blended, and without this the party vanished whenever it counted as followed while
     running), and the host draws it over the slid
     picture without the slide (`video_copy_frame`'s party output). The text box is screen-fixed too: on its
-    lines (BG0/BG1 switched to one-screen maps, see Text boxes) its pixels go to the party layer, and the slid
+    lines (BG0/BG1 switched to one-screen maps, see Text boxes; in every frame of a glide) its pixels go to the party layer, and the slid
     picture shows the room under it (those layers as the frame started), so the box holds still while walking
     with it open. The renderer draws 8 hidden
     columns each side for it (`VIDEO_SLIDE_MAX`, part of the widescreen margins); a vertical slide repeats the

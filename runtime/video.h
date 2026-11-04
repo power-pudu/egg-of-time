@@ -8,6 +8,8 @@
 /* Widescreen: the top screen's engine can draw up to VIDEO_MARGIN_MAX columns beyond each side (21:9 at 192
  * rows: 448 = 256 + 2 * 96, plus the hidden columns camera smoothing slides into, VIDEO_SLIDE_MAX a side). */
 #define VIDEO_SLIDE_MAX 8
+/* Camera smoothing glides each camera step over the frames since the previous step, up to this many. */
+#define VIDEO_GLIDE_FRAMES 8
 #define VIDEO_MARGIN_MAX (96 + VIDEO_SLIDE_MAX)
 #define VIDEO_LINE_MAX (SCREEN_W + 2 * VIDEO_MARGIN_MAX)
 
@@ -46,6 +48,6 @@ int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *
 /* Camera smoothing on: the field's camera-following sprites get the party layer (any thread). */
 void video_set_camera_smoothing(int on);
 /* Serial of the latest frame; also how far the field camera moved since the previous frame (pixels; 0 outside
- * the field, after a jump beyond VIDEO_SLIDE_MAX, or when the previous frame was not the field), and when the
- * frame was published (SDL_GetTicksNS). */
-uint64_t video_frame_serial(int *camera_dx, int *camera_dy, uint64_t *time_ns);
+ * the field, after a jump beyond VIDEO_SLIDE_MAX, or when the previous frame was not the field: then *cut is 1),
+ * and when the frame was published (SDL_GetTicksNS). */
+uint64_t video_frame_serial(int *camera_dx, int *camera_dy, int *cut, uint64_t *time_ns);
