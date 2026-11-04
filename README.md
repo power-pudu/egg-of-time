@@ -1,6 +1,7 @@
 # Egg of Time
 
 [![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/powerpudu)
+[![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/943-chrono-trigger/)
 
 **A native PC port of *Chrono Trigger* for Nintendo DS**, for Windows, Linux and macOS.
 
