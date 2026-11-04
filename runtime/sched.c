@@ -294,6 +294,10 @@ void sched_update(void) {
         } else {
             video_line_start(++line_done);
             line_phase = LINE_STARTED;
+            /* A frame started after the hold ran out (the game never waited): stop at line 0, or catching up the
+             * held lines in this call passes it unseen, and code that busy-waits for VCOUNT 0 (crt0, before
+             * interrupts are set up) misses it every frame and never boots. */
+            if (line_done % RT_FRAME_LINES == 0 && !game_waiting) break;
         }
     }
     timers_update(now);
