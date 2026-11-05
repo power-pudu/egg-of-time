@@ -367,7 +367,8 @@ void ws_fill_margins(int margin) {
     ok0 = ok0 && bg_holds_layer(2, scroll, tilesets, 0);
     int pic1 = ok1 && !bg_holds_layer(3, scroll, tilesets, 1), pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
-    picture_bgs = (pic1 && !(io_get16(0x1c) & 0x1FF)) << 3 | (pic2 && !(io_get16(0x10) & 0x1FF));
+    /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge). */
+    picture_bgs = (pic1 && !(io_get16(0x1c) & 0x1F8)) << 3 | (pic2 && !(io_get16(0x10) & 0x1F8));
     int okhi = ok0 && bg_follows(1, scroll, 0); /* BG1: the priority tiles of the filled layers 0 and 1 */
     int camc = rt_r16(scroll + 4), camr = rt_r16(scroll + 8);
     /* The tiles the filled layers show: they agree on the tile, not always on the pixel (Zenan Bridge: BG0 still

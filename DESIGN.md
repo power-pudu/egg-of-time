@@ -111,14 +111,18 @@ original bytes, and caches the result per region until the region is written.
     256-wide sky (tiles 0x199.. in order), BG0 is mostly empty, the room on BG2 pans; filled from the room map,
     the margins showed that map scrolling with the camera beside the still sky. Such a BG at scroll 0
     (`ws_picture_bgs`) shows the screen reflected in its margins (`mirror_bg`, as the battle bolts), so the sky
-    and its mountains go on at both sides and hold still.
+    and its mountains go on at both sides and hold still. A shaking screen (the Dragon Tank's charge: HOFS 0-1, VOFS
+    0-3 on every BG) moves it a few pixels: it still counts, reflected at the picture's own sides; at any scroll but
+    0 the margins had shown the map's other half, which blinked.
   - Rooms narrower than the view: the margins show what the map holds beside the room, its tiles repeated (the
     map wraps at its masks) or neighbouring rooms (a house's map holds several). Fill screen sides (System
     Settings, shown with a wide aspect ratio): Yes keeps that; No (the default) draws black beyond the room
     (`ws_room_span`: the room's bounds in metatiles at `*(0x020708e0)` + 0x16 left, + 0x17 right, inclusive, the
     ones the camera stays within, against the camera's x at 0x020760f8; BG0's scroll is no measure, since some
     rooms animate it, e.g. the Geno Dome's, whose edge then wobbled and let sprites show beside the room), so the
-    room shows as the original.
+    room shows as the original. That camera is already the next frame's, so `video.c` moves the bounds to the frame's
+    own: when a shake stepped it, a column beyond the room stayed unclipped, and with camera smoothing the prison
+    bridge's sky (still layer) showed through it.
   - Rooms one screen wide with a layer scrolling on its own (the Epoch in flight: a 16-metatile room, the Epoch on
     BG2, the clouds on BG3 scrolling down while the camera stays; BG3's 512-wide map holds a sea of fire in its
     right half. The Epoch parked, location 0x1d9 with Take off / Get off: the water on BG0 drifting both ways):

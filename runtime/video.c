@@ -345,8 +345,11 @@ static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *
     uint16_t cnt = reg16(e, 0x08 + 2 * bg), hofs = reg16(e, 0x10 + 4 * bg), vofs = reg16(e, 0x12 + 4 * bg);
     if (!m || (cnt & 0x4000) || e->repeat_256) {
         bg_text_cols(e, bg, y, dispcnt, cnt, hofs, vofs, -m, SCREEN_W + m, out, hd);
-        if (m && (e->mirror_bg >> bg & 1) && !(hofs & 0x1FF)) {
-            for (int k = 0; k < m; k++) copy_col(out, hd, m - 1 - k, m + k), copy_col(out, hd, m + SCREEN_W + k, m + SCREEN_W - 1 - k);
+        if (m && (e->mirror_bg >> bg & 1) && !(hofs & 0x1F8)) {
+            /* Reflected at the picture's own sides, which a shaking screen moves by a few columns (hofs). */
+            int h = hofs & 7;
+            for (int x = -m; x < -h; x++) copy_col(out, hd, m + x, m + (-1 - x - 2 * h));
+            for (int x = SCREEN_W - h; x < SCREEN_W + m; x++) copy_col(out, hd, m + x, m + (2 * SCREEN_W - 1 - x - 2 * h));
         }
         if (m && (e->repeat_bgs >> bg & 1)) {
             for (int k = 0; k < m; k++) copy_col(out, hd, k, k + SCREEN_W), copy_col(out, hd, m + SCREEN_W + k, m + k);
@@ -925,6 +928,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 if (SDL_abs(frame_dx) > VIDEO_SLIDE_MAX || SDL_abs(frame_dy) > VIDEO_SLIDE_MAX) frame_dx = frame_dy = 0, frame_cut = 1;
             }
             camera_known = known, camera_x = cx, camera_y = cy;
+            /* ws_room_span goes by the camera in RAM, already the next frame's: the room's edge goes with this one's scroll. */
+            if (e->room_clip && known && rk && SDL_abs(rx - cx) <= VIDEO_SLIDE_MAX) e->room_x0 += rx - cx, e->room_x1 += rx - cx;
             frames_since_step = frame_dx || frame_dy ? 0 : frame_cut ? VIDEO_GLIDE_FRAMES : SDL_min(frames_since_step + 1, VIDEO_GLIDE_FRAMES);
             int gliding = frames_since_step < VIDEO_GLIDE_FRAMES;
             if (SDL_GetAtomicInt(&party_wanted)) find_party(e, frame_dx, frame_dy, gliding), e->sliding = gliding;
