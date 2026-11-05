@@ -297,7 +297,8 @@ original bytes, and caches the result per region until the region is written.
     hotkeys; function keys are refused, Escape or 5 s cancels); an input another action had swaps with this
     one's, so no action is left without one. The two state slots start unbound and stay optional: one taken from
     a slot leaves it unbound, and an unbound slot refuses (and keeps waiting on) an input in use, as the swap would
-    unbind that action. They act on the press, outside the menu, beside F5 and F7, which capture cannot take.
+    unbind that action. They act on the press, outside the menu, beside F5 and F7, which capture cannot take. Exit game (Esc, the gamepad's
+    Back) quits after 3 s held, also in the menu; being held, it shares its input with any action, outside the swap.
     Afterwards the menu ignores input until every key is released.
   - Pause (field, ov000 func 0x0210155c, START): the game dims both screens (MASTER_BRIGHT darken 4) and loops
     waiting for START, with the byte at `*(0x0207b520) + 0x407` set to 0xff; single screen mode then writes
@@ -664,7 +665,7 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
   executable, else relative to the working directory). Alongside dsd's `build/delinks`, that adds
   about 60 MB of generated C and a 140 MB executable to the OneDrive folder.
 - Controls: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Backspace = Select (defaults; System Settings > Controls remaps them),
-  F2 = layout, F3 = swap screens, F4 = filter, F11 = fullscreen, F5 = save state, F7 = load state, hold Left Shift = fast forward, hold Esc = quit. Gamepads use button positions (east = A, south = B,
+  F2 = layout, F3 = swap screens, F4 = filter, F11 = fullscreen, F5 = save state, F7 = load state, hold Left Shift = fast forward, hold Esc 3 s = quit. Gamepads use button positions (east = A, south = B,
   north = X, west = Y), shoulders = L/R, Start/Back, D-pad or left stick. X/Y reach the game through the ARM7's
   `HW_BUTTON_XY_BUF` (0x027FFFA8, X = bit 10, Y = bit 11), which `PAD_Read` ORs into KEYINPUT.
 - Video timing: each scanline steps through start (VBlank/VCount IRQs) -> draw -> HBlank (IRQ, HBlank DMA), with

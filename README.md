@@ -156,11 +156,12 @@ and European games, Japanese or English on the Japanese one) also sets the langu
 needs a restart for it: the menu asks whether to restart now (unsaved progress is lost) or keep the change for the
 next start.
 
-**Controls** remaps the buttons: each DS button, fast forward, Save state and Load state has a keyboard key and a
-gamepad button. Left/Right pick the column, A waits for the new key or button (Escape cancels). Choosing one that
+**Controls** remaps the buttons: each DS button, fast forward, Save state, Load state and Exit game has a keyboard key and
+a gamepad button. Left/Right pick the column, A waits for the new key or button (Escape cancels). Choosing one that
 another button already uses swaps the two. Save state and Load state start empty and only ever get what you give
 them: an empty slot refuses a key or button that a DS button or fast forward uses, and one taken from a slot leaves
-it empty. The last row, Reset to defaults, restores the table below and empties the slots. The mapping is saved in
+it empty. Exit game quits when held for 3 seconds, so it can share a key or button with anything. The last row,
+Reset to defaults, restores the table below and empties the slots. The mapping is saved in
 `controls.ini`.
 
 ### RetroAchievements
@@ -206,6 +207,7 @@ The defaults below can be changed in System Settings > Controls.
 | START / SELECT | Enter / Backspace | Start / Back |
 | Touch screen | Mouse, when the bottom screen is shown | — |
 | Fast forward (hold) | Left Shift | Right trigger |
+| Exit game (hold 3 seconds) | Esc | Back |
 
 | Key | Action |
 |---|---|
@@ -214,7 +216,6 @@ The defaults below can be changed in System Settings > Controls.
 | F4 | Filter |
 | F11 | Windowed / fullscreen |
 | F5 / F7 | Save / load state |
-| Hold Esc for 1 second | Quit |
 
 ## Status
 

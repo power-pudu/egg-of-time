@@ -680,7 +680,9 @@ void sysmenu_draw(uint32_t *s) {
         SDL_snprintf(used, sizeof used, ui_text("%s uses that one. Press another."), ui_text(controls_capture_conflict()));
         footer = used;
     } else if (controls_page && controls_capturing()) footer = ui_text(ctl_pad ? "Press a gamepad button. Esc: cancel." : "Press a key. Esc: cancel.");
-    else if (controls_page) footer = ui_text(ctl_cursor == ROW_RESET ? "A: restore the default controls." : "A: change.  Left/Right: key or pad.");
+    else if (controls_page) footer = ui_text(ctl_cursor == ROW_RESET ? "A: restore the default controls." :
+                                             ctl_cursor == CTL_EXIT_GAME ? "Hold for 3 seconds to exit the game." :
+                                             "A: change.  Left/Right: key or pad.");
     else if (cheevos_page) footer = cheevos_footer();
     panel(s, (Rect){0, 166, 222, 26}, &BAR);
     draw_lines(s, footer, 8, ui_text_width(footer) <= 208 ? 175 : 170, 208, WHITE);

@@ -33,6 +33,7 @@ static const struct { const char *name, *ini; uint32_t ds; } actions[CTL_COUNT] 
     [CTL_FAST_FORWARD] = {"Fast forward", "fastforward", 0},
     [CTL_SAVE_STATE] = {"Save state", "savestate", 0},
     [CTL_LOAD_STATE] = {"Load state", "loadstate", 0},
+    [CTL_EXIT_GAME] = {"Exit game", "exitgame", 0},
 };
 
 static const Binding defaults[CTL_COUNT] = {
@@ -51,6 +52,7 @@ static const Binding defaults[CTL_COUNT] = {
     [CTL_FAST_FORWARD] = {SDL_SCANCODE_LSHIFT, PAD_RT},
     [CTL_SAVE_STATE] = {SDL_SCANCODE_UNKNOWN, PAD_NONE},
     [CTL_LOAD_STATE] = {SDL_SCANCODE_UNKNOWN, PAD_NONE},
+    [CTL_EXIT_GAME] = {SDL_SCANCODE_ESCAPE, SDL_GAMEPAD_BUTTON_BACK}, /* the gamepad's SELECT, held */
 };
 
 static Binding binds[CTL_COUNT];
@@ -211,7 +213,7 @@ static int is_state_slot(int a) { return a == CTL_SAVE_STATE || a == CTL_LOAD_ST
 /* Gives action a the input, swapping as controls.h says; 0 if it is refused (capture_conflict: whose it is). */
 static int bind_key(int a, SDL_Scancode k) {
     for (int i = 0; i < CTL_COUNT; i++) {
-        if (i == a || binds[i].key != k) continue;
+        if (i == a || i == CTL_EXIT_GAME || a == CTL_EXIT_GAME || binds[i].key != k) continue;
         if (!is_state_slot(i) && is_state_slot(a) && binds[a].key == SDL_SCANCODE_UNKNOWN) {
             capture_conflict = i;
             return 0;
@@ -224,7 +226,7 @@ static int bind_key(int a, SDL_Scancode k) {
 
 static int bind_pad(int a, int b) {
     for (int i = 0; i < CTL_COUNT; i++) {
-        if (i == a || binds[i].pad != b) continue;
+        if (i == a || i == CTL_EXIT_GAME || a == CTL_EXIT_GAME || binds[i].pad != b) continue;
         if (!is_state_slot(i) && is_state_slot(a) && binds[a].pad == PAD_NONE) {
             capture_conflict = i;
             return 0;

@@ -15,6 +15,7 @@
 #include "rt.h"
 #include "sound.h"
 #include "system_menu.h"
+#include "ui_text.h"
 #include "video.h"
 
 static SDL_AtomicInt game_finished;
@@ -115,7 +116,7 @@ static int SDLCALL game_thread(void *arg) {
 /* EGG_AUTOKEYS="<ms>:<KEY>:<ms>,...": press keys at fixed times after start (automated tests).
  * KEY TOUCH taps the bottom screen at EGG_TOUCH_POS="x,y" (default: the centre); SAVESTATE / LOADSTATE
  * act like F5 / F7, REBOOT like confirming a restart (System Settings, Language), LAYOUT / SWAP / FILTER like
- * F2 / F3 / F4, ESC like holding Escape, FF like holding Left Shift (fast forward). */
+ * F2 / F3 / F4, ESC like holding Exit game, FF like holding Left Shift (fast forward). */
 #define AUTO_TOUCH (1u << 31)
 #define AUTO_SAVE (1u << 30)
 #define AUTO_LOAD (1u << 29)
@@ -269,9 +270,10 @@ int main(int argc, char **argv) {
     /* EGG_LOG_FPS=1: log window frames and game frames (VBlanks) per second. */
     int log_fps = getenv("EGG_LOG_FPS") != NULL, presented = 0;
     Uint64 fps_at = SDL_GetTicks() + 1000, game_frames = rt_frame_count;
-    /* Holding Escape for EXIT_HOLD_MS quits; the message shows while it is held. */
-    enum { EXIT_HOLD_MS = 1000 };
-    Uint64 esc_since = 0;
+    /* Holding Exit game's key or button for EXIT_HOLD_MS quits. The message waits, as that button can also be pressed
+     * (the gamepad's SELECT). */
+    enum { EXIT_HOLD_MS = 3000, EXIT_MESSAGE_MS = 500 };
+    Uint64 exit_since = 0;
     /* The mouse cursor hides after CURSOR_HIDE_MS without mouse use, and shows again when the mouse moves. */
     enum { CURSOR_HIDE_MS = 2000 };
     Uint64 mouse_used = SDL_GetTicks();
@@ -316,12 +318,13 @@ int main(int argc, char **argv) {
         if (autok & ~auto_prev & AUTO_SWAP) display_key(SDL_SCANCODE_F3);
         if (autok & ~auto_prev & AUTO_FILTER) display_key(SDL_SCANCODE_F4);
         auto_prev = autok;
-        if (SDL_GetKeyboardState(NULL)[SDL_SCANCODE_ESCAPE] || (autok & AUTO_ESC)) {
-            if (!esc_since) esc_since = SDL_GetTicks();
-            display_message("Exiting...", 100);
-            if (SDL_GetTicks() - esc_since >= EXIT_HOLD_MS) running = 0;
+        if (controls_held(pad, CTL_EXIT_GAME) || (autok & AUTO_ESC)) {
+            if (!exit_since) exit_since = SDL_GetTicks();
+            Uint64 held = SDL_GetTicks() - exit_since;
+            if (held >= EXIT_MESSAGE_MS) display_message(ui_text("Exiting..."), 100);
+            if (held >= EXIT_HOLD_MS) running = 0;
         } else {
-            esc_since = 0;
+            exit_since = 0;
         }
         cheevos_poll();
         /* Pressed, not held, and not in the menu, where a key can be typed or being assigned. F5 and F7 stay above. */

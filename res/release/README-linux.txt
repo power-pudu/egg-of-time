@@ -32,7 +32,8 @@ The AppImage (EggOfTime-*-x86_64.AppImage) is the same program in one read-only 
 start it. It keeps rom/, game/, eggoftime.ini and mods/ in ~/.local/share/EggOfTime/ instead.
 
 Controls: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Backspace = Select,
-F2 layout, F3 swap screens, F4 filter, F11 fullscreen, hold Esc to quit. Gamepads work too.
+F2 layout, F3 swap screens, F4 filter, F11 fullscreen, hold Esc for 3 seconds to quit. Gamepads work too
+(hold Back for 3 seconds to quit).
 Mods: replacement cutscenes and music go in mods/cutscenes and mods/music, and translation patches
 (.ips, .bps, .xdelta, .delta) in mods/translation (see the readme files there). A translation
 patch is applied to your ROM when the game is built, in memory: rom/CT.nds stays the unmodified
