@@ -188,6 +188,38 @@ original bytes, and caches the result per region until the region is written.
     tile seamlessly; in the race they repeat into the margins (`repeat_256`) instead of staying empty. Sprites
     (bikes, HUD) keep their 4:3 place, centred: logged OAM showed the game keeps Crono's bike at X >= 5 and
     Johnny well inside the screen, so no cull needed widening.
+  - **Zoom out** (System Settings, Off / 85% / 77%; `video_set_zoom`): the field and the world map draw more rows and
+    columns into the same place in the window: 226 or 248 rows at the aspect ratio's shape, in the layouts that show
+    the wide picture; other scenes keep 192 rows.
+    - Limits: BG maps are 32 tile rows tall, and a picture at a fine scroll shows one tile row more than rows / 8, so
+      248 rows (77%) is the most that does not show a tile row at both edges (256 would be 75%). They are 512 wide, so
+      a ratio beyond 496 columns (21:9 at 212 rows) zooms out less.
+    - Rows: `video_render_line` draws the rows above the screen with line 0 and those below with line 191 (`Engine.rows`,
+      `FROW`), using the registers those lines have, the frame's BG0 / BG1 where the text box switched them, and the
+      windows of the nearest line; affine references are stepped back to match. A reflected picture
+      (`mirror_bg`) reflects at the top and bottom too.
+    - Maps: `ws_fill_margins` writes every ring cell outside the game's own (its 32 columns, the 4:3 view's rows and the
+      25th), so the ring holds the taller view; the world map fills by tile row, since a metatile row can show at both
+      ring edges. The object cull is widened in rows too.
+    - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
+      bottom from one above the view, as the DS's 64 unused rows did. `rt_ws_draw_cell` (main 0x02019fd4) knows the cell's
+      place, and `rt_ws_enter_oam` (main 0x02048098) marks each sprite while it is entered, in attribute 1 bits that
+      sprites without rotation do not use: `WS_OAM_ABOVE`. That entry also picks a priority from Y against a threshold
+      (0x020fd618, when 0x020fd614 is set), in DS rows, so the threshold is moved for the call. World map sprites
+      are not marked: Y from `SCREEN_H + rows` up counts as above.
+    - UI: the text box and sprites in screen coordinates stay at the original scale in their original place in the
+      window: `ui_frame`, 192 rows, composed in a third pass, its middle columns drawn over the whole picture
+      (`draw_ui`). Sprites drawn with the surface's own view are marked `WS_OAM_UI`, as is the battle HUD, which uses
+      the G2D view: in a battle, one-sprite cells on the panel's rows (from 132) of the list the scene's draw calls
+      returning to 0x02041a34 (gauges, HP / MP, the menu's hand; found by logging cells while fighting). The same
+      list's target bracket (4 sprites) and the hand over a target stay in the world, with the actors. Under the box,
+      the picture has the room (the frame's BG0 / BG1, as camera smoothing's box). UI pixels have no HD sources. The
+      world map's labels (year, place name) are in the world's sprites, so they zoom.
+    - Rooms: with Fill screen sides off, the rows beyond the room are black (`ws_room_rows`: bounds +0x18 top, +0x19
+      bottom). Bounds can hold several rooms one above the other (the prison towers, location 0x1d: metatile rows
+      0-32 with others stacked), which the camera never shows on the DS; the rows also end at the void between them:
+      a metatile row that is one black metatile on layer 0 across the bounds and empty on the others (`void_row`),
+      looking out from the view's middle, never inside the 192 rows the game draws.
   - Not handled: rooms smaller than the wide view show what lies beside them in the map (other rooms of the same
     building, or void); the room's camera bounds were not found yet (the limits 0x02143fb0 the object cull clamps
     to hold the whole map, 0-255), so the margins are not masked. The game draws no 3D: the SDK sends a few housekeeping GX commands per frame but no geometry,

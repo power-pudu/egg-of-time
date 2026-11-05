@@ -74,6 +74,9 @@ static const char *const res_names[RES_MAX + 1] = {"auto", "1", "2", "3", "4", "
 static const char *const aspect_names[] = {"original", "5x3", "16x9", "ultrawide", "fit"};
 static const char *const aspect_labels[] = {"Original (4:3)", "5:3", "16:9", "Ultrawide (21:9)", "Fit screen"};
 static const float aspect_ratios[] = {4.0f / 3, 5.0f / 3, 16.0f / 9, 21.0f / 9, 0}; /* 0: the window's */
+static const char *const zoom_names[] = {"off", "85", "77"};
+static const char *const zoom_labels[] = {"Off", "85%", "77%"};
+static const int zoom_totals[] = {0, 226, VIDEO_ROWS_MAX}; /* rows of the picture (192 at the original scale) */
 static const char *const fps_names[] = {"30", "60", "90", "120", "144", "unlimited"};
 static const char *const fps_labels[] = {"30", "60", "90", "120", "144", "Unlimited"};
 static const int fps_values[] = {30, 60, 90, 120, 144, 0};
@@ -109,6 +112,8 @@ static Setting settings[SET_COUNT] = {
     [SET_SECOND] = {"secondscreen", "Second screen window", 2, 0, onoff_names, onoff_labels},
     [SET_RESOLUTION] = {"resolution", "Internal resolution", RES_MAX + 1, 0, res_names, NULL},
     [SET_ASPECT] = {"aspect", "Aspect ratio", 5, ASPECT_16_9, aspect_names, aspect_labels},
+    /* Zoom out: more rows in the same place, in the field and the world map (video.c). */
+    [SET_ZOOM] = {"zoomout", "Zoom out", 3, 0, zoom_names, zoom_labels},
     /* Widescreen in rooms narrower than the view: No leaves the room as it is, black beside it (video.c). */
     [SET_FILL] = {"fillsides", "Fill screen sides", 2, 0, yesno_names, yesno_labels},
     /* The bottom screen's map, small, over the main screen (single_screen.c). */
@@ -133,9 +138,9 @@ static Setting settings[SET_COUNT] = {
 typedef struct View {
     SDL_Window *win;
     SDL_Renderer *ren;
-    SDL_Texture *native[5], *smooth[5], *internal; /* top, bottom, main, party, still */
-    SDL_Texture *hd_tex[5]; /* the screens drawn from HD art (graphics mods) */
-    int hd_k[5];            /* their scale; 0: not drawn this way */
+    SDL_Texture *native[6], *smooth[6], *internal; /* top, bottom, main, party, still, UI (zoom out) */
+    SDL_Texture *hd_tex[6]; /* the screens drawn from HD art (graphics mods) */
+    int hd_k[6];            /* their scale; 0: not drawn this way */
     SDL_Texture *lcd_mask;  /* LCD filter: one pixel's grid at lcd_mask_n */
     int lcd_mask_n;
 } View;
@@ -151,14 +156,17 @@ static uint64_t shader_frames;
 static char saved_shader[1024];                        /* eggoftime.ini's shader, until the list is known */
 static int party_on;                                   /* the party layer is shown (camera smoothing) */
 static int still_on;                                   /* the still layer is shown (camera smoothing) */
+static int ui_on;                                      /* the UI layer is shown (zoom out) */
 static int main_w = SCREEN_W;                          /* the main screen's width (widescreen) */
+static int main_h = SCREEN_H;                          /* its rows (more when zoomed out) */
 static int main_guard;                                 /* hidden columns each side of it (camera smoothing) */
 static float slide_x, slide_y;                         /* camera smoothing: where the view is shown from */
 static int asked_margin, asked_guard;                  /* last margin requested from the renderer */
+static int asked_zoom_rows, asked_zoom_margin;         /* and for the zoomed out scenes */
 static int reupload;                                   /* the filter changed: upload the screens again */
-static uint32_t scale2x_tmp[VIDEO_LINE_MAX * 2 * SCREEN_H * 2];
-static uint32_t scaled[VIDEO_LINE_MAX * SMOOTH_SCALE * SCREEN_H * SMOOTH_SCALE];
-static uint32_t corrected[VIDEO_LINE_MAX * SCREEN_H]; /* a screen with the Color setting applied */
+static uint32_t scale2x_tmp[VIDEO_LINE_MAX * 2 * VIDEO_ROWS_MAX * 2];
+static uint32_t scaled[VIDEO_LINE_MAX * SMOOTH_SCALE * VIDEO_ROWS_MAX * SMOOTH_SCALE];
+static uint32_t corrected[VIDEO_LINE_MAX * VIDEO_ROWS_MAX]; /* a screen with the Color setting applied */
 static uint32_t *hd_px;                               /* a screen being drawn from HD art */
 static const VideoHdFrame *hd_frame;                   /* the sources of the screens being uploaded */
 static uint8_t gamma_lut[256];
@@ -321,7 +329,7 @@ static int main_shown(const View *v) { return view_layout(v) == LAYOUT_TOP && !v
 static void content_size(const View *v, int *w, int *h) {
     int l = view_layout(v);
     *w = l == LAYOUT_SIDE ? SCREEN_W * 2 : main_shown(v) ? main_w - 2 * main_guard : SCREEN_W;
-    *h = l == LAYOUT_STACKED ? SCREEN_H * 2 : SCREEN_H;
+    *h = l == LAYOUT_STACKED ? SCREEN_H * 2 : main_shown(v) ? main_h : SCREEN_H;
 }
 
 /* The view runs the chosen shader (the main window only: the second window uses the graphics filter). */
@@ -338,16 +346,36 @@ static int camera_smoothing(void) { return fps_values[SETTING(SET_FRAMERATE)] !=
  * beside the second window (its field is as wide as in single screen mode). */
 static int wide_view(void) { return (ss_enabled() || secondary.win) && main_shown(&primary); }
 
-/* Columns beyond each side of the top screen for the chosen aspect ratio (only the main screen shows them). */
-static int wide_margin(void) {
-    if (!wide_view()) return 0;
+#define WIDE_MARGIN_MAX (96 + VIDEO_SLIDE_MAX) /* 21:9 at 192 rows, with camera smoothing's hidden columns */
+
+/* The chosen aspect ratio. */
+static float view_ratio(void) {
     float ratio = aspect_ratios[SETTING(SET_ASPECT)];
     if (ratio == 0) {
         int ww, wh;
         SDL_GetRenderOutputSize(primary.ren, &ww, &wh);
         ratio = wh > 0 ? (float)ww / wh : 4.0f / 3;
     }
-    return SDL_clamp(((int)SDL_lroundf(SCREEN_H * ratio) - SCREEN_W) / 2, 0, VIDEO_MARGIN_MAX);
+    return ratio;
+}
+
+/* Columns beyond each side of the top screen for the chosen aspect ratio (only the main screen shows them). */
+static int wide_margin(void) {
+    if (!wide_view()) return 0;
+    return SDL_clamp(((int)SDL_lroundf(SCREEN_H * view_ratio()) - SCREEN_W) / 2, 0, WIDE_MARGIN_MAX);
+}
+
+/* Zoom out: rows above and below the top screen and the columns each side, guard columns included: the same shape as
+ * the aspect ratio, as far as the BG maps' 512 columns go (a wider ratio then zooms out less). */
+static void zoom_view(int guard, int *rows, int *margin) {
+    *rows = *margin = 0;
+    int total = zoom_totals[SETTING(SET_ZOOM)], most = SCREEN_W + 2 * (VIDEO_MARGIN_MAX - guard);
+    if (!total || !wide_view()) return;
+    float ratio = view_ratio();
+    if (total * ratio > most) total = (int)((float)most / ratio);
+    if (total <= SCREEN_H + 1) return;
+    *rows = (total - SCREEN_H) / 2;
+    *margin = SDL_clamp(((int)SDL_lroundf((float)(SCREEN_H + 2 * *rows) * ratio) - SCREEN_W) / 2 + guard, 0, VIDEO_MARGIN_MAX);
 }
 
 /* Where a screen goes in the view's layout, in native pixels; screen 0 = top, 1 = bottom. 0 when it is not
@@ -385,6 +413,7 @@ static void resize_window(void) {
     int cw, ch;
     content_size(&primary, &cw, &ch);
     if (!(SDL_GetWindowFlags(primary.win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED))) {
+        if (main_shown(&primary)) cw = cw * SCREEN_H / ch, ch = SCREEN_H; /* the same window zoomed out */
         SDL_SetWindowSize(primary.win, cw * WINDOW_SCALE, ch * WINDOW_SCALE);
     }
 }
@@ -435,16 +464,17 @@ static void scale2x(const uint32_t *src, int w, int h, uint32_t *dst) {
 }
 
 static int screen_width(int tex) { return tex >= 2 ? main_w : SCREEN_W; }
+static int screen_height(int tex) { return tex >= 2 && tex < 5 ? main_h : SCREEN_H; }
 
 /* px with the Color setting applied (px itself for Original). */
-static const uint32_t *color_corrected(const uint32_t *px, int w) {
+static const uint32_t *color_corrected(const uint32_t *px, int w, int h) {
     int v = SETTING(SET_COLOR);
     if (!v) return px;
     if (gamma_lut_for != v) {
         for (int i = 0; i < 256; i++) gamma_lut[i] = (uint8_t)SDL_lroundf(255 * SDL_powf(i / 255.0f, color_exponents[v]));
         gamma_lut_for = v;
     }
-    for (int i = 0; i < w * SCREEN_H; i++) {
+    for (int i = 0; i < w * h; i++) {
         uint32_t c = px[i];
         corrected[i] = (c & 0xFF000000u) | (uint32_t)gamma_lut[(c >> 16) & 0xFF] << 16 |
                        (uint32_t)gamma_lut[(c >> 8) & 0xFF] << 8 | gamma_lut[c & 0xFF];
@@ -479,7 +509,7 @@ static void upload_minimap(void) {
         SDL_SetTextureBlendMode(minimap_tex, SDL_BLENDMODE_BLEND);
     }
     static uint32_t px[SS_MAP_W * SS_MAP_H];
-    const uint32_t *in = color_corrected(&video_bottom_top()->rgba[0][0], SCREEN_W);
+    const uint32_t *in = color_corrected(&video_bottom_top()->rgba[0][0], SCREEN_W, SCREEN_H);
     for (int y = 0; y < SS_MAP_H; y++) {
         const uint32_t *src = &in[(SS_MAP_Y + y) * SCREEN_W + SS_MAP_X];
         uint32_t *dst = &px[y * SS_MAP_W];
@@ -497,9 +527,9 @@ static void upload_minimap(void) {
 
 /* Into the internal target (n x native), at the view's top left. Nearest at a whole multiple of the panel's pixels;
  * otherwise nearest would drop or double some of them. */
-static void draw_minimap(SDL_Renderer *ren, int n) {
+static void draw_minimap(SDL_Renderer *ren, float n) {
     if (!minimap_tex) return;
-    float k = minimap_scale() * (float)n, at = MINIMAP_MARGIN * (float)n;
+    float k = minimap_scale() * n, at = MINIMAP_MARGIN * n;
     SDL_SetTextureScaleMode(minimap_tex, k >= 1 && k == SDL_floorf(k) ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
     SDL_RenderTexture(ren, minimap_tex, NULL, &(SDL_FRect){at, at, SDL_roundf(SS_MAP_W * k), SDL_roundf(SS_MAP_H * k)});
 }
@@ -599,7 +629,7 @@ static void compose_hd(const HdJob *job) {
     int bands = hd_workers + 1;
     for (int i = 0; i < bands; i++) {
         hd_jobs[i] = *job;
-        hd_jobs[i].y0 = SCREEN_H * i / bands, hd_jobs[i].y1 = SCREEN_H * (i + 1) / bands;
+        hd_jobs[i].y0 = job->y1 * i / bands, hd_jobs[i].y1 = job->y1 * (i + 1) / bands;
     }
     for (int i = 0; i < hd_workers; i++) SDL_SignalSemaphore(hd_go[i]);
     compose_rows(&hd_jobs[hd_workers]);
@@ -616,44 +646,44 @@ static const VideoHd *hd_source(const View *v, int tex) {
 /* Draws and uploads screen `tex` (its pixels px with the Color setting applied) from HD art at k times its size,
  * to the view; 0 if it cannot. */
 static int upload_hd(View *v, int tex, const uint32_t *px, const VideoHd *src, int k) {
-    int w = screen_width(tex), ow = w * k, oh = SCREEN_H * k;
+    int w = screen_width(tex), h = screen_height(tex), ow = w * k, oh = h * k;
     float tw = 0, th = 0;
     SDL_Texture **hd_tex = v->hd_tex;
     if (hd_tex[tex]) SDL_GetTextureSize(hd_tex[tex], &tw, &th);
-    int full_w = (tex >= 2 ? VIDEO_LINE_MAX : SCREEN_W) * k;
-    if ((int)tw != full_w || (int)th != oh) {
+    int full_w = (tex >= 2 ? VIDEO_LINE_MAX : SCREEN_W) * k, full_h = (tex >= 2 ? VIDEO_ROWS_MAX : SCREEN_H) * k;
+    if ((int)tw != full_w || (int)th != full_h) {
         SDL_DestroyTexture(hd_tex[tex]);
-        hd_tex[tex] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, full_w, oh);
+        hd_tex[tex] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, full_w, full_h);
         if (!hd_tex[tex]) return 0;
         SDL_SetTextureScaleMode(hd_tex[tex], SDL_SCALEMODE_LINEAR);
         SDL_SetTextureBlendMode(hd_tex[tex], tex >= 2 ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE); /* see create_textures */
     }
     static size_t have;
-    size_t need = (size_t)VIDEO_LINE_MAX * SCREEN_H * k * k;
+    size_t need = (size_t)VIDEO_LINE_MAX * VIDEO_ROWS_MAX * k * k;
     if (have < need) {
         SDL_free(hd_px);
         hd_px = SDL_malloc(need * 4);
         have = hd_px ? need : 0;
         if (!hd_px) return 0;
     }
-    compose_hd(&(HdJob){px, src, hd_frame->palette, SETTING(SET_COLOR) ? gamma_lut : NULL, hd_px, w, k, 0, SCREEN_H});
+    compose_hd(&(HdJob){px, src, hd_frame->palette, SETTING(SET_COLOR) ? gamma_lut : NULL, hd_px, w, k, 0, h});
     SDL_UpdateTexture(hd_tex[tex], &(SDL_Rect){0, 0, ow, oh}, hd_px, ow * 4);
     return 1;
 }
 
 /* Uploads screen `tex` to the view; shown: the screen is in its layout (only those are drawn from HD art). */
 static void upload(View *v, int tex, const uint32_t *px, int shown) {
-    int w = screen_width(tex);
-    px = color_corrected(px, w);
+    int w = screen_width(tex), h = screen_height(tex);
+    px = color_corrected(px, w, h);
     const VideoHd *src = shown ? hd_source(v, tex) : NULL;
     SDL_FRect dest = dest_rect(v);
     int k = src ? SDL_min(gfxmod_hd_scale(), internal_scale(v, &dest)) : 0;
     v->hd_k[tex] = k > 1 && upload_hd(v, tex, px, src, k) ? k : 0;
-    SDL_UpdateTexture(v->native[tex], &(SDL_Rect){0, 0, w, SCREEN_H}, px, w * 4);
+    SDL_UpdateTexture(v->native[tex], &(SDL_Rect){0, 0, w, h}, px, w * 4);
     if (SETTING(SET_FILTER) == FILTER_SMOOTH) {
-        scale2x(px, w, SCREEN_H, scale2x_tmp);
-        scale2x(scale2x_tmp, w * 2, SCREEN_H * 2, scaled);
-        SDL_UpdateTexture(v->smooth[tex], &(SDL_Rect){0, 0, w * SMOOTH_SCALE, SCREEN_H * SMOOTH_SCALE}, scaled,
+        scale2x(px, w, h, scale2x_tmp);
+        scale2x(scale2x_tmp, w * 2, h * 2, scaled);
+        SDL_UpdateTexture(v->smooth[tex], &(SDL_Rect){0, 0, w * SMOOTH_SCALE, h * SMOOTH_SCALE}, scaled,
                           w * SMOOTH_SCALE * 4);
     }
 }
@@ -732,6 +762,16 @@ static int draw_shaded(const SDL_FRect *shown, const int *screens, int nshown, i
     return 1;
 }
 
+/* Zoomed out, the UI layer over the main screen (at x, y, cw x ch native pixels): at the scale and in the place it has
+ * when not zoomed out, its 192 rows over the whole height. */
+static void draw_ui(const View *v, int x, int y, int n, int cw, int ch) {
+    if (!ui_on) return;
+    int k = !view_shader(v) && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
+    float columns = (float)cw * SCREEN_H / ch;
+    SDL_RenderTexture(v->ren, k > 1 ? v->smooth[5] : v->native[5], &(SDL_FRect){((float)main_w - columns) / 2 * k, 0, columns * k, (float)SCREEN_H * k},
+                      &(SDL_FRect){(float)x * n, (float)y * n, (float)cw * n, (float)ch * n});
+}
+
 /* Draws the view's shown screens into its internal target, then the target into its window (through the shader
  * if one is chosen: then the target is the native size). */
 static void draw_screens(View *v) {
@@ -757,38 +797,40 @@ static void draw_screens(View *v) {
         int k = hd_k[tex] ? hd_k[tex] : !shader && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
         SDL_Texture *t = hd_k[tex] ? hd_tex[tex] : k > 1 ? smooth[tex] : native[tex];
         if (tex != 2 || !main_guard) {
-            int w = screen_width(tex);
-            SDL_FRect src = {0, 0, (float)w * k, (float)SCREEN_H * k};
-            SDL_FRect r = {(float)x * n, (float)y * n, (float)w * n, (float)SCREEN_H * n};
+            int w = screen_width(tex), h = screen_height(tex);
+            SDL_FRect src = {0, 0, (float)w * k, (float)h * k};
+            SDL_FRect r = {(float)x * n, (float)y * n, (float)w * n, (float)h * n};
             SDL_RenderTexture(ren, t, &src, &r);
             screens[nshown] = screen;
             shown[nshown++] = r;
+            if (tex == 2) draw_ui(v, x, y, n, cw, ch);
             continue;
         }
         /* The field with its hidden columns, slid (camera smoothing); rows beyond the picture repeat its edge. */
         float vw = (float)(main_w - 2 * main_guard), sx = ((float)main_guard + slide_x) * k, o = slide_y;
         screens[nshown] = screen;
-        shown[nshown++] = (SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n};
+        shown[nshown++] = (SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)main_h * n};
         if (still_on) { /* what holds still on screen (the prison bridge's sky): under the slid picture, not slid */
             SDL_RenderTexture(ren, hd_k[2] ? (hd_k[4] == k ? hd_tex[4] : native[4]) : k > 1 ? smooth[4] : native[4],
-                              &(SDL_FRect){(float)main_guard * k, 0, vw * k, (float)SCREEN_H * k},
-                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n});
+                              &(SDL_FRect){(float)main_guard * k, 0, vw * k, (float)main_h * k},
+                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)main_h * n});
         }
-        float rows = SCREEN_H - SDL_fabsf(o), top = o < 0 ? -o : 0;
+        float rows = main_h - SDL_fabsf(o), top = o < 0 ? -o : 0;
         SDL_RenderTexture(ren, t, &(SDL_FRect){sx, (o > 0 ? o : 0) * k, vw * k, rows * k},
                           &(SDL_FRect){(float)x * n, (top + y) * n, vw * n, rows * n});
         if (o != 0) {
-            float edge = o > 0 ? SCREEN_H - 1 : 0, at = o > 0 ? rows : 0;
+            float edge = o > 0 ? main_h - 1 : 0, at = o > 0 ? rows : 0;
             SDL_RenderTexture(ren, t, &(SDL_FRect){sx, edge * k, vw * k, (float)k},
                               &(SDL_FRect){(float)x * n, (at + y) * n, vw * n, SDL_fabsf(o) * n});
         }
         if (party_on) { /* the sprites the camera follows: not slid (drawn at the main screen's scale) */
             SDL_RenderTexture(ren, hd_k[2] ? (hd_k[3] == k ? hd_tex[3] : native[3]) : k > 1 ? smooth[3] : native[3],
-                              &(SDL_FRect){(float)main_guard * k, 0, vw * k, (float)SCREEN_H * k},
-                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n});
+                              &(SDL_FRect){(float)main_guard * k, 0, vw * k, (float)main_h * k},
+                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)main_h * n});
         }
+        draw_ui(v, x, y, n, cw, ch);
     }
-    if (minimap_shown(v)) draw_minimap(ren, n);
+    if (minimap_shown(v)) draw_minimap(ren, (float)n * (main_shown(v) ? (float)main_h / SCREEN_H : 1));
     SDL_Texture *grid = !shader && SETTING(SET_FILTER) == FILTER_LCD ? lcd_grid(v, n) : NULL;
     for (int i = 0; grid && i < nshown; i++) SDL_RenderTextureTiled(ren, grid, NULL, 1, &shown[i]);
     SDL_SetRenderTarget(ren, NULL);
@@ -810,14 +852,14 @@ static void list_shaders(void) {
     settings[SET_SHADER] = (Setting){"shader", "Shader", n + 1, v > 0 ? v : 0, shader_names, NULL};
 }
 
-/* The view's screen textures (the first count of top, bottom, main, party, still). The main screen is opaque
- * except where the still layer shows through it; the party and still layers are transparent elsewhere. */
+/* The view's screen textures (the first count of top, bottom, main, party, still, UI). The main screen is opaque
+ * except where the still layer shows through it; the party, still and UI layers are transparent elsewhere. */
 static int create_textures(View *v, int count) {
     for (int i = 0; i < count; i++) {
-        int w = i >= 2 ? VIDEO_LINE_MAX : SCREEN_W;
-        v->native[i] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w, SCREEN_H);
+        int w = i >= 2 ? VIDEO_LINE_MAX : SCREEN_W, h = i >= 2 ? VIDEO_ROWS_MAX : SCREEN_H;
+        v->native[i] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w, h);
         v->smooth[i] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING,
-                                         w * SMOOTH_SCALE, SCREEN_H * SMOOTH_SCALE);
+                                         w * SMOOTH_SCALE, h * SMOOTH_SCALE);
         if (!v->native[i] || !v->smooth[i]) return 0;
         SDL_SetTextureScaleMode(v->native[i], SDL_SCALEMODE_NEAREST);
         SDL_SetTextureScaleMode(v->smooth[i], SDL_SCALEMODE_LINEAR);
@@ -949,7 +991,7 @@ int display_init(void) {
     SDL_SetRenderVSync(ren, SETTING(SET_VSYNC));
     if (SETTING(SET_WINDOW) != WINDOW_WINDOWED) last_full = SETTING(SET_WINDOW);
     if (!force_windowed) apply_window_mode(win, SETTING(SET_WINDOW));
-    if (!create_textures(&primary, 5)) return 0;
+    if (!create_textures(&primary, 6)) return 0;
     if (SETTING(SET_SECOND)) {
         if (!open_second()) SETTING(SET_SECOND) = 0;
         resize_window();
@@ -957,19 +999,23 @@ int display_init(void) {
     return 1;
 }
 
-void display_frame(const uint32_t *const screens[3], const uint32_t *party, const uint32_t *still, int width,
-                   int new_frame, float slide_dx, float slide_dy, const VideoHdFrame *hd) {
+void display_frame(const uint32_t *const screens[3], const uint32_t *party, const uint32_t *still, const uint32_t *ui,
+                   int width, int height, int new_frame, float slide_dx, float slide_dy, const VideoHdFrame *hd) {
     /* A main screen of the margin asked for (plus guard) is the field: its guard columns are hidden. */
-    main_guard = asked_guard && width == SCREEN_W + 2 * asked_margin ? asked_guard : 0;
+    main_guard = asked_guard && (width == SCREEN_W + 2 * asked_margin || (asked_zoom_rows && width == SCREEN_W + 2 * asked_zoom_margin)) ? asked_guard : 0;
     slide_x = main_guard ? slide_dx : 0;
     slide_y = main_guard ? slide_dy : 0;
     asked_guard = camera_smoothing() && wide_view() ? VIDEO_SLIDE_MAX : 0;
-    asked_margin = SDL_min(wide_margin() + asked_guard, VIDEO_MARGIN_MAX);
+    asked_margin = SDL_min(wide_margin() + asked_guard, WIDE_MARGIN_MAX);
     video_set_wide_margin(asked_margin);
+    zoom_view(asked_guard, &asked_zoom_rows, &asked_zoom_margin);
+    video_set_zoom(asked_zoom_rows, asked_zoom_margin);
     video_set_fill_sides(SETTING(SET_FILL));
     video_set_track_bottom(SETTING(SET_MINIMAP) && minimap_allowed(&primary));
     video_set_camera_smoothing(asked_guard != 0);
     main_w = width;
+    main_h = height;
+    ui_on = ui != NULL;
     party_on = main_guard && party;
     still_on = main_guard && still;
     if (new_frame || reupload) {
@@ -989,6 +1035,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
         if (minimap_shown(&primary)) upload_minimap();
         if (party_on) upload(&primary, 3, party, shown[2]);
         if (still_on) upload(&primary, 4, still, shown[2]);
+        if (ui_on) upload(&primary, 5, ui, 0);
         hd_frame = NULL;
         reupload = 0;
     }
@@ -1055,7 +1102,7 @@ int display_setting_get(int id) { return settings[id].value; }
 int display_setting_shown(int id) {
     switch (id) {
     case SET_LAYOUT: return !secondary.win; /* one screen per window */
-    case SET_FILL: return SETTING(SET_ASPECT) != ASPECT_ORIGINAL;
+    case SET_FILL: return SETTING(SET_ASPECT) != ASPECT_ORIGINAL || SETTING(SET_ZOOM);
     case SET_MINIMAP: return minimap_allowed(&primary);
     case SET_MINIMAP_SIZE:
     case SET_MINIMAP_BG: return SETTING(SET_MINIMAP) && minimap_allowed(&primary);

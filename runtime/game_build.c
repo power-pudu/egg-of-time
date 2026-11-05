@@ -106,7 +106,7 @@ static void show(const char *const *lines, int count, float progress) {
         }
     }
     const uint32_t *const screens[3] = {screen, blank, screen};
-    display_frame(screens, NULL, NULL, SCREEN_W, 1, 0, 0, NULL);
+    display_frame(screens, NULL, NULL, NULL, SCREEN_W, SCREEN_H, 1, 0, 0, NULL);
 }
 
 /* Handles window events; 0 when the player closes the window. *key is set on a key press or click. */

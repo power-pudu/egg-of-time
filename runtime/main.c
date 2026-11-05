@@ -160,17 +160,18 @@ static uint32_t auto_keys(Uint64 now) {
 
 /* ---- presentation ---- */
 
-static uint32_t top_px[SCREEN_W * SCREEN_H], bottom_px[SCREEN_W * SCREEN_H], main_px[VIDEO_LINE_MAX * SCREEN_H];
+static uint32_t top_px[SCREEN_W * SCREEN_H], bottom_px[SCREEN_W * SCREEN_H], main_px[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
 static const uint32_t *const screens[3] = {top_px, bottom_px, main_px};
-static int main_w = SCREEN_W; /* main_px: rows of this width (widescreen) */
-static uint32_t party_px[VIDEO_LINE_MAX * SCREEN_H]; /* main screen's party layer (camera smoothing) */
-static uint32_t still_px[VIDEO_LINE_MAX * SCREEN_H]; /* main screen's still layer (camera smoothing) */
+static int main_w = SCREEN_W, main_h = SCREEN_H; /* main_px: rows of this width (widescreen), this many (zoom out) */
+static uint32_t party_px[VIDEO_LINE_MAX * VIDEO_ROWS_MAX]; /* main screen's party layer (camera smoothing) */
+static uint32_t still_px[VIDEO_LINE_MAX * VIDEO_ROWS_MAX]; /* main screen's still layer (camera smoothing) */
+static uint32_t ui_px[VIDEO_LINE_MAX * SCREEN_H];          /* main screen's UI layer (zoom out) */
 /* The screens' sources for HD graphics mods (gfx_mod.c). */
-static VideoHd hd_top[SCREEN_W * SCREEN_H], hd_bottom[SCREEN_W * SCREEN_H], hd_main[VIDEO_LINE_MAX * SCREEN_H],
-    hd_party[VIDEO_LINE_MAX * SCREEN_H], hd_still[VIDEO_LINE_MAX * SCREEN_H];
+static VideoHd hd_top[SCREEN_W * SCREEN_H], hd_bottom[SCREEN_W * SCREEN_H], hd_main[VIDEO_LINE_MAX * VIDEO_ROWS_MAX],
+    hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
 static uint16_t hd_palette[RT_PALETTE_SIZE / 2];
 static VideoHdFrame hd = {hd_top, hd_bottom, hd_main, hd_party, hd_still, hd_palette, 0};
-static int party_on, still_on;
+static int party_on, still_on, ui_on;
 
 
 /* EGG_SHOTS=<dir>: save the screens (top, bottom, and the main screen of single screen mode, which may be
@@ -197,12 +198,12 @@ static void glide_step(Glide *g, int step, uint64_t t, uint64_t period) {
 }
 
 static void save_shot(const char *dir, int n) {
-    SDL_Surface *s = SDL_CreateSurface(main_w, SCREEN_H * 3, SDL_PIXELFORMAT_ABGR8888);
+    SDL_Surface *s = SDL_CreateSurface(main_w, SCREEN_H * 2 + main_h, SDL_PIXELFORMAT_ABGR8888);
     if (!s) return;
     SDL_ClearSurface(s, 0, 0, 0, 1);
     for (int i = 0; i < 3; i++) {
         int w = i == 2 ? main_w : SCREEN_W;
-        for (int y = 0; y < SCREEN_H; y++) {
+        for (int y = 0; y < (i == 2 ? main_h : SCREEN_H); y++) {
             memcpy((uint8_t *)s->pixels + (size_t)(y + i * SCREEN_H) * s->pitch, &screens[i][y * w], (size_t)w * 4);
         }
     }
@@ -383,7 +384,7 @@ int main(int argc, char **argv) {
             }
             shown_serial = serial;
             shown_t = frame_t;
-            main_w = video_copy_frame(top_px, bottom_px, main_px, party_px, &party_on, still_px, &still_on,
+            main_w = video_copy_frame(top_px, bottom_px, main_px, &main_h, party_px, &party_on, still_px, &still_on, ui_px, &ui_on,
                                       gfxmod_hd_scale() ? &hd : NULL);
             if (cam_cut || !display_camera_smoothing()) {
                 glide_x = glide_y = (Glide){0};
@@ -398,13 +399,13 @@ int main(int argc, char **argv) {
         float lag_x = display_camera_smoothing() ? glide_lag(&glide_x, now_ns) : 0;
         float lag_y = display_camera_smoothing() ? glide_lag(&glide_y, now_ns) : 0;
         if (sysmenu_is_open()) {
-            main_w = SCREEN_W;
-            party_on = still_on = 0;
+            main_w = SCREEN_W, main_h = SCREEN_H;
+            party_on = still_on = ui_on = 0;
             sysmenu_draw(main_px);
             memcpy(top_px, main_px, sizeof top_px); /* layouts other than top-only show it too */
             new_frame = 1;
         }
-        display_frame(screens, party_on ? party_px : NULL, still_on ? still_px : NULL, main_w, new_frame, lag_x, lag_y,
+        display_frame(screens, party_on ? party_px : NULL, still_on ? still_px : NULL, ui_on ? ui_px : NULL, main_w, main_h, new_frame, lag_x, lag_y,
                       hd.on && !sysmenu_is_open() ? &hd : NULL);
         presented++;
         if (log_fps && SDL_GetTicks() >= fps_at) {

@@ -1183,12 +1183,12 @@ static int map_panel_shown(const uint32_t *bottom) {
 }
 
 /* The field paused: how to open the System Settings menu, at the bottom of the main screen (w columns). */
-static void pause_hint(uint32_t *main, int w) {
+static void pause_hint(uint32_t *main, int w, int h) {
     const char *hint = rt_french() ? "Appuyez sur SELECT pour les options syst\xC3\xA8me" : "Press SELECT to open System Settings";
-    ui_draw_text_in(main, w, hint, (w - ui_text_width(hint)) / 2, SCREEN_H - UI_FONT_H - 6, 0xFFFFFFFFu);
+    ui_draw_text_in(main, w, hint, (w - ui_text_width(hint)) / 2, h - UI_FONT_H - 6, 0xFFFFFFFFu);
 }
 
-int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint32_t *wide, int wide_w,
+int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint32_t *wide, int wide_w, int wide_h,
                const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from) {
     Scene sc = current();
     *from = SS_FROM_NONE;
@@ -1206,15 +1206,15 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
                  !rt_overlay_resident(3) /* a battle */ && map_panel_shown(bottom);
     SDL_SetAtomicInt(&minimap_rows, map_ok ? video_box_top() : 0);
     if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE) { /* widescreen: the top screen with its margins (also with single screen mode off: the second window) */
-        memcpy(main, wide, (size_t)wide_w * SCREEN_H * 4);
+        memcpy(main, wide, (size_t)wide_w * wide_h * 4);
         *from = SS_FROM_WIDE;
-        if (paused) pause_hint(main, wide_w);
+        if (paused) pause_hint(main, wide_w, wide_h);
         return wide_w;
     }
     if (!ss_enabled()) {
         memcpy(main, top, SCREEN_W * SCREEN_H * 4);
         *from = SS_FROM_TOP;
-        if (paused) pause_hint(main, SCREEN_W);
+        if (paused) pause_hint(main, SCREEN_W, SCREEN_H);
         return SCREEN_W;
     }
     switch (sc.kind) {

@@ -8,13 +8,14 @@
 #include "video.h"
 
 int display_init(void); /* window, renderer, saved settings; 0 on failure */
-/* Draws a window frame; new_frame uploads the latest screens: top, bottom (256x192), main (192 rows of
- * `width` columns) and the main screen's party layer (NULL: none), as video_copy_frame returns them. slide_dx/dy:
+/* Draws a window frame; new_frame uploads the latest screens: top, bottom (256x192), main (`height` rows of
+ * `width` columns) and the main screen's party layer (NULL: none), as video_copy_frame returns them; ui: its UI
+ * layer (NULL: none), drawn at the scale of 192 rows over the whole picture. slide_dx/dy:
  * camera smoothing, where the field picture is shown from (pixels; the party layer does not slide). still: the main
  * screen's still layer (NULL: none), drawn under the slid picture without the slide. */
 /* hd: the screens' sources for HD graphics mods (NULL: none), drawn from HD art while Mods is on. */
-void display_frame(const uint32_t *const screens[3], const uint32_t *party, const uint32_t *still, int width,
-                   int new_frame, float slide_dx, float slide_dy, const VideoHdFrame *hd);
+void display_frame(const uint32_t *const screens[3], const uint32_t *party, const uint32_t *still, const uint32_t *ui,
+                   int width, int height, int new_frame, float slide_dx, float slide_dy, const VideoHdFrame *hd);
 /* Whether the framerate setting asks for camera smoothing (above 60). */
 int display_camera_smoothing(void);
 /* F2 layout, F3 swap screens, F4 filter, F11 fullscreen; returns 1 if the key was used. */
@@ -36,7 +37,7 @@ void display_capture(const char *path);
 
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
  * Setting one applies it at once and saves eggoftime.ini. */
-enum { SET_LANGUAGE, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND,
+enum { SET_LANGUAGE, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_ZOOM, SET_FILL, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND,
        SET_COUNT };
 enum { LANGUAGE_ENGLISH, LANGUAGE_FRENCH }; /* SET_LANGUAGE values */
 enum { FF_MUSIC_FAST, FF_MUSIC_NORMAL };    /* SET_FF_MUSIC values */

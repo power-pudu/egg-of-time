@@ -58,6 +58,7 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_SECOND] = "The other screen in its own window.",
     [SET_RESOLUTION] = "Size the screens are drawn at.",
     [SET_ASPECT] = "Wider shows more of the world.",
+    [SET_ZOOM] = "More of the world; text keeps its size.",
     [SET_FILL] = "Repeat small rooms' tiles beside them.",
     [SET_MINIMAP] = "The bottom screen's map, at the top left.",
     [SET_MINIMAP_SIZE] = "How much of the screen the map takes.",

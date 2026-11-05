@@ -37,7 +37,10 @@
  * turns into DS sprites (0x0211cbb4: X 256-511 read as -256..-1). Objects also keep an on-screen flag (ov002
  * 0x0210cd24: X - camera + 16, wrapped at 0x600, below 0x120; the birds go away once it clears). In widescreen both
  * tests are widened by the margins (rt_ws_snes_cmp) and a converted X below -128 (never kept by the game) is the
- * right margin's (rt_ws_world_sprite). */
+ * right margin's (rt_ws_world_sprite).
+ *
+ * Zoom out draws rows above and below the view as well: the same fills reach them, and so does the sprite view, with
+ * what sprites' 8-bit Y can no longer say kept in their attributes (rt_ws_draw_cell, rt_ws_enter_oam). */
 #include "dispatch.h"
 #include "rt.h"
 #include "single_screen.h"
@@ -50,6 +53,8 @@
 #define PAL_REMAP 0x02058714u
 
 static int ram_ptr(uint32_t p) { return p >> 24 == 0x02; }
+
+static int field_rows; /* this frame's rows above and below the screen in the field (zoom out), 0 elsewhere */
 
 /* The room map's metatile rows (room + 0x1000: 0x100 a row) as the field last had them. */
 static struct {
@@ -202,16 +207,82 @@ int ws_room_span(int *x0, int *x1) {
     return 1;
 }
 
+/* The tile (packed, room_tile) shows nothing but black on BG2, which holds layer 0. */
+static int tile_black(uint32_t t) {
+    uint16_t e = map_entry(0, t), cnt = io_get16(0x0c);
+    if (cnt & 0x80) return 0;
+    uint32_t chr = 0x06000000u + ((io_get32(0) >> 24) & 7) * 0x10000u + ((cnt >> 2) & 15) * 0x4000u + (e & 0x3FFu) * 32;
+    for (int i = 0; i < 32; i++) {
+        const uint8_t *p = video_vram_ptr(chr + (uint32_t)i);
+        if (!p) return 0;
+        for (int n = 0; n < 2; n++) {
+            uint32_t ix = (*p >> (4 * n)) & 15, color = 0;
+            if (ix) memcpy(&color, &rt_palette[(e >> 12) * 32 + ix * 2], 2);
+            if (color & 0x7FFF) return 0;
+        }
+    }
+    return 1;
+}
+
+/* A metatile row of the void between rooms: across the bounds, one black metatile on layer 0, nothing on the others. */
+static int void_row(uint32_t scroll, uint32_t tilesets, int left, int right, int r) {
+    uint32_t first[4];
+    for (int i = 0; i < 4; i++) {
+        first[i] = room_tile(scroll, tilesets, 0, left * 2 + (i & 1), r * 2 + (i >> 1));
+        if (!tile_black(first[i])) return 0;
+    }
+    for (int m = left; m <= right; m++) {
+        for (int i = 0; i < 4; i++) {
+            int c = m * 2 + (i & 1), row = r * 2 + (i >> 1);
+            if (room_tile(scroll, tilesets, 0, c, row) != first[i]) return 0;
+            if (room_tile(scroll, tilesets, 1, c, row) & 0x3FF || room_tile(scroll, tilesets, 2, c, row) & 0x3FF) return 0;
+        }
+    }
+    return 1;
+}
+
+/* The bounds can hold several rooms one above the other (the prison's towers), with the void between them; the
+ * camera never shows the next one on the DS. So the rows end at the void on either side of the view's middle, though
+ * never inside the 192 rows the game draws for itself. */
+int ws_room_rows(int *y0, int *y1) {
+    if (!ss_in_field()) return 0;
+    uint32_t scroll = rt_r32(SCROLL), tilesets = rt_r32(TILESETS);
+    if (!ram_ptr(scroll) || !ram_ptr(tilesets) || room_copy.of != rt_r32(ROOM)) return 0;
+    int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17), top = rt_r8(scroll + 0x18), bottom = rt_r8(scroll + 0x19);
+    if (bottom < top || right < left) return 0;
+    int view = (int16_t)rt_r16(CAMERA + 2), middle = (view + SCREEN_H / 2) >> 4;
+    int from = top, to = bottom;
+    if (middle >= top && middle <= bottom && !void_row(scroll, tilesets, left, right, middle)) {
+        int last_up = (view - field_rows) >> 4, last_down = (view + SCREEN_H - 1 + field_rows) >> 4;
+        for (int r = middle - 1; r >= top && r >= last_up; r--) {
+            if (void_row(scroll, tilesets, left, right, r)) { from = r + 1; break; }
+        }
+        for (int r = middle + 1; r <= bottom && r <= last_down; r++) {
+            if (void_row(scroll, tilesets, left, right, r)) { to = r - 1; break; }
+        }
+    }
+    *y0 = from * 16 - view;
+    *y1 = (to + 1) * 16 - view;
+    if (*y0 > 0 && from > top) *y0 = 0;
+    if (*y1 < SCREEN_H && to < bottom) *y1 = SCREEN_H;
+    return 1;
+}
+
 int ws_sprite_origin(void) { /* the view as widened here, recognised by its shape (also after a state load) */
     int32_t x = (int32_t)rt_r32(G2D_VIEW);
     return x < 0 && x >= -VIDEO_MARGIN_MAX * 4096 && rt_r32(G2D_VIEW + 8) == FX(SCREEN_W) - 2 * (uint32_t)x ? -x / 4096 : 0;
 }
 
-/* Widens the view to margin columns a side; 0 puts back a view widened here (and leaves any other alone). */
-static void set_sprite_view(int margin) {
-    if (ws_sprite_origin() == margin || (!margin && !ws_sprite_origin())) return;
+int ws_sprite_rows(void) { return ws_sprite_origin() ? -(int32_t)rt_r32(G2D_VIEW + 4) / 4096 - 1 : 0; }
+
+/* Widens the view to margin columns a side and rows above and below; 0 puts back a view widened here (and leaves
+ * any other alone). */
+static void set_sprite_view(int margin, int rows) {
+    if ((ws_sprite_origin() == margin && ws_sprite_rows() == rows) || (!margin && !ws_sprite_origin())) return;
     rt_w32(G2D_VIEW, FX(-margin));
+    rt_w32(G2D_VIEW + 4, FX(-1 - rows));
     rt_w32(G2D_VIEW + 8, FX(SCREEN_W + 2 * margin));
+    rt_w32(G2D_VIEW + 12, FX(SCREEN_H + 2 * rows));
 }
 
 /* The field scene's renderer surface (scene secondary base *(0x0207088c) + 0xd748, view rect first). Its own
@@ -271,17 +342,96 @@ static int field_margin; /* this frame's margin columns in the field, 0 elsewher
 static void game_object_visible(CPU *cpu) { rt_call_wrapped(cpu, "ov004", 0x02130dbcu); } /* the original */
 void rt_ws_object_visible(CPU *cpu) {
     uint32_t scroll = rt_r32(SCROLL);
-    int extra = (field_margin + 7) >> 3; /* tiles */
+    int extra = (field_margin + 7) >> 3, extra_rows = (field_rows + 7) >> 3; /* tiles */
     if (!extra || !ram_ptr(scroll) || cpu->resume_pc) {
         game_object_visible(cpu);
         return;
     }
-    uint32_t left = rt_r16(scroll + 4), right = rt_r16(scroll + 6);
+    uint32_t left = rt_r16(scroll + 4), right = rt_r16(scroll + 6), top = rt_r16(scroll + 8), bottom = rt_r16(scroll + 0xa);
     rt_w16(scroll + 4, left > (uint32_t)extra ? left - (uint32_t)extra : 0);
     rt_w16(scroll + 6, right + (uint32_t)extra);
+    rt_w16(scroll + 8, top > (uint32_t)extra_rows ? top - (uint32_t)extra_rows : 0);
+    rt_w16(scroll + 0xa, bottom + (uint32_t)extra_rows);
     game_object_visible(cpu);
     rt_w16(scroll + 4, left);
     rt_w16(scroll + 6, right);
+    rt_w16(scroll + 8, top);
+    rt_w16(scroll + 0xa, bottom);
+}
+
+/* Zoom out: a sprite's Y in OAM has 8 bits, which told the DS's 192 rows and the sprites above them apart but not
+ * the 248 rows here, and the text box's and menus' sprites must stay out of the zoomed picture. Both are known only
+ * while the sprite is drawn, so they are kept in bits of attribute 1 that sprites without rotation leave unused
+ * (WS_OAM_ABOVE, WS_OAM_UI; video.c reads them):
+ *   - main 0x02019fd4 (r0 = the renderer surface, view rect first) draws a cell from the place at +0x10 of the current
+ *     matrix (*(*(0x0201a3d4)) + 0x2c, or the default *(0x0201a3d8)) less the view's top-left, and its sprites lie
+ *     within 8 bits of that: so it says which of the two a sprite's Y is;
+ *   - the surface's own view is 1024 wide (screen coordinates: set_screen_view); world sprites use the G2D view;
+ *   - in a battle, the scene's draw also uses the G2D view for its first list of sprites (main 0x02041940, the call
+ *     returning to 0x02041a34), the HUD beside the menus: gauges, HP / MP, the menu's hand, one sprite each on the rows
+ *     of the panel at the bottom. They become UI too, their Y put back in the DS screen's rows. The same list's other
+ *     cells stay in the world: the target's bracket (4 sprites) and the hand over a target higher up;
+ *   - main 0x02048098 (r0 = the sprite's attributes) enters each sprite. While the byte at 0x020fd614 is set, it also
+ *     chooses the sprite's priority by comparing its Y with the threshold at 0x020fd618, in the DS screen's rows, so
+ *     for the call that threshold is put where the comparison comes out as it would have there. */
+#define CELL_MATRIX_PTR 0x0201a3d4u
+#define CELL_DEFAULT_MATRIX 0x0201a3d8u
+#define OAM_PRIORITY_ON 0x020fd614u
+#define OAM_PRIORITY_Y 0x020fd618u
+
+#define BATTLE_HUD_LIST 0x02041a34u
+#define BATTLE_HUD_TOP 132 /* the DS screen's row */
+
+static int cell_y, cell_ui, cell_hud, cell_known;
+
+/* In the current call chain, within the scene's draw: the return address into it. */
+static int called_from(const CPU *cpu, uint32_t ret) {
+    for (uint32_t i = cpu->ret_depth, n = 0; i > 0 && n < 12; i--, n++) {
+        if (cpu->ret_stack[i - 1] == ret) return 1;
+    }
+    return 0;
+}
+
+static void game_draw_cell(CPU *cpu) { rt_call_wrapped(cpu, "main", 0x02019fd4u); } /* the original */
+void rt_ws_draw_cell(CPU *cpu) {
+    if (!field_rows || cpu->resume_pc) {
+        game_draw_cell(cpu);
+        return;
+    }
+    uint32_t surface = R[0], core = rt_r32(rt_r32(CELL_MATRIX_PTR)), matrix = ram_ptr(core) ? rt_r32(core + 0x2c) : 0;
+    if (!matrix) matrix = rt_r32(CELL_DEFAULT_MATRIX);
+    cell_y = (int32_t)(rt_r32(matrix + 0x14) - rt_r32(surface + 4)) / 4096;
+    cell_ui = rt_r32(surface + 8) == FX(1024);
+    /* Another surface (the bottom screen's) is none of this. */
+    cell_known = cell_ui || (rt_r32(surface) == rt_r32(G2D_VIEW) && rt_r32(surface + 8) == rt_r32(G2D_VIEW + 8));
+    cell_hud = !cell_ui && rt_overlay_resident(3) && rt_r16(R[1]) == 1 && cell_y - field_rows >= BATTLE_HUD_TOP && called_from(cpu, BATTLE_HUD_LIST);
+    game_draw_cell(cpu);
+    cell_known = 0;
+}
+
+static void game_enter_oam(CPU *cpu) { rt_call_wrapped(cpu, "main", 0x02048098u); } /* the original */
+void rt_ws_enter_oam(CPU *cpu) {
+    if (!field_rows || !cell_known || cpu->resume_pc) {
+        game_enter_oam(cpu);
+        return;
+    }
+    uint32_t a = R[0];
+    uint32_t a0 = rt_r16(a), a1 = rt_r16(a + 2) & ~(WS_OAM_UI | WS_OAM_ABOVE);
+    int y = a0 & 0xFF, real = cell_y + (int8_t)(y - cell_y); /* in the view, from its top */
+    int affine = a0 & 0x100, shown = cell_ui ? y : real - field_rows; /* its row on the DS screen */
+    if (!affine) {
+        if (cell_hud) a0 = (a0 & ~0xFFu) | ((uint32_t)shown & 0xFF);
+        if (cell_ui || cell_hud) a1 |= WS_OAM_UI;
+        else if (real < 0) a1 |= WS_OAM_ABOVE;
+        else if (real >= SCREEN_H + 2 * field_rows) a0 |= 0x200; /* beyond the view: hidden */
+        rt_w16(a, (uint16_t)a0);
+        rt_w16(a + 2, (uint16_t)a1);
+    }
+    uint32_t threshold = rt_r32(OAM_PRIORITY_Y);
+    int choose = rt_r8(OAM_PRIORITY_ON), read = y >= 0xC0 ? y - 256 : y;
+    if (choose) rt_w32(OAM_PRIORITY_Y, (uint32_t)(shown > (int32_t)threshold ? read - 1 : read));
+    game_enter_oam(cpu);
+    if (choose) rt_w32(OAM_PRIORITY_Y, threshold);
 }
 
 #define WORLD 0xddc0u
@@ -318,7 +468,7 @@ void rt_ws_world_sprite(CPU *cpu) {
     game_world_sprite(cpu);
 }
 
-static void fill_world_margins(int margin) {
+static void fill_world_margins(int margin, int rows) {
     uint32_t base = rt_r32(CURRENT_SCENE);
     if (!ram_ptr(base)) return;
     uint32_t w = base + WORLD;
@@ -329,28 +479,30 @@ static void fill_world_margins(int margin) {
             (io_get16(0x10 + 4 * L) & 511) != (x & 511) || (io_get16(0x12 + 4 * L) & 255) != (y & 255))
             continue;
         int own = x >> 4, left = (x - margin) >> 4, right = (x + SCREEN_W - 1 + margin) >> 4;
+        int own_top = y >> 4, own_bottom = (y + SCREEN_H - 1) >> 4;
         for (int c = left; c <= right; c++) {
-            if (c >= own && c <= own + 16) continue; /* the game's own columns */
             int wc = (c % 0x60 + 0x60) % 0x60;
-            for (int r = y >> 4; r <= (y + SCREEN_H - 1) >> 4; r++) {
+            /* By tile row: zoomed out, a metatile row may show at both edges of the ring, a tile row of it at each. */
+            for (int t = (y - rows) >> 3; t <= (y + SCREEN_H - 1 + rows) >> 3; t++) {
+                int r = t >> 1;
+                if (c >= own && c <= own + 16 && r >= own_top && r <= own_bottom) continue; /* the game's own */
                 uint32_t id = rt_r8(map + (uint32_t)(r & 63) * 0x60 + (uint32_t)wc);
-                uint32_t e = sheet + ((id >> 4) * 2) * 64 + (id & 15) * 4;
-                int slot = (c * 2) & 63, row = (r * 2) & 31;
+                uint32_t e = sheet + ((id >> 4) * 2) * 64 + (id & 15) * 4 + (uint32_t)(t & 1) * 64;
+                int slot = (c * 2) & 63, row = t & 31;
                 put(L, slot, row, (uint16_t)rt_r16(e));
                 put(L, slot + 1, row, (uint16_t)rt_r16(e + 2));
-                put(L, slot, row + 1, (uint16_t)rt_r16(e + 64));
-                put(L, slot + 1, row + 1, (uint16_t)rt_r16(e + 66));
             }
         }
     }
 }
 
-void ws_fill_margins(int margin) {
+void ws_fill_margins(int margin, int rows) {
     world_margin = margin > 0 && ss_in_overworld() ? margin : 0;
-    if (world_margin) fill_world_margins(margin);
+    if (world_margin) fill_world_margins(margin, rows);
     int field = margin > 0 && ss_in_field();
     field_margin = field ? margin : 0;
-    set_sprite_view(field_margin);
+    field_rows = field ? rows : 0;
+    set_sprite_view(field_margin, field_rows);
     if (ss_in_field()) set_screen_view(field_margin);
     int seen = repeat_bgs;
     repeat_bgs = picture_bgs = 0;
@@ -385,17 +537,18 @@ void ws_fill_margins(int margin) {
     int camc = rt_r16(scroll + 4), camr = rt_r16(scroll + 8);
     /* The tiles the filled layers show: they agree on the tile, not always on the pixel (Zenan Bridge: BG0 still
      * at 0, 0, BG2 and BG3 6 rows down, so they show a 25th row). */
-    int left = camc + 1, right = camc - 1, bottom = camr;
+    int left = camc + 1, right = camc - 1, top = camr, bottom = camr;
     for (int bg = 0; bg < 4; bg++) {
         if (!(bg == 2 ? ok0 : bg == 3 ? ok1 : bg == 0 ? ok2 : okhi)) continue;
         int fine = io_get16(0x10 + 4 * bg) & 7, vfine = io_get16(0x12 + 4 * bg) & 7;
         int l = camc + ((fine - margin) >> 3), r = camc + ((fine + SCREEN_W - 1 + margin) >> 3);
-        int b = camr + ((vfine + SCREEN_H - 1) >> 3);
-        left = l < left ? l : left, right = r > right ? r : right, bottom = b > bottom ? b : bottom;
+        int t = camr + ((vfine - rows) >> 3), b = camr + ((vfine + SCREEN_H - 1 + rows) >> 3);
+        left = l < left ? l : left, right = r > right ? r : right, bottom = b > bottom ? b : bottom, top = t < top ? t : top;
     }
     for (int c = left; c <= right; c++) {
-        if (c >= camc && c < camc + 32) continue; /* the game's own columns */
-        for (int r = camr; r <= bottom; r++) {
+        for (int r = top; r <= bottom; r++) {
+            /* The game's own: its columns, the rows of the 4:3 view and the 25th that a fine scroll shows. */
+            if (c >= camc && c < camc + 32 && r >= camr && r <= camr + SCREEN_H / 8) continue;
             uint32_t t0 = room_tile(scroll, tilesets, 0, c, r), t1 = room_tile(scroll, tilesets, 1, c, r);
             int pri0 = (t0 >> 16) & 0xFF, pri1 = (t1 >> 16) & 0xFF;
             for (int L = 0; L < 3; L++) {

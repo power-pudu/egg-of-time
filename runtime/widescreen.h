@@ -2,14 +2,22 @@
 #pragma once
 
 /* Before a frame is drawn: in the field, writes the background map columns the top screen's margins show
- * (margin columns each side) and widens the sprite renderer's view to them; elsewhere (or margin 0) puts the
- * view back to the DS screen. */
-void ws_fill_margins(int margin);
+ * (margin columns each side, and rows above and below when zoomed out) and widens the sprite renderer's view to
+ * them; elsewhere (or margin 0) puts the view back to the DS screen. */
+void ws_fill_margins(int margin, int rows);
 /* Columns the game's sprite coordinates are shifted by (the widened view's left margin; 0 normally). */
 int ws_sprite_origin(void);
+/* Rows they are shifted by (the widened view's rows above the screen; 0 normally). */
+int ws_sprite_rows(void);
+/* Zoom out: bits of a sprite's attribute 1 (unused without rotation): its Y is 256 too high (it starts above the
+ * view); it is in screen coordinates (the UI, not shifted by the rows). */
+#define WS_OAM_ABOVE 0x200u
+#define WS_OAM_UI 0x400u
 /* In the field: the top screen's columns the room covers, x0..x1-1 (beyond them, other rooms or its map
  * repeated); 0 elsewhere. */
 int ws_room_span(int *x0, int *x1);
+/* In the field: the rows the room covers, y0..y1-1 from the top of the DS screen; 0 elsewhere. */
+int ws_room_rows(int *y0, int *y1);
 /* In the field: the BGs (bit per BG) whose 256 columns repeat into the margins, in a room one screen wide where
  * they scroll on their own (beyond the room the other BGs are then empty); 0 otherwise. */
 int ws_repeat_bgs(void);

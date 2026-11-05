@@ -129,7 +129,7 @@ static void draw(uint32_t *screen, int width, const char *s, int x, int y, uint3
                 for (int c = 0; c < gw; c++) {
                     if (g->rows[r][c] != '#') continue;
                     int px = x + c + (pass ? 0 : 1), py = y + r + (pass ? 0 : 1);
-                    if (px >= 0 && px < width && py >= 0 && py < SCREEN_H) {
+                    if (px >= 0 && px < width && py >= 0 && py < VIDEO_ROWS_MAX) {
                         screen[py * width + px] = pass ? color : 0xFF000000u;
                     }
                 }

@@ -10,8 +10,12 @@
 #define VIDEO_SLIDE_MAX 8
 /* Camera smoothing glides each camera step over the frames since the previous step, up to this many. */
 #define VIDEO_GLIDE_FRAMES 8
-#define VIDEO_MARGIN_MAX (96 + VIDEO_SLIDE_MAX)
+/* Zoom out draws wider still: the BG maps are 512 wide. */
+#define VIDEO_MARGIN_MAX ((512 - SCREEN_W) / 2)
 #define VIDEO_LINE_MAX (SCREEN_W + 2 * VIDEO_MARGIN_MAX)
+/* Zoom out's rows: the BG maps are 32 tile rows (256) tall, and a picture at a fine scroll shows one tile row more
+ * than its rows / 8, so 248 is the most that does not show a tile row at both its edges. */
+#define VIDEO_ROWS_MAX 248
 
 /* HD graphics mods: where a pixel's colour came from (video.c), to draw it again from HD art (display.c). */
 typedef struct VideoHd {
@@ -35,6 +39,9 @@ void video_end_frame(void);       /* start of VBlank: publish the finished frame
 
 /* Columns to draw beyond each side of the top screen from the next frame on (0 = none; any thread). */
 void video_set_wide_margin(int margin);
+/* Zoom out, in the field and the world map: rows to draw above and below the top screen and the columns each side
+ * to draw then (rows 0: none; any thread). */
+void video_set_zoom(int rows, int margin);
 /* Widescreen: in the field, the margins show the room's map repeated beyond a room narrower than the view
  * (1), or black (0, the default; any thread). */
 void video_set_fill_sides(int on);
@@ -54,16 +61,19 @@ typedef struct VideoBottomTop {
 void video_set_track_bottom(int on);
 const VideoBottomTop *video_bottom_top(void);
 /* Latest finished frame (ABGR8888): top screen, bottom screen (256x192 each), and the main screen of single
- * screen mode (single_screen.c; the top screen when that is off), 192 rows of the returned width (up to
- * VIDEO_LINE_MAX). Copies under a lock. */
+ * screen mode (single_screen.c; the top screen when that is off), *main_h rows (192, more when zoomed out) of the
+ * returned width (up to VIDEO_LINE_MAX). Copies under a lock. */
+/* ui (when *ui_on: zoomed out): the text box and the sprites in screen coordinates, 192 rows of the same width,
+ * transparent (0) elsewhere, to show at the scale the picture has when not zoomed out, its middle columns over
+ * the whole main screen. */
 /* party (when *party_on): the main screen's party layer, same size, transparent (0) where the party is not:
  * the sprites the camera follows, left out of main so camera smoothing slides only the scenery. */
 /* still (when *still_on): the main screen's still layer, same size, transparent (0) elsewhere: the pixels of BGs
  * that hold still on screen while the room slides (the prison bridge's sky) and of the backdrop, left out of main
  * (transparent there) so camera smoothing slides only the room over them. */
 /* hd (NULL: not wanted): the pixels' sources for HD graphics mods, when the frame has them (hd->on). */
-int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *party, int *party_on, uint32_t *still,
-                     int *still_on, VideoHdFrame *hd);
+int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, int *main_h, uint32_t *party, int *party_on, uint32_t *still,
+                     int *still_on, uint32_t *ui, int *ui_on, VideoHdFrame *hd);
 /* Camera smoothing on: the field's camera-following sprites get the party layer (any thread). */
 void video_set_camera_smoothing(int on);
 /* Serial of the latest frame; also how far the field camera moved since the previous frame (pixels; 0 outside

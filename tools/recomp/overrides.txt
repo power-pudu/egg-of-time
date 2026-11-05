@@ -24,6 +24,11 @@ ov007 02127618 rt_ct_title_idle wrap
 # widescreen, widened by the margins for the call (runtime/widescreen.c).
 ov004 02130dbc rt_ws_object_visible wrap
 
+# Zoom out: a sprite's Y needs more than its 8 bits, and the UI's sprites stay at the original scale: what the
+# sprite renderer knows of each is kept in its attributes when it is entered (runtime/widescreen.c).
+main 02019fd4 rt_ws_draw_cell wrap
+main 02048098 rt_ws_enter_oam wrap
+
 # World map sprites (drawn while their screen X is within -15..255 of the 4:3 view) and objects (on screen while
 # within -16..271; the birds go away outside): in widescreen, the SNES-style compare those tests use is widened by
 # the margins at those calls, and the converted X of the right margin's pieces
