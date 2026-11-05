@@ -472,14 +472,14 @@ static int minimap_cut(void) { return SETTING(SET_MINIMAP) && !SETTING(SET_MINIM
 
 /* The map panel of the bottom screen, with the Color setting, its rounded corners (black beside it) transparent;
  * with Minimap background off, its parchment too. */
-static void upload_minimap(const uint32_t *bottom) {
+static void upload_minimap(void) {
     if (!minimap_tex) {
         minimap_tex = SDL_CreateTexture(primary.ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, SS_MAP_W, SS_MAP_H);
         if (!minimap_tex) return;
         SDL_SetTextureBlendMode(minimap_tex, SDL_BLENDMODE_BLEND);
     }
     static uint32_t px[SS_MAP_W * SS_MAP_H];
-    const uint32_t *in = color_corrected(bottom, SCREEN_W);
+    const uint32_t *in = color_corrected(&video_bottom_top()->rgba[0][0], SCREEN_W);
     for (int y = 0; y < SS_MAP_H; y++) {
         const uint32_t *src = &in[(SS_MAP_Y + y) * SCREEN_W + SS_MAP_X];
         uint32_t *dst = &px[y * SS_MAP_W];
@@ -967,7 +967,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
     asked_margin = SDL_min(wide_margin() + asked_guard, VIDEO_MARGIN_MAX);
     video_set_wide_margin(asked_margin);
     video_set_fill_sides(SETTING(SET_FILL));
-    video_set_track_bottom(minimap_cut());
+    video_set_track_bottom(SETTING(SET_MINIMAP) && minimap_allowed(&primary));
     video_set_camera_smoothing(asked_guard != 0);
     main_w = width;
     party_on = main_guard && party;
@@ -986,7 +986,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
             }
         }
         for (int i = 0; i < 3; i++) upload(at[i], i, screens[i], shown[i]);
-        if (minimap_shown(&primary)) upload_minimap(screens[1]);
+        if (minimap_shown(&primary)) upload_minimap();
         if (party_on) upload(&primary, 3, party, shown[2]);
         if (still_on) upload(&primary, 4, still, shown[2]);
         hd_frame = NULL;

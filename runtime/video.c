@@ -118,6 +118,7 @@ typedef struct Engine {
     int sliding;    /* camera smoothing: the display may slide this frame (the camera moved within VIDEO_GLIDE_FRAMES) */
     int box_top;    /* the first line of the field's text box this frame (see box_bg; SCREEN_H: no box) */
     int track_top;  /* this frame's top layers go to bottom_top (the bottom screen, video_set_track_bottom) */
+    int panel_ui;   /* this frame's bottom_top leaves out what covers the map panel (panel_has_ui) */
     int still_bgs;  /* camera smoothing: BGs that hold still on screen while the room slides (ws_picture_bgs, the
                      * prison bridge's sky): their pixels, and the backdrop's, go to the still layer when on top */
     int sel_shift, sel_rows; /* single screen's age selector: a second picture with the sprites starting above
@@ -133,6 +134,8 @@ static Engine engines[2];
 static SDL_AtomicInt track_bottom; /* video_set_track_bottom */
 static VideoBottomTop bottom_top, present_bottom_top, shown_bottom_top; /* being drawn, finished, copied by the host */
 static int present_bottom_top_on;
+static uint16_t marker_now[SCREEN_H][SCREEN_W], marker_held[SCREEN_H][SCREEN_W]; /* the map panel's sprites (OPAQUE set where there is one) */
+static int marker_seen, marker_gap; /* the map panel had a sprite this frame; frames since it had any */
 #define SIDE_COLS 8 /* the screen columns at each side whose layers may repeat into the margins (repeat_bgs) */
 static SDL_AtomicInt wide_margin; /* requested by the display (video_set_wide_margin) */
 static uint32_t frame[2][VIDEO_LINE_MAX * SCREEN_H]; /* by engine, VIDEO_LINE_MAX apart */
@@ -430,6 +433,32 @@ static inline uint16_t oam16(const Engine *e, uint32_t off) {
     uint16_t v;
     memcpy(&v, &rt_oam[e->oam + (off & 0x3FE)], 2);
     return v;
+}
+
+/* Whether bottom_top leaves out what covers the bottom screen's map panel. Buttons cover it (a choice in the text
+ * box): sprites bigger than any marker on the map, within the panel, in pieces, so the whole frame's sprites go. The
+ * icons beside the panel are as big and their boxes reach into it, with nothing drawn there. The game takes the
+ * player's marker away meanwhile, a few frames longer than the buttons are there. */
+static int panel_has_ui(const Engine *e) {
+    enum { MARKER_GAP = 8 }; /* frames; longer without a sprite, the map has no marker */
+    int sprite = 0;
+    for (int i = 0; i < 128; i++) {
+        uint16_t a0 = oam16(e, i * 8), a1 = oam16(e, i * 8 + 2);
+        int shape = a0 >> 14, size = a1 >> 14;
+        if ((!(a0 & 0x100) && (a0 & 0x200)) || shape == 3) continue;
+        int w = obj_w[shape][size], h = obj_h[shape][size], oy = a0 & 0xFF, ox = a1 & 0x1FF;
+        if (oy >= SCREEN_H) oy -= 256;
+        if (ox >= 256) ox -= 512;
+        if (ox >= SS_MAP_X + SS_MAP_W || ox + w <= SS_MAP_X || oy >= SS_MAP_Y + SS_MAP_H || oy + h <= SS_MAP_Y) continue;
+        if (w > 16 || h > 16) {
+            if (ox < SS_MAP_X || ox + w > SS_MAP_X + SS_MAP_W || oy < SS_MAP_Y || oy + h > SS_MAP_Y + SS_MAP_H) continue;
+            marker_gap = 0;
+            return 1;
+        }
+        sprite = 1;
+    }
+    marker_gap = sprite ? 0 : SDL_min(marker_gap + 1, MARKER_GAP + 1);
+    return !sprite && marker_gap <= MARKER_GAP;
 }
 
 /* skip_party: leave out the sprites that move with the camera (the scenery picture of camera smoothing).
@@ -846,6 +875,13 @@ static inline int in_window(int sx, int wx, uint16_t h, const int16_t *ext) {
     return ext && ext[0] <= ext[1] ? sx >= ext[0] && sx < ext[1] : in_range(wx, h >> 8, h & 0xFF);
 }
 
+static inline uint32_t master_bright(uint32_t p, int f, int mmode) {
+    uint32_t r = p & 0xFF, g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF;
+    if (mmode == 1) { r += ((255 - r) * f) >> 4; g += ((255 - g) * f) >> 4; b += ((255 - b) * f) >> 4; }
+    else { r -= (r * f) >> 4; g -= (g * f) >> 4; b -= (b * f) >> 4; }
+    return 0xFF000000u | b << 16 | g << 8 | r;
+}
+
 static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
     if (y == 0) {
@@ -858,6 +894,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         e->party = e->sliding = e->still_bgs = 0;
         e->box_top = SCREEN_H;
         e->track_top = e->id == a_top && SDL_GetAtomicInt(&track_bottom);
+        e->panel_ui = e->track_top && panel_has_ui(e);
+        if (e->track_top) marker_seen = 0;
         for (int bg = 0; bg < 4; bg++) {
             e->frame_bg[bg][0] = reg16(e, 0x08 + 2 * bg);
             e->frame_bg[bg][1] = reg16(e, 0x10 + 4 * bg);
@@ -1032,8 +1070,22 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             }
             uint16_t c = col[0];
             if (e->track_top && !pass && x - m == wx) {
-                bottom_top.color[y][wx] = col[0] & 0x7FFF;
-                bottom_top.layer[y][wx] = (uint8_t)layer[0];
+                int top = layer[0], on_panel = wx >= SS_MAP_X && wx < SS_MAP_X + SS_MAP_W && y >= SS_MAP_Y && y < SS_MAP_Y + SS_MAP_H;
+                uint16_t top_col = col[0];
+                if (e->panel_ui) { /* the map's layers under the buttons, with the marker as it last was */
+                    top = 5, top_col = backdrop;
+                    for (int p = 0; p < 4 && top == 5; p++) {
+                        for (int bg = 1; bg < 4 && top == 5; bg += 2) {
+                            if (enabled[bg] && pr[bg] == p && (ctl & (1u << bg)) && (src[bg][x] & OPAQUE)) top = bg, top_col = src[bg][x];
+                        }
+                    }
+                    if (on_panel && (marker_held[y][wx] & OPAQUE)) top = 4, top_col = marker_held[y][wx];
+                } else if (on_panel) {
+                    marker_now[y][wx] = top == 4 ? top_col | OPAQUE : 0;
+                    marker_seen |= top == 4;
+                }
+                bottom_top.color[y][wx] = top_col & 0x7FFF;
+                bottom_top.layer[y][wx] = (uint8_t)top;
             }
             int first = (bldcnt >> layer[0]) & 1, second = (bldcnt >> (8 + layer[1])) & 1;
             int sprite_shows = layer[0] == 4; /* the sprite on top, or seen through a translucent layer on top */
@@ -1105,11 +1157,18 @@ advance:
             for (int x = 0; x < width; x++) {
                 uint32_t p = line[x];
                 if (!p) continue; /* transparent (party and still layers, main where the still layer shows) */
-                uint32_t r = p & 0xFF, g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF;
-                if (mmode == 1) { r += ((255 - r) * f) >> 4; g += ((255 - g) * f) >> 4; b += ((255 - b) * f) >> 4; }
-                else { r -= (r * f) >> 4; g -= (g * f) >> 4; b -= (b * f) >> 4; }
-                line[x] = 0xFF000000u | b << 16 | g << 8 | r;
+                line[x] = master_bright(p, f, mmode);
             }
+        }
+    }
+    if (e->track_top) {
+        for (int x = 0; x < SCREEN_W; x++) {
+            uint32_t p = out[x + m];
+            if (e->panel_ui) {
+                p = to_rgba(bottom_top.color[y][x]);
+                if (f && (mmode == 1 || mmode == 2)) p = master_bright(p, f, mmode);
+            }
+            bottom_top.rgba[y][x] = p;
         }
     }
 }
@@ -1183,6 +1242,7 @@ void video_end_frame(void) {
         for (int i = 0; i < 256; i++) bottom_top.palette[i] = pal16(eb->pal + (uint32_t)i * 2) & 0x7FFF;
         bottom_top.bg3_hofs = reg16(eb, 0x1C) & 0x1FF, bottom_top.bg3_vofs = reg16(eb, 0x1E) & 0x1FF;
         present_bottom_top = bottom_top;
+        if (marker_seen && !eb->panel_ui) memcpy(marker_held, marker_now, sizeof marker_held);
     }
     present_dx = frame_dx, present_dy = frame_dy, present_cut = frame_cut;
     present_time = SDL_GetTicksNS();

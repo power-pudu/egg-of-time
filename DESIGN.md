@@ -203,7 +203,9 @@ original bytes, and caches the result per region until the region is written.
   `runtime/minimap.c` cuts it out with what the renderer says is on top at each pixel (`video_bottom_top`): the game has
   the parchment baked into BG3, so it goes by BG1 and by BG3's pixels in the plain parchment's colour (`minimap_000`). `ss_compose` decides whether it may show: the field or world map, no battle
   (ov003) and the panel on the bottom screen (by its pixels); the display also needs its rows free of the text box
-  (`video_box_top`). HD art does not apply to it.
+  (`video_box_top`). The display takes the panel from `video_bottom_top`, not from the bottom screen: while a choice's
+  buttons cover the panel (a sprite wider or taller than 16 within it, `panel_has_ui`) the game also takes the player's
+  marker away, so the renderer gives BG1 and BG3 alone with the marker as it last was. HD art does not apply to it.
 - **Second screen window** (System Settings, `runtime/display.c`): the screen the main window does not show,
   in a window of its own (a `View`: window, renderer and the screen textures it draws with, since SDL
   textures belong to one renderer). While it is open single screen mode is off at run time
