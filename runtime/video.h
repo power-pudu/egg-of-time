@@ -8,6 +8,8 @@
 /* Widescreen: the top screen's engine can draw up to VIDEO_MARGIN_MAX columns beyond each side (21:9 at 192
  * rows: 448 = 256 + 2 * 96, plus the hidden columns camera smoothing slides into, VIDEO_SLIDE_MAX a side). */
 #define VIDEO_SLIDE_MAX 8
+/* And the hidden rows above and below it, for the vertical slide (part of Engine.rows, so within VIDEO_ROWS_MAX). */
+#define VIDEO_SLIDE_ROWS 4
 /* Camera smoothing glides each camera step over the frames since the previous step, up to this many. */
 #define VIDEO_GLIDE_FRAMES 8
 /* Zoom out draws wider still: the BG maps are 512 wide. */

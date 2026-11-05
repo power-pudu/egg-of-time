@@ -610,7 +610,7 @@ static int view_shift(int lo, int hi, int size, int pad) {
     return lo + pad > 0 ? lo + pad : hi - size - pad < 0 ? hi - size - pad : 0;
 }
 
-void ws_fill_margins(int margin, int rows, int limit) {
+void ws_fill_margins(int margin, int rows, int limit, int limit_rows) {
     world_margin = margin > 0 && ss_in_overworld() ? margin : 0;
     world_rows = world_margin ? rows : 0;
     if (world_margin) fill_world_margins(margin, rows);
@@ -631,7 +631,7 @@ void ws_fill_margins(int margin, int rows, int limit) {
     int lo, hi;
     if (field && limit) {
         if (ws_room_span(&lo, &hi)) next_x = view_shift(lo, hi, SCREEN_W, limit);
-        if (rows && ws_room_rows(&lo, &hi)) next_y = view_shift(lo, hi, SCREEN_H, rows);
+        if (limit_rows && ws_room_rows(&lo, &hi)) next_y = view_shift(lo, hi, SCREEN_H, limit_rows);
     }
     set_sprite_view(field_margin, field_rows, next_x, next_y);
 }

@@ -114,7 +114,7 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
   exploring and in battle, with nothing stretched. Menus and text boxes stay in the centred 4:3 area.
   Rooms narrower than the screen show black at their sides, as in the original; System Settings > Fill screen
   sides fills them with the room's tiles instead. With it off, the view also stops at the ends of the room.
-- **Zoom out** (System Settings; Off by default, 85% or 77%): shows more of the world while exploring, in battle and
+- **Zoom out** (System Settings; Off by default, 85% or 77%, which is 80% above 60 fps): shows more of the world while exploring, in battle and
   on the world map, in single screen mode. Text boxes and battle menus keep their size and place. Very wide aspect
   ratios zoom out less. Pixel art looks best with a high internal resolution or the Sharp filter.
 - **Resolution**: 1x (256×192) up to 11x (2816×2112), or Auto.

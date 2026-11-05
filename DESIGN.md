@@ -344,8 +344,9 @@ original bytes, and caches the result per region until the region is written.
     layer that slides, the pixel goes to the still layer and the main picture is transparent there; the host draws
     the still layer without the slide under the slid picture (all main textures blend), so the sky no longer
     moves a fraction of a pixel with the bridge and jumps back each game frame. The renderer draws 8 hidden
-    columns each side for it (`VIDEO_SLIDE_MAX`, part of the widescreen margins); a vertical slide repeats the
-    edge row for its pixel or two. Measured at 144 Hz while walking: the view advances ~0.83 px per window
+    columns each side for it (`VIDEO_SLIDE_MAX`, part of the widescreen margins) and `VIDEO_SLIDE_ROWS` (4) hidden rows
+    above and below (part of `Engine.rows`, not zoomed out too); a vertical slide beyond those repeats the edge row. The BG
+    maps' 256 rows leave no room for them at 77%, so with smoothing that setting shows 240 rows, and the menu calls it 80%; 85% keeps its rows. Measured at 144 Hz while walking: the view advances ~0.83 px per window
     frame (the game's 2 px per frame over 2.4 refreshes), the game at 60. (Frame interpolation, blending
     sprites between frames, was tried first and dropped: it did not look right.)
   - Color (`color` in the ini: ds, light, moderate, strong): raises each channel of every uploaded screen to

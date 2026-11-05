@@ -160,6 +160,7 @@ static int ui_on;                                      /* the UI layer is shown 
 static int main_w = SCREEN_W;                          /* the main screen's width (widescreen) */
 static int main_h = SCREEN_H;                          /* its rows (more when zoomed out) */
 static int main_guard;                                 /* hidden columns each side of it (camera smoothing) */
+static int main_guard_rows;                            /* hidden rows above and below it (camera smoothing) */
 static float slide_x, slide_y;                         /* camera smoothing: where the view is shown from */
 static int asked_margin, asked_guard;                  /* last margin requested from the renderer */
 static int asked_zoom_rows, asked_zoom_margin;         /* and for the zoomed out scenes */
@@ -329,7 +330,7 @@ static int main_shown(const View *v) { return view_layout(v) == LAYOUT_TOP && !v
 static void content_size(const View *v, int *w, int *h) {
     int l = view_layout(v);
     *w = l == LAYOUT_SIDE ? SCREEN_W * 2 : main_shown(v) ? main_w - 2 * main_guard : SCREEN_W;
-    *h = l == LAYOUT_STACKED ? SCREEN_H * 2 : main_shown(v) ? main_h : SCREEN_H;
+    *h = l == LAYOUT_STACKED ? SCREEN_H * 2 : main_shown(v) ? main_h - 2 * main_guard_rows : SCREEN_H;
 }
 
 /* The view runs the chosen shader (the main window only: the second window uses the graphics filter). */
@@ -338,8 +339,8 @@ static int view_shader(const View *v) { return v == &primary && SETTING(SET_SHAD
 /* Camera smoothing (framerates above 60): between game frames, the field picture is shown slid back toward
  * where the camera was, by the fraction of the frame still to come (main.c), so scrolling moves on every
  * window frame and at sub-pixel steps of the internal resolution. Background and sprites move together, nothing
- * is blended. The renderer draws VIDEO_SLIDE_MAX hidden columns each side for it; a vertical slide repeats the
- * edge row for its one or two pixels. */
+ * is blended. The renderer draws VIDEO_SLIDE_MAX hidden columns each side for it and VIDEO_SLIDE_ROWS hidden rows
+ * above and below; a vertical slide beyond those (the camera's few big steps) repeats the edge row. */
 static int camera_smoothing(void) { return fps_values[SETTING(SET_FRAMERATE)] != 60 && fps_values[SETTING(SET_FRAMERATE)] != 30; }
 
 /* The main window shows the main screen of a layout that can be wide: single screen mode's, or the top screen
@@ -365,17 +366,22 @@ static int wide_margin(void) {
     return SDL_clamp(((int)SDL_lroundf(SCREEN_H * view_ratio()) - SCREEN_W) / 2, 0, WIDE_MARGIN_MAX);
 }
 
-/* Zoom out: rows above and below the top screen and the columns each side, guard columns included: the same shape as
- * the aspect ratio, as far as the BG maps' 512 columns go (a wider ratio then zooms out less). */
+/* Zoom out: rows above and below the top screen and the columns each side, guard columns and rows included: the same
+ * shape as the aspect ratio, as far as the BG maps' 512 columns go (a wider ratio then zooms out less). The BG maps' rows
+ * have no room for guard rows beyond VIDEO_ROWS_MAX, so with those the most zoomed out view shows fewer rows (240, 80%).
+ * Not zoomed out, the guard rows alone. */
 static void zoom_view(int guard, int *rows, int *margin) {
     *rows = *margin = 0;
+    if (!wide_view()) return;
+    int guard_rows = guard ? VIDEO_SLIDE_ROWS : 0;
     int total = zoom_totals[SETTING(SET_ZOOM)], most = SCREEN_W + 2 * (VIDEO_MARGIN_MAX - guard);
-    if (!total || !wide_view()) return;
     float ratio = view_ratio();
     if (total * ratio > most) total = (int)((float)most / ratio);
-    if (total <= SCREEN_H + 1) return;
-    *rows = (total - SCREEN_H) / 2;
-    *margin = SDL_clamp(((int)SDL_lroundf((float)(SCREEN_H + 2 * *rows) * ratio) - SCREEN_W) / 2 + guard, 0, VIDEO_MARGIN_MAX);
+    int shown = total > SCREEN_H + 1 ? SDL_min((total - SCREEN_H) / 2, (VIDEO_ROWS_MAX - SCREEN_H) / 2 - guard_rows) : 0;
+    *rows = shown + guard_rows;
+    if (!*rows) return;
+    *margin = shown ? SDL_clamp(((int)SDL_lroundf((float)(SCREEN_H + 2 * shown) * ratio) - SCREEN_W) / 2 + guard, 0, VIDEO_MARGIN_MAX)
+                    : SDL_min(wide_margin() + guard, WIDE_MARGIN_MAX);
 }
 
 /* Where a screen goes in the view's layout, in native pixels; screen 0 = top, 1 = bottom. 0 when it is not
@@ -806,17 +812,18 @@ static void draw_screens(View *v) {
             if (tex == 2) draw_ui(v, x, y, n, cw, ch);
             continue;
         }
-        /* The field with its hidden columns, slid (camera smoothing); rows beyond the picture repeat its edge. */
-        float vw = (float)(main_w - 2 * main_guard), sx = ((float)main_guard + slide_x) * k, o = slide_y;
+        /* The field with its hidden columns and rows, slid (camera smoothing); rows beyond the picture repeat its edge. */
+        float vw = (float)(main_w - 2 * main_guard), sx = ((float)main_guard + slide_x) * k, vh = (float)ch, gy = (float)main_guard_rows;
+        float hidden = SDL_clamp(slide_y, -gy, gy), o = slide_y - hidden; /* the slide from the hidden rows, and beyond them */
         screens[nshown] = screen;
-        shown[nshown++] = (SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)main_h * n};
+        shown[nshown++] = (SDL_FRect){(float)x * n, (float)y * n, vw * n, vh * n};
         if (still_on) { /* what holds still on screen (the prison bridge's sky): under the slid picture, not slid */
             SDL_RenderTexture(ren, hd_k[2] ? (hd_k[4] == k ? hd_tex[4] : native[4]) : k > 1 ? smooth[4] : native[4],
-                              &(SDL_FRect){(float)main_guard * k, 0, vw * k, (float)main_h * k},
-                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)main_h * n});
+                              &(SDL_FRect){(float)main_guard * k, gy * k, vw * k, vh * k},
+                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, vh * n});
         }
-        float rows = main_h - SDL_fabsf(o), top = o < 0 ? -o : 0;
-        SDL_RenderTexture(ren, t, &(SDL_FRect){sx, (o > 0 ? o : 0) * k, vw * k, rows * k},
+        float rows = vh - SDL_fabsf(o), top = o < 0 ? -o : 0;
+        SDL_RenderTexture(ren, t, &(SDL_FRect){sx, (gy + hidden + (o > 0 ? o : 0)) * k, vw * k, rows * k},
                           &(SDL_FRect){(float)x * n, (top + y) * n, vw * n, rows * n});
         if (o != 0) {
             float edge = o > 0 ? main_h - 1 : 0, at = o > 0 ? rows : 0;
@@ -825,12 +832,12 @@ static void draw_screens(View *v) {
         }
         if (party_on) { /* the sprites the camera follows: not slid (drawn at the main screen's scale) */
             SDL_RenderTexture(ren, hd_k[2] ? (hd_k[3] == k ? hd_tex[3] : native[3]) : k > 1 ? smooth[3] : native[3],
-                              &(SDL_FRect){(float)main_guard * k, 0, vw * k, (float)main_h * k},
-                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)main_h * n});
+                              &(SDL_FRect){(float)main_guard * k, gy * k, vw * k, vh * k},
+                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, vh * n});
         }
         draw_ui(v, x, y, n, cw, ch);
     }
-    if (minimap_shown(v)) draw_minimap(ren, (float)n * (main_shown(v) ? (float)main_h / SCREEN_H : 1));
+    if (minimap_shown(v)) draw_minimap(ren, (float)n * (main_shown(v) ? (float)ch / SCREEN_H : 1));
     SDL_Texture *grid = !shader && SETTING(SET_FILTER) == FILTER_LCD ? lcd_grid(v, n) : NULL;
     for (int i = 0; grid && i < nshown; i++) SDL_RenderTextureTiled(ren, grid, NULL, 1, &shown[i]);
     SDL_SetRenderTarget(ren, NULL);
@@ -1003,6 +1010,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
                    int width, int height, int new_frame, float slide_dx, float slide_dy, const VideoHdFrame *hd) {
     /* A main screen of the margin asked for (plus guard) is the field: its guard columns are hidden. */
     main_guard = asked_guard && (width == SCREEN_W + 2 * asked_margin || (asked_zoom_rows && width == SCREEN_W + 2 * asked_zoom_margin)) ? asked_guard : 0;
+    main_guard_rows = main_guard && asked_zoom_rows && height == SCREEN_H + 2 * asked_zoom_rows ? VIDEO_SLIDE_ROWS : 0;
     slide_x = main_guard ? slide_dx : 0;
     slide_y = main_guard ? slide_dy : 0;
     asked_guard = camera_smoothing() && wide_view() ? VIDEO_SLIDE_MAX : 0;
@@ -1117,6 +1125,7 @@ const char *display_shader_path(void) { return SETTING(SET_SHADER) ? settings[SE
 
 const char *display_setting_label(int id, int v) {
     if (id == SET_SHADER) return v ? shader_label(v - 1) : "Off";
+    if (id == SET_ZOOM && v == 2 && camera_smoothing()) return "80%"; /* the guard rows take 8 of its 248 (zoom_view) */
     if (id != SET_RESOLUTION) return settings[id].labels[v];
     if (v == 0) return "Auto";
     static char buf[32];

@@ -949,9 +949,11 @@ static void engine_frame_start(Engine *e) {
         }
         e->frame_bld[0] = reg16(e, 0x50), e->frame_bld[1] = reg16(e, 0x52);
         if (e->id == !a_top) {
-            /* Fill screen sides off: the view stops at the room's ends, as far as it is shown (not the guard columns). */
+            /* Fill screen sides off: the view stops at the room's ends, as far as it is shown (not the guard columns and rows). */
             int shown_margin = e->margin - (SDL_GetAtomicInt(&party_wanted) ? VIDEO_SLIDE_MAX : 0);
-            ws_fill_margins(e->margin, e->rows, SDL_GetAtomicInt(&fill_sides) ? 0 : SDL_max(shown_margin, 0));
+            int shown_rows = SDL_max(e->rows - (SDL_GetAtomicInt(&party_wanted) ? VIDEO_SLIDE_ROWS : 0), 0);
+            int fill = SDL_GetAtomicInt(&fill_sides);
+            ws_fill_margins(e->margin, e->rows, fill ? 0 : SDL_max(shown_margin, 0), fill ? 0 : shown_rows);
             ws_view_shift(&e->view_x, &e->view_y, &e->view_bgs);
             ws_sprite_lag(&e->obj_dx, &e->obj_dy);
             win_ext_on = e->margin && ws_window_lines(win_lines);
@@ -983,7 +985,7 @@ static void engine_frame_start(Engine *e) {
                 e->room_x0 += to, e->room_x1 += to;
             }
             e->room_y0 = -e->rows, e->room_y1 = SCREEN_H + e->rows;
-            if (e->room_clip && e->rows && ws_room_rows(&e->room_y0, &e->room_y1)) {
+            if (e->room_clip && shown_rows && ws_room_rows(&e->room_y0, &e->room_y1)) {
                 int to = (known && rk && SDL_abs(ry - cy) <= VIDEO_SLIDE_MAX ? ry - cy : 0) - e->view_y;
                 e->room_y0 += to, e->room_y1 += to;
             }
