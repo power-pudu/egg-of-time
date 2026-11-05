@@ -112,6 +112,7 @@ typedef struct Engine {
     int obj_origin; /* sprite X counts from this many columns left of the screen (widescreen.c) */
     int obj_stretch; /* the sprites' screen columns are stretched across the margins (the warp, single_screen.c) */
     int repeat_256; /* 256-wide text BGs repeat into the margins (the race's sky, single_screen.c) */
+    int view_x, view_y, view_bgs; /* the view's shift from the camera at the room's ends, the BGs it moves (ws_view_shift) */
     int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
     int repeat_bgs; /* BGs whose screen columns repeat into the margins, the others empty beyond the room
                      * (ws_repeat_bgs: a one-screen room's layer scrolling on its own, the clouds of the Epoch's flight),
@@ -291,6 +292,7 @@ static int margin_bg(const Engine *e, int bg) { return e->margin && box_bg(e, bg
 static void bg_text_cols(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t cnt, uint32_t hofs, uint32_t vofs,
                          int x0, int x1, uint16_t *out, HdLine *hd) {
     int m = e->margin;
+    if ((cnt & 0x4000) && (e->view_bgs >> bg & 1)) hofs += (uint32_t)e->view_x, vofs += (uint32_t)e->view_y; /* not a box's map */
     hofs &= 0x1FF, vofs &= 0x1FF;
     uint32_t w = (cnt & 0x4000) ? 512 : 256, h = (cnt & 0x8000) ? 512 : 256;
     uint32_t chr = ((cnt >> 2) & 0xF) * 0x4000u, scr = ((cnt >> 8) & 0x1F) * 0x800u;
@@ -929,6 +931,7 @@ static void engine_frame_start(Engine *e) {
         }
         if (e->rows) memset(ui_frame, 0, sizeof ui_frame);
         e->party = e->sliding = e->still_bgs = 0;
+        e->view_x = e->view_y = e->view_bgs = 0;
         e->box_top = SCREEN_H;
         e->track_top = e->id == a_top && SDL_GetAtomicInt(&track_bottom);
         e->panel_ui = e->track_top && panel_has_ui(e);
@@ -940,12 +943,16 @@ static void engine_frame_start(Engine *e) {
         }
         e->frame_bld[0] = reg16(e, 0x50), e->frame_bld[1] = reg16(e, 0x52);
         if (e->id == !a_top) {
-            ws_fill_margins(e->margin, e->rows);
+            /* Fill screen sides off: the view stops at the room's ends, as far as it is shown (not the guard columns). */
+            int shown_margin = e->margin - (SDL_GetAtomicInt(&party_wanted) ? VIDEO_SLIDE_MAX : 0);
+            ws_fill_margins(e->margin, e->rows, SDL_GetAtomicInt(&fill_sides) ? 0 : SDL_max(shown_margin, 0));
+            ws_view_shift(&e->view_x, &e->view_y, &e->view_bgs);
             win_ext_on = e->margin && ws_window_lines(win_lines);
             if (win_ext_on) window_margins();
             e->mirror_bg = 0;
             for (int bg = 0; bg < 4 && win_ext_on; bg++) e->mirror_bg |= (uint8_t)(picture_256(e, bg, dispcnt) << bg);
             if (e->margin) e->mirror_bg |= (uint8_t)ws_picture_bgs();
+            e->view_bgs &= ~e->mirror_bg;
             e->obj_origin = ws_sprite_origin(); /* sprites placed from the left margin (widened view) */
             e->obj_rows = ws_sprite_rows();
             e->obj_stretch = e->margin && ss_in_warp();
@@ -959,15 +966,19 @@ static void engine_frame_start(Engine *e) {
             read_known = rk, read_x = rx, read_y = ry;
             frame_dx = frame_dy = 0, frame_cut = 1;
             if (known && camera_known) {
-                frame_dx = cx - camera_x, frame_dy = cy - camera_y, frame_cut = 0;
+                frame_dx = cx + e->view_x - camera_x, frame_dy = cy + e->view_y - camera_y, frame_cut = 0; /* the view, shifted */
                 if (SDL_abs(frame_dx) > VIDEO_SLIDE_MAX || SDL_abs(frame_dy) > VIDEO_SLIDE_MAX) frame_dx = frame_dy = 0, frame_cut = 1;
             }
-            camera_known = known, camera_x = cx, camera_y = cy;
+            camera_known = known, camera_x = cx + e->view_x, camera_y = cy + e->view_y;
             /* ws_room_span goes by the camera in RAM, already the next frame's: the room's edge goes with this one's scroll. */
-            if (e->room_clip && known && rk && SDL_abs(rx - cx) <= VIDEO_SLIDE_MAX) e->room_x0 += rx - cx, e->room_x1 += rx - cx;
+            if (e->room_clip) {
+                int to = (known && rk && SDL_abs(rx - cx) <= VIDEO_SLIDE_MAX ? rx - cx : 0) - e->view_x;
+                e->room_x0 += to, e->room_x1 += to;
+            }
             e->room_y0 = -e->rows, e->room_y1 = SCREEN_H + e->rows;
-            if (e->room_clip && e->rows && ws_room_rows(&e->room_y0, &e->room_y1) && known && rk && SDL_abs(ry - cy) <= VIDEO_SLIDE_MAX) {
-                e->room_y0 += ry - cy, e->room_y1 += ry - cy;
+            if (e->room_clip && e->rows && ws_room_rows(&e->room_y0, &e->room_y1)) {
+                int to = (known && rk && SDL_abs(ry - cy) <= VIDEO_SLIDE_MAX ? ry - cy : 0) - e->view_y;
+                e->room_y0 += to, e->room_y1 += to;
             }
             frames_since_step = frame_dx || frame_dy ? 0 : frame_cut ? VIDEO_GLIDE_FRAMES : SDL_min(frames_since_step + 1, VIDEO_GLIDE_FRAMES);
             int gliding = frames_since_step < VIDEO_GLIDE_FRAMES;

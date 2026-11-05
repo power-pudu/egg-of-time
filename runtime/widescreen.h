@@ -3,8 +3,11 @@
 
 /* Before a frame is drawn: in the field, writes the background map columns the top screen's margins show
  * (margin columns each side, and rows above and below when zoomed out) and widens the sprite renderer's view to
- * them; elsewhere (or margin 0) puts the view back to the DS screen. */
-void ws_fill_margins(int margin, int rows);
+ * them; elsewhere (or margin 0) puts the view back to the DS screen. limit: the columns a side actually shown, to
+ * keep the view within the room's ends (Fill screen sides off); 0 lets it pass them. */
+void ws_fill_margins(int margin, int rows, int limit);
+/* This frame's shift of the view from the camera at the room's ends (pixels, 0 normally), and the BGs that move by it. */
+void ws_view_shift(int *x, int *y, int *bgs);
 /* Columns the game's sprite coordinates are shifted by (the widened view's left margin; 0 normally). */
 int ws_sprite_origin(void);
 /* Rows they are shifted by (the widened view's rows above the screen; 0 normally). */

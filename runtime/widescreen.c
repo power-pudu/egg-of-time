@@ -40,7 +40,14 @@
  * right margin's (rt_ws_world_sprite).
  *
  * Zoom out draws rows above and below the view as well: the same fills reach them, and so does the sprite view, with
- * what sprites' 8-bit Y can no longer say kept in their attributes (rt_ws_draw_cell, rt_ws_enter_oam). */
+ * what sprites' 8-bit Y can no longer say kept in their attributes (rt_ws_draw_cell, rt_ws_enter_oam).
+ *
+ * With Fill screen sides off, the view stops at the room's ends: the game keeps its camera (it clamps it for 256 x 192
+ * only), and the picture is shown shifted from it by what the wider view would pass the room by. A room smaller than
+ * the view stays centred in it. The room's BGs (their scroll), the sprite view and the room's clip all move by that
+ * shift; the text box, the UI and the battle effects' windows are in screen coordinates and stay. */
+#include <stdlib.h>
+
 #include "dispatch.h"
 #include "rt.h"
 #include "single_screen.h"
@@ -55,6 +62,9 @@
 static int ram_ptr(uint32_t p) { return p >> 24 == 0x02; }
 
 static int field_rows; /* this frame's rows above and below the screen in the field (zoom out), 0 elsewhere */
+static int view_x, view_y; /* the view's shift from the camera (the room's ends) for this frame's scroll */
+static int next_x, next_y; /* and for the next frame's, whose camera and sprites the game is about to use */
+static int view_bgs;       /* the BGs it moves */
 
 /* The room map's metatile rows (room + 0x1000: 0x100 a row) as the field last had them. */
 static struct {
@@ -152,7 +162,8 @@ static int bg_follows(int bg, uint32_t scroll, int L) {
 /* The sprite renderer's view (NitroSDK G2D surface of the top screen, 0x02058070: top-left x, y, then width,
  * height, 20.12 fixed point; normally 0, -1, 256, 192). Sprites outside it are culled, and inside it they are
  * placed relative to its top-left. In the field it is widened to the margins, so characters beyond the 4:3 view
- * are drawn; their OAM X then counts from the left margin (ws_sprite_origin). */
+ * are drawn; their OAM X then counts from the left margin (ws_sprite_origin). Its top-left also moves with the
+ * view's shift at the room's ends, so only its size tells how far it is widened. */
 #define G2D_VIEW 0x02058070u
 #define FX(v) ((uint32_t)((v) * 4096))
 
@@ -269,18 +280,18 @@ int ws_room_rows(int *y0, int *y1) {
 }
 
 int ws_sprite_origin(void) { /* the view as widened here, recognised by its shape (also after a state load) */
-    int32_t x = (int32_t)rt_r32(G2D_VIEW);
-    return x < 0 && x >= -VIDEO_MARGIN_MAX * 4096 && rt_r32(G2D_VIEW + 8) == FX(SCREEN_W) - 2 * (uint32_t)x ? -x / 4096 : 0;
+    uint32_t w = rt_r32(G2D_VIEW + 8);
+    return w > FX(SCREEN_W) && w <= FX(SCREEN_W + 2 * VIDEO_MARGIN_MAX) ? (int)((w - FX(SCREEN_W)) / 8192) : 0;
 }
 
-int ws_sprite_rows(void) { return ws_sprite_origin() ? -(int32_t)rt_r32(G2D_VIEW + 4) / 4096 - 1 : 0; }
+int ws_sprite_rows(void) { return ws_sprite_origin() ? (int)((rt_r32(G2D_VIEW + 12) - FX(SCREEN_H)) / 8192) : 0; }
 
-/* Widens the view to margin columns a side and rows above and below; 0 puts back a view widened here (and leaves
- * any other alone). */
-static void set_sprite_view(int margin, int rows) {
-    if ((ws_sprite_origin() == margin && ws_sprite_rows() == rows) || (!margin && !ws_sprite_origin())) return;
-    rt_w32(G2D_VIEW, FX(-margin));
-    rt_w32(G2D_VIEW + 4, FX(-1 - rows));
+/* Widens the view to margin columns a side and rows above and below, moved by (dx, dy); 0 puts back a view widened
+ * here (and leaves any other alone). */
+static void set_sprite_view(int margin, int rows, int dx, int dy) {
+    if (!margin && !ws_sprite_origin()) return;
+    rt_w32(G2D_VIEW, FX(dx - margin));
+    rt_w32(G2D_VIEW + 4, FX(dy - 1 - rows));
     rt_w32(G2D_VIEW + 8, FX(SCREEN_W + 2 * margin));
     rt_w32(G2D_VIEW + 12, FX(SCREEN_H + 2 * rows));
 }
@@ -342,7 +353,7 @@ static int field_margin; /* this frame's margin columns in the field, 0 elsewher
 static void game_object_visible(CPU *cpu) { rt_call_wrapped(cpu, "ov004", 0x02130dbcu); } /* the original */
 void rt_ws_object_visible(CPU *cpu) {
     uint32_t scroll = rt_r32(SCROLL);
-    int extra = (field_margin + 7) >> 3, extra_rows = (field_rows + 7) >> 3; /* tiles */
+    int extra = (field_margin + abs(next_x) + 7) >> 3, extra_rows = (field_rows + abs(next_y) + 7) >> 3; /* tiles */
     if (!extra || !ram_ptr(scroll) || cpu->resume_pc) {
         game_object_visible(cpu);
         return;
@@ -404,7 +415,7 @@ void rt_ws_draw_cell(CPU *cpu) {
     cell_ui = rt_r32(surface + 8) == FX(1024);
     /* Another surface (the bottom screen's) is none of this. */
     cell_known = cell_ui || (rt_r32(surface) == rt_r32(G2D_VIEW) && rt_r32(surface + 8) == rt_r32(G2D_VIEW + 8));
-    cell_hud = !cell_ui && rt_overlay_resident(3) && rt_r16(R[1]) == 1 && cell_y - field_rows >= BATTLE_HUD_TOP && called_from(cpu, BATTLE_HUD_LIST);
+    cell_hud = !cell_ui && rt_overlay_resident(3) && rt_r16(R[1]) == 1 && cell_y - field_rows + next_y >= BATTLE_HUD_TOP && called_from(cpu, BATTLE_HUD_LIST);
     game_draw_cell(cpu);
     cell_known = 0;
 }
@@ -418,9 +429,12 @@ void rt_ws_enter_oam(CPU *cpu) {
     uint32_t a = R[0];
     uint32_t a0 = rt_r16(a), a1 = rt_r16(a + 2) & ~(WS_OAM_UI | WS_OAM_ABOVE);
     int y = a0 & 0xFF, real = cell_y + (int8_t)(y - cell_y); /* in the view, from its top */
-    int affine = a0 & 0x100, shown = cell_ui ? y : real - field_rows; /* its row on the DS screen */
+    int affine = a0 & 0x100, shown = cell_ui ? y : real - field_rows + next_y; /* its row on the DS screen */
     if (!affine) {
-        if (cell_hud) a0 = (a0 & ~0xFFu) | ((uint32_t)shown & 0xFF);
+        if (cell_hud) { /* back to where the screen's own view would have put it */
+            a0 = (a0 & ~0xFFu) | ((uint32_t)shown & 0xFF);
+            a1 = (a1 & ~0x1FFu) | ((a1 + (uint32_t)next_x) & 0x1FF);
+        }
         if (cell_ui || cell_hud) a1 |= WS_OAM_UI;
         else if (real < 0) a1 |= WS_OAM_ABOVE;
         else if (real >= SCREEN_H + 2 * field_rows) a0 |= 0x200; /* beyond the view: hidden */
@@ -496,19 +510,14 @@ static void fill_world_margins(int margin, int rows) {
     }
 }
 
-void ws_fill_margins(int margin, int rows) {
-    world_margin = margin > 0 && ss_in_overworld() ? margin : 0;
-    if (world_margin) fill_world_margins(margin, rows);
-    int field = margin > 0 && ss_in_field();
-    field_margin = field ? margin : 0;
-    field_rows = field ? rows : 0;
-    set_sprite_view(field_margin, field_rows);
-    if (ss_in_field()) set_screen_view(field_margin);
+static void fill_field_margins(int margin, int rows) {
     int seen = repeat_bgs;
-    repeat_bgs = picture_bgs = 0;
-    if (!field) return;
+    repeat_bgs = picture_bgs = view_bgs = 0;
+    if (!field_margin) return;
     uint32_t scroll = rt_r32(SCROLL), room = rt_r32(ROOM), tilesets = rt_r32(TILESETS);
     if (!ram_ptr(scroll) || !ram_ptr(room) || !ram_ptr(tilesets)) return;
+    /* A BG on its layer's ring origin, or a tile off it for a frame at each step, shows the room. */
+    view_bgs = bg_near(2, scroll, 0) << 2 | bg_near(3, scroll, 1) << 3 | bg_near(0, scroll, 2) | bg_near(1, scroll, 0) << 1;
     int x0, x1;
     int one_screen = ws_room_span(&x0, &x1) && x0 == 0 && x1 == SCREEN_W;
     if (one_screen) {
@@ -533,6 +542,7 @@ void ws_fill_margins(int margin, int rows) {
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
     /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge). */
     picture_bgs = (pic1 && !(io_get16(0x1c) & 0x1F8)) << 3 | (pic2 && !(io_get16(0x10) & 0x1F8));
+    view_bgs &= ~(pic1 << 3 | pic2);
     int okhi = ok0 && bg_follows(1, scroll, 0); /* BG1: the priority tiles of the filled layers 0 and 1 */
     int camc = rt_r16(scroll + 4), camr = rt_r16(scroll + 8);
     /* The tiles the filled layers show: they agree on the tile, not always on the pixel (Zenan Bridge: BG0 still
@@ -541,8 +551,8 @@ void ws_fill_margins(int margin, int rows) {
     for (int bg = 0; bg < 4; bg++) {
         if (!(bg == 2 ? ok0 : bg == 3 ? ok1 : bg == 0 ? ok2 : okhi)) continue;
         int fine = io_get16(0x10 + 4 * bg) & 7, vfine = io_get16(0x12 + 4 * bg) & 7;
-        int l = camc + ((fine - margin) >> 3), r = camc + ((fine + SCREEN_W - 1 + margin) >> 3);
-        int t = camr + ((vfine - rows) >> 3), b = camr + ((vfine + SCREEN_H - 1 + rows) >> 3);
+        int l = camc + ((fine - margin + view_x) >> 3), r = camc + ((fine + SCREEN_W - 1 + margin + view_x) >> 3);
+        int t = camr + ((vfine - rows + view_y) >> 3), b = camr + ((vfine + SCREEN_H - 1 + rows + view_y) >> 3);
         left = l < left ? l : left, right = r > right ? r : right, bottom = b > bottom ? b : bottom, top = t < top ? t : top;
     }
     for (int c = left; c <= right; c++) {
@@ -562,6 +572,34 @@ void ws_fill_margins(int margin, int rows) {
             }
         }
     }
+}
+
+/* How far a view of size + 2 * pad, around a camera's 0..size-1, moves to stay within the room's lo..hi-1. */
+static int view_shift(int lo, int hi, int size, int pad) {
+    if (hi - lo <= size + 2 * pad) return (lo + hi - size) >> 1;
+    return lo + pad > 0 ? lo + pad : hi - size - pad < 0 ? hi - size - pad : 0;
+}
+
+void ws_fill_margins(int margin, int rows, int limit) {
+    world_margin = margin > 0 && ss_in_overworld() ? margin : 0;
+    if (world_margin) fill_world_margins(margin, rows);
+    int field = margin > 0 && ss_in_field();
+    field_margin = field ? margin : 0;
+    field_rows = field ? rows : 0;
+    view_x = next_x, view_y = next_y;
+    if (ss_in_field()) set_screen_view(field_margin);
+    fill_field_margins(margin, rows);
+    next_x = next_y = 0;
+    int lo, hi;
+    if (field && limit) {
+        if (ws_room_span(&lo, &hi)) next_x = view_shift(lo, hi, SCREEN_W, limit);
+        if (rows && ws_room_rows(&lo, &hi)) next_y = view_shift(lo, hi, SCREEN_H, rows);
+    }
+    set_sprite_view(field_margin, field_rows, next_x, next_y);
+}
+
+void ws_view_shift(int *x, int *y, int *bgs) {
+    *x = view_x, *y = view_y, *bgs = view_bgs;
 }
 
 /* The game's software HDMA (the HBlank handler, ITCM 0x01ff8580): channels of 0x28 bytes from 0x027e0068 up to

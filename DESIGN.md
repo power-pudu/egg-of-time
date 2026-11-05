@@ -215,6 +215,16 @@ original bytes, and caches the result per region until the region is written.
       list's target bracket (4 sprites) and the hand over a target stay in the world, with the actors. Under the box,
       the picture has the room (the frame's BG0 / BG1, as camera smoothing's box). UI pixels have no HD sources. The
       world map's labels (year, place name) are in the world's sprites, so they zoom.
+    - The room's ends: with Fill screen sides off, a view wider than the 4:3 one (widescreen too, not only zoomed out)
+      stops at them instead of passing them, and a room smaller than the view stays centred in it. The game clamps
+      its camera for 256 x 192 and is left alone (`ws_fill_margins`, `view_shift`, `ws_view_shift`): the picture is
+      shown shifted from the camera, by the BG scroll of the BGs on their ring origin (`Engine.view_bgs`; not a
+      picture layer such as the prison bridge's sky, not a box's 256-wide map), the G2D view's top-left (OAM X and Y
+      already count from it, so `ws_sprite_origin` and `ws_sprite_rows` now read its size), the fills and the room's
+      clip. The camera in RAM is a frame ahead of the BG scroll: the sprite view takes the shift at once, the BGs the
+      frame after, together on screen. Camera smoothing follows the shifted view, so the party walks on a still
+      picture at the ends. Screen coordinates stay: the text box, the UI and the battle effects' windows; the battle
+      HUD, in the G2D view, has the shift taken out as it enters OAM (`rt_ws_enter_oam`).
     - Rooms: with Fill screen sides off, the rows beyond the room are black (`ws_room_rows`: bounds +0x18 top, +0x19
       bottom). Bounds can hold several rooms one above the other (the prison towers, location 0x1d: metatile rows
       0-32 with others stacked), which the camera never shows on the DS; the rows also end at the void between them:
