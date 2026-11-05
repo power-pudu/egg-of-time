@@ -192,7 +192,7 @@ original bytes, and caches the result per region until the region is written.
     to hold the whole map, 0-255), so the margins are not masked. The game draws no 3D: the SDK sends a few housekeeping GX commands per frame but no geometry,
   and the 3D BG is off in the title, intro, world map, towns and the first time warp (an affine BG3 tunnel). The
   3D layer was seen on only briefly, while loading a save into the world map, so no 3D renderer exists yet.
-- **Screens:** layouts (F2): top screen only (the default in single screen mode; it shows the main screen
+- **Screens:** layouts (F2, or System Settings > Layout, for gamepads; hidden with the second screen window): top screen only (the default in single screen mode; it shows the main screen
   below), stacked (the default with single screen mode off), side by side; F3 swaps the screens
   (with top-only: bottom screen alone); F11 toggles between windowed and the last full-screen mode
   (`EGG_WINDOWED=1` starts windowed without changing the setting, for automated runs). Each change shows a short message in the window; Sharp is the default filter. Holding Escape shows

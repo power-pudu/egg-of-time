@@ -97,7 +97,7 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 - The boot logos, title screen, Game Settings and name entry are laid out on a single screen. Any button
   starts the game from the title screen.
 - New games use the game's own Classic battle mode, the one-screen layout of the original SNES game.
-- The two-screen layouts are still there (F2): stacked, side by side, or swapped (F3).
+- The two-screen layouts are still there (F2, or System Settings > Layout): stacked, side by side, or swapped (F3).
 - **Second monitor**: System Settings > Second screen window shows the other DS screen in a window of its own.
 - **Minimap**: System Settings > Minimap shows the bottom screen's map at the top left of the one screen, in
   towns, dungeons and on the world map; hidden in battles and while a text box would be under it. Minimap size

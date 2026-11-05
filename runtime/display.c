@@ -104,6 +104,7 @@ static Setting settings[SET_COUNT] = {
     /* The DS's system language, which the game reads at power-on (boot.c): changes apply at the next start. */
     [SET_LANGUAGE] = {"language", "Language", 2, LANGUAGE_ENGLISH, language_names, language_labels},
     [SET_WINDOW] = {"window", "Window mode", 3, WINDOW_BORDERLESS, window_names, window_labels},
+    [SET_LAYOUT] = {"layout", "Layout", LAYOUT_COUNT, EGG_SINGLE_SCREEN ? LAYOUT_TOP : LAYOUT_STACKED, layout_names, layout_labels}, /* also F2 */
     /* The other DS screen in a window of its own, for a second monitor; the main window shows the top only. */
     [SET_SECOND] = {"secondscreen", "Second screen window", 2, 0, onoff_names, onoff_labels},
     [SET_RESOLUTION] = {"resolution", "Internal resolution", RES_MAX + 1, 0, res_names, NULL},
@@ -140,7 +141,7 @@ typedef struct View {
 } View;
 
 static View primary, secondary; /* secondary.win: NULL while Second screen window is off */
-static int layout = EGG_SINGLE_SCREEN ? LAYOUT_TOP : LAYOUT_STACKED, swapped;
+static int swapped;
 static int last_full = WINDOW_BORDERLESS; /* F11 from windowed returns here */
 static int force_windowed;                /* EGG_WINDOWED */
 static SDL_Rect second_rect;              /* the second window's last windowed place (w 0: none yet) */
@@ -283,8 +284,7 @@ static void load_settings(void) {
         val[len] = 0;
         int v;
         if (!strcmp(key, "shader")) snprintf(saved_shader, sizeof saved_shader, "%s", val);
-        if (!strcmp(key, "layout") && (v = lookup(layout_names, LAYOUT_COUNT, val)) >= 0) layout = v;
-        else if (!strcmp(key, "swap")) swapped = val[0] == '1';
+        if (!strcmp(key, "swap")) swapped = val[0] == '1';
         else if (!strcmp(key, "secondplace")) {
             SDL_Rect r;
             if (sscanf(val, "%d , %d , %d , %d", &r.x, &r.y, &r.w, &r.h) == 4 && r.w > 0 && r.h > 0) second_rect = r;
@@ -302,7 +302,7 @@ static void save_settings(void) {
     FILE *f = fopen(ini_path, "w");
     if (!f) return;
     fprintf(f, "# Egg of Time display settings (System Settings menu; F2 layout, F3 swap screens, F4 filter)\n");
-    fprintf(f, "layout = %s\nswap = %d\n", layout_names[layout], swapped);
+    fprintf(f, "swap = %d\n", swapped);
     if (second_rect.w) fprintf(f, "secondplace = %d, %d, %d, %d\n", second_rect.x, second_rect.y, second_rect.w, second_rect.h);
     for (int i = 0; i < SET_COUNT; i++) fprintf(f, "%s = %s\n", settings[i].key, settings[i].names[settings[i].value]);
     fclose(f);
@@ -312,7 +312,7 @@ static void save_settings(void) {
 
 /* The view's layout: with the second screen window, each window shows one screen, the second window the one the
  * main window does not. */
-static int view_layout(const View *v) { return v == &primary && !secondary.win ? layout : LAYOUT_TOP; }
+static int view_layout(const View *v) { return v == &primary && !secondary.win ? SETTING(SET_LAYOUT) : LAYOUT_TOP; }
 static int view_swapped(const View *v) { return swapped ^ (v == &secondary); }
 
 /* Top-only shows the main screen. */
@@ -1028,10 +1028,9 @@ int display_key(SDL_Scancode sc) {
             show_message("%s", "Layout: one screen per window");
             return 1;
         }
-        layout = (layout + 1) % LAYOUT_COUNT;
-        resize_window();
-        show_message("Layout: %s", layout_labels[layout]);
-        break;
+        display_setting_set(SET_LAYOUT, (SETTING(SET_LAYOUT) + 1) % LAYOUT_COUNT);
+        show_message("Layout: %s", layout_labels[SETTING(SET_LAYOUT)]);
+        return 1;
     case SDL_SCANCODE_F3:
         swapped = !swapped;
         reupload = 1; /* with the second window, the screens change windows */
@@ -1055,6 +1054,7 @@ int display_setting_count(int id) { return settings[id].count; }
 int display_setting_get(int id) { return settings[id].value; }
 int display_setting_shown(int id) {
     switch (id) {
+    case SET_LAYOUT: return !secondary.win; /* one screen per window */
     case SET_FILL: return SETTING(SET_ASPECT) != ASPECT_ORIGINAL;
     case SET_MINIMAP: return minimap_allowed(&primary);
     case SET_MINIMAP_SIZE:
@@ -1087,6 +1087,7 @@ void display_setting_set(int id, int v) {
         apply_window_mode(primary.win, v);
         apply_second_mode();
         break;
+    case SET_LAYOUT: resize_window(); break;
     case SET_SECOND:
         if (v && !secondary.win && !open_second()) settings[id].value = 0;
         if (!v && secondary.win) close_second();

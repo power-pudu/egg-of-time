@@ -1,4 +1,4 @@
-/* System Settings menu: language, window mode, internal resolution, aspect ratio, framerate, V-Sync, graphics
+/* System Settings menu: language, window mode, layout, internal resolution, aspect ratio, framerate, V-Sync, graphics
  * filter, shader (listed when mods/shaders has some; the footer shows the chosen one's path), mods (display.c holds and applies them), and the Controls page (controls.c). SELECT opens it from the game's Game Settings screen (the button
  * single screen mode relabels "System settings"), the title screen's menu or while the field is paused; B or
  * SELECT closes it, and so does the game leaving that place (the title idling into the intro, say). Closed
@@ -54,6 +54,7 @@
 static const char *const descriptions[ROW_COUNT] = {
     [SET_LANGUAGE] = "Game text. Applies at the next start.",
     [SET_WINDOW] = "How the game window is shown.",
+    [SET_LAYOUT] = "Which screens are shown, and how.",
     [SET_SECOND] = "The other screen in its own window.",
     [SET_RESOLUTION] = "Size the screens are drawn at.",
     [SET_ASPECT] = "Wider shows more of the world.",
