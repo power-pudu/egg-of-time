@@ -16,8 +16,8 @@
  *   - targets (checked against the game's own columns in the Millennial Fair, every cell): layer 2 -> BG0 with its
  *     palette remapped through the table at 0x02058714; layer 0 -> BG2 and layer 1 -> BG3 with the palette as it is;
  *     priority tiles of either go to BG1 instead (layer 1's first); a target without a tile gets entry 0.
- * A layer is filled only when its BG scroll agrees with its ring origin (a layer scrolling on its own, or a map
- * that is not 512x256, is left alone).
+ * A layer is filled only when its BG scroll is within a tile of its ring origin (a layer scrolling on its own, or a
+ * map that is not 512x256, is left alone).
  * Battles (ov003 in the slot of the field's ov004) keep the room on screen but reuse its map for their own data,
  * and the field puts it back a moment after the battle ends, so the margins are filled from a copy of the room
  * map taken while the field ran: during the battle and after it, until the map matches the copy again (or the
@@ -344,6 +344,11 @@ static int bg_near(int bg, uint32_t scroll, int L) {
     return ((dc + 1) & 63) <= 2 && ((dr + 1) & 31) <= 2;
 }
 
+/* The BG is a 512x256 text map within a tile of layer L's ring origin. */
+static int bg_on_layer(int bg, uint32_t scroll, int L) {
+    return (io_get16(0x08 + 2 * bg) >> 14) == 1 && bg_near(bg, scroll, L);
+}
+
 /* 0: not a 512x256 text BG; 1: one on layer L's ring origin; 2: one off it. */
 static int scrolls_alone(int bg, uint32_t scroll, int L) {
     if ((io_get16(0x08 + 2 * bg) >> 14) != 1) return 0;
@@ -554,7 +559,9 @@ static void fill_field_margins(int margin, int rows) {
         uint16_t bld = io_get16(0x50);
         if (((bld >> 6) & 3) == 1 && (bld >> 8 & repeat_bgs)) repeat_bgs |= bld & 9; /* BG0, BG3 blended onto them */
     }
-    int ok0 = bg_follows(2, scroll, 0), ok1 = bg_follows(3, scroll, 1), ok2 = bg_follows(0, scroll, 2);
+    /* Walking, the origins in RAM are a tile ahead of the frame's scroll for one frame at each tile: that frame shows
+     * a column or row the fill must have written too, so a BG a tile off is filled, by its own scroll. */
+    int ok0 = bg_on_layer(2, scroll, 0), ok1 = bg_on_layer(3, scroll, 1), ok2 = bg_on_layer(0, scroll, 2);
     if (!ok0 && !ok1 && !ok2) return;
     copy_room_rows(scroll, room);
     ok0 = ok0 && bg_holds_layer(2, scroll, tilesets, 0);
@@ -563,16 +570,19 @@ static void fill_field_margins(int margin, int rows) {
     /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge). */
     picture_bgs = (pic1 && !(io_get16(0x1c) & 0x1F8)) << 3 | (pic2 && !(io_get16(0x10) & 0x1F8));
     view_bgs &= ~(pic1 << 3 | pic2);
-    int okhi = ok0 && bg_follows(1, scroll, 0); /* BG1: the priority tiles of the filled layers 0 and 1 */
+    int okhi = ok0 && bg_on_layer(1, scroll, 0); /* BG1: the priority tiles of the filled layers 0 and 1 */
     int camc = rt_r16(scroll + 4), camr = rt_r16(scroll + 8);
     /* The tiles the filled layers show: they agree on the tile, not always on the pixel (Zenan Bridge: BG0 still
      * at 0, 0, BG2 and BG3 6 rows down, so they show a 25th row). */
     int left = camc + 1, right = camc - 1, top = camr, bottom = camr;
     for (int bg = 0; bg < 4; bg++) {
         if (!(bg == 2 ? ok0 : bg == 3 ? ok1 : bg == 0 ? ok2 : okhi)) continue;
-        int fine = io_get16(0x10 + 4 * bg) & 7, vfine = io_get16(0x12 + 4 * bg) & 7;
-        int l = camc + ((fine - margin + view_x) >> 3), r = camc + ((fine + SCREEN_W - 1 + margin + view_x) >> 3);
-        int t = camr + ((vfine - rows + view_y) >> 3), b = camr + ((vfine + SCREEN_H - 1 + rows + view_y) >> 3);
+        int hofs = io_get16(0x10 + 4 * bg), vofs = io_get16(0x12 + 4 * bg), L = bg == 2 || bg == 1 ? 0 : bg == 3 ? 1 : 2;
+        int fine = hofs & 7, vfine = vofs & 7;
+        int c0 = camc + ((((hofs >> 3) - rt_r8(scroll + 0x8e + 2 * L) + 1) & 63) - 1); /* the column and row it starts at */
+        int r0 = camr + ((((vofs >> 3) - rt_r8(scroll + 0x8f + 2 * L) + 1) & 31) - 1);
+        int l = c0 + ((fine - margin + view_x) >> 3), r = c0 + ((fine + SCREEN_W - 1 + margin + view_x) >> 3);
+        int t = r0 + ((vfine - rows + view_y) >> 3), b = r0 + ((vfine + SCREEN_H - 1 + rows + view_y) >> 3);
         left = l < left ? l : left, right = r > right ? r : right, bottom = b > bottom ? b : bottom, top = t < top ? t : top;
     }
     for (int c = left; c <= right; c++) {
