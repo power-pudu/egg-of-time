@@ -36,7 +36,8 @@ int ss_minimap_rows(void);
  * with its widescreen margins (wide_w columns), and the bottom screen with sprites moved and the same margins
  * (ss_bottom_shift; NULL when not drawn) with which of its pixels are sprites; returns the main screen's width
  * (256, or wide_w in the field and the age selector). *from: the picture main is a copy of (SS_FROM_*; texts the
- * runtime draws over it aside), SS_FROM_NONE when it is put together from both. */
+ * runtime draws over it aside), SS_FROM_NONE when it is put together from both. It also draws on the bottom screen:
+ * SELECT's label in Game Settings and the field menu's Settings page. */
 enum { SS_FROM_NONE, SS_FROM_TOP, SS_FROM_BOTTOM, SS_FROM_WIDE };
-int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, const uint32_t *wide, int wide_w,
+int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint32_t *wide, int wide_w,
                const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from);

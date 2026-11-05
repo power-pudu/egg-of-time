@@ -1227,6 +1227,9 @@ void video_end_frame(void) {
         for (int y = 0; y < SCREEN_H; y++) {
             memcpy(&present_hd[0][y * SCREEN_W], &ht[y * VIDEO_LINE_MAX + m], SCREEN_W * sizeof *ht);
             memcpy(&present_hd[1][y * SCREEN_W], &hb[y * VIDEO_LINE_MAX + mb], SCREEN_W * sizeof *hb);
+            for (int x = 0; x < SCREEN_W; x++) { /* no sources under the runtime's texts (ss_compose) */
+                if (present[1][y * SCREEN_W + x] != fb[y * VIDEO_LINE_MAX + mb + x]) present_hd[1][y * SCREEN_W + x] = (VideoHd){0};
+            }
             memcpy(&present_hd_wide[y * w], &ht[y * VIDEO_LINE_MAX], (size_t)w * sizeof *ht);
             if (present_party_on) memcpy(&present_hd_party[y * w], &hd_party[y * VIDEO_LINE_MAX], (size_t)w * sizeof *hd_party);
             if (present_still_on) memcpy(&present_hd_still[y * w], &hd_still[y * VIDEO_LINE_MAX], (size_t)w * sizeof *hd_still);

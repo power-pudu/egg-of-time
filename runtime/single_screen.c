@@ -411,7 +411,8 @@ static int put_band(uint32_t *main, int y, Band b, const uint32_t *top, const ui
     return y + b.h;
 }
 
-/* The SELECT button's "Defaults" relabelled "System settings" (the runtime's menu), the button's top at row y. */
+/* The SELECT button's "Defaults" relabelled "System settings" (the runtime's menu), the button's top at row y of the
+ * bottom screen: every layout shows it, and SELECT opens the menu in all of them. */
 static void relabel_select(uint32_t *main, int y) {
     for (int r = SELECT_LABEL_Y0; r < SELECT_LABEL_Y1; r++) {
         uint32_t *row = &main[(y + r) * SCREEN_W];
@@ -429,10 +430,8 @@ static void compose_settings(Scene sc, uint32_t *main, const uint32_t *top, cons
     if (!movies) y = put_band(main, y, SET_DESC, top, bottom);
     y = put_band(main, y, SET_MOVIES, top, bottom);
     if (movies) y = put_band(main, y, SET_DESC, top, bottom);
-    int buttons = y;
     y = put_band(main, y, SET_BUTTONS, top, bottom);
     put_band(main, y, SET_FOOTER, top, bottom);
-    relabel_select(main, buttons);
 }
 
 /* Field menu, Main Menu page (see the top). Top screen: title rows 0-22, party panels 127x47 at x 0, y 24 + 48 n
@@ -824,7 +823,6 @@ static void compose_party(uint32_t *main, const uint32_t *top, const uint32_t *b
 
 static void compose_options(Scene sc, uint32_t *main, const uint32_t *bottom) {
     memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
-    relabel_select(main, OPTIONS_SELECT_Y);
     if (rt_r8(rt_r32(sc.obj + MENU_PAGE) + OPTIONS_TAB) != 0) return;
     blit(main, 0, OPTION_Y, bottom, 0, OPTION_Y + OPTION_H, SCREEN_W, OPTIONS_END - OPTION_Y - OPTION_H);
     for (int y = OPTIONS_END - OPTION_H; y < OPTIONS_END; y++)
@@ -1190,7 +1188,7 @@ static void pause_hint(uint32_t *main, int w) {
     ui_draw_text_in(main, w, hint, (w - ui_text_width(hint)) / 2, SCREEN_H - UI_FONT_H - 6, 0xFFFFFFFFu);
 }
 
-int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, const uint32_t *wide, int wide_w,
+int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint32_t *wide, int wide_w,
                const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from) {
     Scene sc = current();
     *from = SS_FROM_NONE;
@@ -1199,6 +1197,7 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
     int title_menu = sc.kind == SCENE_TITLE && rt_r16(sc.obj + TITLE_PHASE) == TITLE_MENU;
     /* SELECT relabelled "System settings" (off, it stays the game's "Defaults") */
     int settings = ss_enabled() && (sc.kind == SCENE_SETTINGS || sc.kind == SCENE_OPTIONS);
+    if (settings) relabel_select(bottom, sc.kind == SCENE_OPTIONS ? OPTIONS_SELECT_Y : SET_BUTTONS.y0);
     SDL_SetAtomicInt(&menu_place, settings     ? SS_MENU_GAME_SETTINGS
                                   : paused     ? SS_MENU_PAUSE
                                   : title_menu ? SS_MENU_TITLE
