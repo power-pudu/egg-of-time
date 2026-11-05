@@ -1,5 +1,5 @@
-/* Small pixel font for the runtime's own texts: printable ASCII and the French accented letters they use
- * (UTF-8), variable width (mostly 4 pixels), 8 rows. */
+/* Small pixel font for the runtime's own texts (UTF-8): printable ASCII and the French accented letters they use,
+ * variable width (mostly 4 pixels), 8 rows; and the Japanese characters of ui_text.c, 10 rows, starting a row higher. */
 #include <string.h>
 
 #include "ui_font.h"
@@ -95,47 +95,85 @@ static const Glyph font[] = {
     {'x', {"...", "...", "#.#", "#.#", ".#.", "#.#", "#.#", "..."}},
     {'y', {"....", "....", "#..#", "#..#", "#..#", ".###", "...#", ".##."}},
     {'z', {"....", "....", "####", "..#.", ".#..", "#...", "####", "...."}},
+    {0xC9, {"..#.", ".#..", "####", "#...", "###.", "#...", "####", "...."}}, /* É */
+    {0xE0, {".#..", "..#.", ".###", "#..#", "#..#", "#..#", ".###", "...."}}, /* à */
+    {0xE2, {".##.", "#..#", ".###", "#..#", "#..#", "#..#", ".###", "...."}}, /* â */
+    {0xE7, {"....", "....", ".###", "#...", "#...", ".###", "..#.", ".##."}}, /* ç */
     {0xE8, {".#..", "..#.", ".##.", "#..#", "####", "#...", ".###", "...."}}, /* è */
     {0xE9, {"..#.", ".#..", ".##.", "#..#", "####", "#...", ".###", "...."}}, /* é */
+    {0xEA, {".##.", "#..#", ".##.", "#..#", "####", "#...", ".###", "...."}}, /* ê */
+    {0xF4, {".##.", "#..#", ".##.", "#..#", "#..#", "#..#", ".##.", "...."}}, /* ô */
 };
 
-/* The glyph of the UTF-8 character at *p (two-byte sequences: U+0080-07FF), advancing *p past it. */
-static const Glyph *glyph(const char **p) {
+enum { JA_ROWS = 10 };
+typedef struct JaGlyph { unsigned c; int w; unsigned short rows[JA_ROWS]; } JaGlyph;
+static const JaGlyph ja_font[] = {
+#include "ui_font_ja.inc"
+};
+
+/* The UTF-8 character at *p, advancing *p past it. */
+static unsigned next_char(const char **p) {
     const unsigned char *u = (const unsigned char *)*p;
     unsigned c = u[0];
     *p += 1;
     if ((c & 0xE0) == 0xC0 && (u[1] & 0xC0) == 0x80) {
         c = (c & 0x1F) << 6 | (u[1] & 0x3F);
         *p += 1;
+    } else if ((c & 0xF0) == 0xE0 && (u[1] & 0xC0) == 0x80 && (u[2] & 0xC0) == 0x80) {
+        c = (c & 0x0F) << 12 | (u[1] & 0x3F) << 6 | (u[2] & 0x3F);
+        *p += 2;
     }
+    return c;
+}
+
+static const Glyph *glyph(unsigned c) {
     for (size_t i = 0; i < sizeof font / sizeof font[0]; i++) {
         if (font[i].c == c) return &font[i];
     }
     return &font[0]; /* unknown characters: a space */
 }
 
+static const JaGlyph *ja_glyph(unsigned c) {
+    size_t lo = 0, hi = sizeof ja_font / sizeof ja_font[0];
+    while (lo < hi) { /* the table is sorted */
+        size_t mid = (lo + hi) / 2;
+        if (ja_font[mid].c == c) return &ja_font[mid];
+        if (ja_font[mid].c < c) lo = mid + 1;
+        else hi = mid;
+    }
+    return NULL;
+}
+
 int ui_text_width(const char *s) {
     int w = 0;
-    for (const char *p = s; *p;) w += (int)strlen(glyph(&p)->rows[0]) + 1;
+    for (const char *p = s; *p;) {
+        unsigned c = next_char(&p);
+        const JaGlyph *ja = ja_glyph(c);
+        w += ja ? ja->w : (int)strlen(glyph(c)->rows[0]) + 1;
+    }
     return w > 0 ? w - 1 : 0;
+}
+
+static void put(uint32_t *screen, int width, int x, int y, uint32_t color) {
+    if (x >= 0 && x < width && y >= 0 && y < VIDEO_ROWS_MAX) screen[y * width + x] = color;
 }
 
 static void draw(uint32_t *screen, int width, const char *s, int x, int y, uint32_t color, int shadow) {
     for (const char *p = s; *p;) {
-        const Glyph *g = glyph(&p);
-        int gw = (int)strlen(g->rows[0]);
+        unsigned ch = next_char(&p);
+        const JaGlyph *ja = ja_glyph(ch);
+        const Glyph *g = ja ? NULL : glyph(ch);
+        int gw = ja ? ja->w : (int)strlen(g->rows[0]);
         for (int pass = !shadow; pass < 2; pass++) { /* shadow, then the text */
-            for (int r = 0; r < UI_FONT_H; r++) {
+            int o = pass ? 0 : 1;
+            uint32_t ink = pass ? color : 0xFF000000u;
+            for (int r = 0; r < (ja ? JA_ROWS : UI_FONT_H); r++) {
                 for (int c = 0; c < gw; c++) {
-                    if (g->rows[r][c] != '#') continue;
-                    int px = x + c + (pass ? 0 : 1), py = y + r + (pass ? 0 : 1);
-                    if (px >= 0 && px < width && py >= 0 && py < VIDEO_ROWS_MAX) {
-                        screen[py * width + px] = pass ? color : 0xFF000000u;
-                    }
+                    if (ja ? ja->rows[r] >> c & 1 : g->rows[r][c] == '#') put(screen, width, x + c + o, y + r + o - (ja != NULL), ink);
                 }
             }
         }
-        x += gw + 1;
+        x += ja ? gw : gw + 1;
     }
 }
 

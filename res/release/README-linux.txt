@@ -3,8 +3,11 @@ Egg of Time
 
 A native PC port of Chrono Trigger (Nintendo DS), made by static recompilation.
 
-This download contains no part of the game. You need your own dump of Chrono Trigger (USA) for the
-Nintendo DS (game code YQUE, SHA-1 11f9e8204e484eab42181b210c9f214584be75bf).
+This download contains no part of the game. You need your own dump of Chrono Trigger for the
+Nintendo DS, one of:
+  USA     YQUE  SHA-1 11f9e8204e484eab42181b210c9f214584be75bf
+  Europe  YQUP  SHA-1 a6c69d789a6f2e31b27fba950423bea3c2f30a37
+  Japan   YQUJ  SHA-1 afc91a3f1f6c1bd02845b76416239e4dabfae19f
 
 Getting started (Linux x86-64)
 ------------------------------

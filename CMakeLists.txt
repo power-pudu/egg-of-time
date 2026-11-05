@@ -94,6 +94,7 @@ set(RUNTIME_SOURCES
     runtime/thread.c
     runtime/translation.c
     runtime/ui_font.c
+    runtime/ui_text.c
     runtime/video.c
     runtime/widescreen.c)
 
@@ -193,18 +194,16 @@ endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-# Recompiled game code. Needs the dsd project (extract/ + config/) from NOTES.md.
+# Recompiled game code. Needs the dsd project (extract/ + config/) from NOTES.md. EGG_EXTRACT picks the extraction:
+# the game library is built for the version of the game it holds, and refuses to start with another's ROM.
+set(EGG_EXTRACT "${CMAKE_SOURCE_DIR}/extract" CACHE PATH "dsd extraction of the ROM to recompile")
 set(GEN_DIR ${CMAKE_BINARY_DIR}/gen)
 set(RECOMP_DIR ${CMAKE_SOURCE_DIR}/tools/recomp)
-file(GLOB RECOMP_INPUTS
-    ${RECOMP_DIR}/*.py
-    ${RECOMP_DIR}/*.txt
-    ${CMAKE_SOURCE_DIR}/config/arm9/*.txt
-    ${CMAKE_SOURCE_DIR}/config/arm9/*/*.txt
-    ${CMAKE_SOURCE_DIR}/config/arm9/overlays/*/*.txt)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RECOMP_INPUTS})
+file(GLOB_RECURSE RECOMP_CONFIG ${CMAKE_SOURCE_DIR}/config/*.txt)
+file(GLOB RECOMP_INPUTS ${RECOMP_DIR}/*.py ${RECOMP_DIR}/*.txt)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RECOMP_INPUTS} ${RECOMP_CONFIG})
 execute_process(
-    COMMAND ${Python3_EXECUTABLE} -I ${RECOMP_DIR}/recomp.py ${CMAKE_SOURCE_DIR} ${GEN_DIR}
+    COMMAND ${Python3_EXECUTABLE} -I ${RECOMP_DIR}/recomp.py ${CMAKE_SOURCE_DIR} ${GEN_DIR} --extract ${EGG_EXTRACT}
     RESULT_VARIABLE recomp_result)
 if(NOT recomp_result EQUAL 0)
     message(FATAL_ERROR "recompiler failed")

@@ -1,7 +1,8 @@
-# Game functions replaced by runtime C implementations (Chrono Trigger DS, YQUE).
-# Format: <module> <address> <C function> [wrap]. Calls and the dispatch table use the runtime function
-# instead. The recompiler emits no code for these, except with `wrap`: then the game function is still
-# recompiled under its usual name (f_<module>_<address>) and the runtime function calls it.
+# Game functions replaced by runtime C implementations (Chrono Trigger DS).
+# Format: <module> <address> <C function> [wrap] [jp=<address>]. Calls and the dispatch table use the runtime
+# function instead. The recompiler emits no code for these, except with `wrap`: then the game function is still
+# recompiled under its usual name (f_<module>_<address>) and the runtime function calls it. The address is the USA
+# and European one; jp= is the Japanese one where it differs.
 
 # NitroSDK thread context switching: register-file save/restore that has no C equivalent.
 # Replaced by coroutine switches (runtime/thread.c).
@@ -15,10 +16,10 @@ main 02023cb0 rt_bad_alloc
 
 # New Game settings defaults: in single screen mode, Game Mode starts as Classic instead of DS
 # (runtime/patches.c).
-ov007 0212a3f0 rt_ct_settings_defaults wrap
+ov007 0212a3f0 rt_ct_settings_defaults wrap jp=0212a2c8
 
 # Title idle timeout (30 s to the intro movie): held off while System Settings is open (runtime/patches.c).
-ov007 02127618 rt_ct_title_idle wrap
+ov007 02127618 rt_ct_title_idle wrap jp=021274f0
 
 # Field object visibility test (characters are drawn while their tile is within 4 tiles of the 4:3 view): in
 # widescreen, widened by the margins for the call (runtime/widescreen.c).
@@ -27,14 +28,14 @@ ov004 02130dbc rt_ws_object_visible wrap
 # Zoom out: a sprite's Y needs more than its 8 bits, and the UI's sprites stay at the original scale: what the
 # sprite renderer knows of each is kept in its attributes when it is entered (runtime/widescreen.c).
 main 02019fd4 rt_ws_draw_cell wrap
-main 02048098 rt_ws_enter_oam wrap
+main 02048098 rt_ws_enter_oam wrap jp=020480c8
 
 # World map sprites (drawn while their screen X is within -15..255 of the 4:3 view) and objects (on screen while
 # within -16..271; the birds go away outside): in widescreen, the SNES-style compare those tests use is widened by
 # the margins at those calls, and the converted X of the right margin's pieces
 # put back from the negative 9-bit encoding (runtime/widescreen.c).
-main 020305ac rt_ws_snes_cmp
-ov002 0211cc20 rt_ws_world_sprite wrap
+main 020305ac rt_ws_snes_cmp jp=020305b8
+ov002 0211cc20 rt_ws_world_sprite wrap jp=0211cc40
 
 # Cutscene players (r0 = the movie's path): an MP4 in mods/cutscenes plays instead while Mods is on
 # (runtime/movie.c). 0x02198da0 is the variant that also draws on the bottom screen.

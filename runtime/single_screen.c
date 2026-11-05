@@ -89,6 +89,7 @@
 
 #include "dispatch.h"
 #include "rt.h"
+#include "ui_text.h"
 #include "single_screen.h"
 #include "system_menu.h"
 #include "ui_font.h"
@@ -108,17 +109,17 @@ static uint32_t title_held; /* keys held since before the title started: not a p
 #define NAMING_ENTERING 1
 
 #define MENU_PAGE 0x19c4      /* field menu (ov012, X): its current page object (Main Menu, Equipment...) */
-#define MENU_MAIN 0x02159bf8u /* the Main Menu page's vtable */
-#define MENU_EQUIP 0x021595fcu /* the Equipment page's: +4 its state (EQUIP_PICKING: choosing an item), +0x32c the slot */
-#define MENU_ITEMS 0x02159774u /* the Inventory page's vtable */
-#define MENU_TECHS 0x02159b30u /* the Techs page's */
-#define MENU_PARTY 0x021596ccu /* the Party page's vtable */
-#define MENU_SAVE 0x02159a10u  /* the Save page's */
-#define MENU_OPTIONS 0x02159510u /* the Settings page's: +0xa the tab, +0xc the row, +0xe the option (tab * 4 + row) */
+#define MENU_MAIN GAME_ADDR(0x02159bf8u, 0x02159c58u) /* the Main Menu page's vtable */
+#define MENU_EQUIP GAME_ADDR(0x021595fcu, 0x0215965cu) /* the Equipment page's: +4 its state (EQUIP_PICKING: choosing an item), +0x32c the slot */
+#define MENU_ITEMS GAME_ADDR(0x02159774u, 0x021597d4u) /* the Inventory page's vtable */
+#define MENU_TECHS GAME_ADDR(0x02159b30u, 0x02159b90u) /* the Techs page's */
+#define MENU_PARTY GAME_ADDR(0x021596ccu, 0x0215972cu) /* the Party page's vtable */
+#define MENU_SAVE GAME_ADDR(0x02159a10u, 0x02159a70u)  /* the Save page's */
+#define MENU_OPTIONS GAME_ADDR(0x02159510u, 0x02159570u) /* the Settings page's: +0xa the tab, +0xc the row, +0xe the option (tab * 4 + row) */
 #define OPTIONS_TAB 0xa
 #define OPTIONS_ROW 0xc
 #define OPTIONS_INDEX 0xe
-#define CONFIG 0x020708d0u /* points to the save configuration: Game Mode byte 2 bit 7 (1 = Classic) */
+#define CONFIG GAME_ADDR(0x020708d0u, 0x020708f0u) /* points to the save configuration: Game Mode byte 2 bit 7 (1 = Classic) */
 #define EQUIP_STATE 0x4
 #define EQUIP_PICKING 5
 #define EQUIP_SLOT 0x32c
@@ -132,7 +133,7 @@ static uint32_t title_held; /* keys held since before the title started: not a p
 #define ARENA_TRAIN_ERA 0x0214783cu   /* the eras */
 #define ARENA_SHOP_BUY 0x2a4e /* the Arena's shop: its Buy button's sprite is shown (byte), on Buy / Sell only */
 
-#define CURRENT_SCENE 0x0207088cu /* the running scene's secondary base (scene + 8), set by Scene::run */
+#define CURRENT_SCENE GAME_ADDR(0x0207088cu, 0x020708acu) /* the running scene's secondary base (scene + 8), set by Scene::run */
 
 static Scene current(void) {
     Scene sc = {SCENE_OTHER, 0};
@@ -141,12 +142,12 @@ static Scene current(void) {
     sc.obj = base - 8;
     uint32_t vt = rt_r32(base); /* the secondary base's vtable */
     if (rt_overlay_resident(7)) {
-        if (vt == 0x0212ad68u) sc.kind = SCENE_LOGOS;
-        else if (vt == 0x0212aed4u) sc.kind = SCENE_TITLE;
-        else if (vt == 0x0212b300u) sc.kind = SCENE_SETTINGS;
+        if (vt == GAME_ADDR(0x0212ad68u, 0x0212abe8u)) sc.kind = SCENE_LOGOS;
+        else if (vt == GAME_ADDR(0x0212aed4u, 0x0212ad54u)) sc.kind = SCENE_TITLE;
+        else if (vt == GAME_ADDR(0x0212b300u, 0x0212b180u)) sc.kind = SCENE_SETTINGS;
     }
-    if (vt == 0x02156880u && rt_overlay_resident(12)) sc.kind = SCENE_NAMING;
-    if (vt == 0x02158b24u && rt_overlay_resident(12)) {
+    if (vt == GAME_ADDR(0x02156880u, 0x021568e0u) && rt_overlay_resident(12)) sc.kind = SCENE_NAMING;
+    if (vt == GAME_ADDR(0x02158b24u, 0x02158b84u) && rt_overlay_resident(12)) {
         uint32_t page = rt_r32(sc.obj + MENU_PAGE);
         if (page >> 24 == 0x02 && rt_r32(page) == MENU_MAIN) sc.kind = SCENE_MENU;
         if (page >> 24 == 0x02 && rt_r32(page) == MENU_EQUIP) sc.kind = SCENE_EQUIP;
@@ -156,13 +157,13 @@ static Scene current(void) {
         if (page >> 24 == 0x02 && rt_r32(page) == MENU_PARTY) sc.kind = SCENE_PARTY;
         if (page >> 24 == 0x02 && rt_r32(page) == MENU_SAVE) sc.kind = SCENE_SAVE;
     }
-    if (vt == 0x021575f0u && rt_overlay_resident(12)) sc.kind = SCENE_SHOP; /* ov012: a shop */
+    if (vt == GAME_ADDR(0x021575f0u, 0x02157650u) && rt_overlay_resident(12)) sc.kind = SCENE_SHOP; /* ov012: a shop */
     if (vt == 0x0219fc8cu && rt_overlay_resident(18)) sc.kind = SCENE_BESTIARY; /* ov018: the menu's Bestiary */
-    if (vt == 0x02115558u && rt_overlay_resident(0)) sc.kind = SCENE_FIELD; /* ov000: towns, maps, battles */
+    if (vt == GAME_ADDR(0x02115558u, 0x02115578u) && rt_overlay_resident(0)) sc.kind = SCENE_FIELD; /* ov000: towns, maps, battles */
     if (vt == 0x0212535cu && rt_overlay_resident(10)) sc.kind = SCENE_WARP;  /* ov010: travel through a time gate */
     if (vt == 0x02120a68u && rt_overlay_resident(2)) sc.kind = SCENE_OVERWORLD; /* ov002: the world map */
     if (vt == 0x02148574u && rt_overlay_resident(11)) sc.kind = SCENE_RACE; /* ov011: the race against Johnny (Lab 32) */
-    if (vt == 0x02158290u && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
+    if (vt == GAME_ADDR(0x02158290u, 0x021582f0u) && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
     if (vt == 0x0214a550u && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_SHOP; /* ov013: the Arena's shop */
     if (vt == 0x02147460u && rt_overlay_resident(13)) { /* ov013: the Arena of the Ages */
         uint32_t page = rt_r32(sc.obj + ARENA_PAGE);
@@ -359,7 +360,7 @@ static void compose_title(uint32_t *main, const uint32_t *top, const uint32_t *b
         int f = (mb >> 14) == 2 ? (mb & 31) : 0;
         if (f > 16) f = 16;
         uint32_t v = 255u * (uint32_t)(16 - f) / 16;
-        const char *prompt = rt_french() ? "Appuyez sur une touche pour commencer" : "Press any button to start";
+        const char *prompt = ui_text_in(rt_language(), "Press any button to start");
         ui_draw_text(main, prompt, FREE_CX - ui_text_width(prompt) / 2, FREE_CY - 4, BLACK | v << 16 | v << 8 | v);
         return;
     }
@@ -420,7 +421,7 @@ static void relabel_select(uint32_t *main, int y) {
             row[x] = row[SELECT_FILL_X + (x - SELECT_LABEL_X0) % SELECT_FILL_W];
         }
     }
-    ui_draw_text(main, rt_french() ? "Options syst\xC3\xA8me" : "System settings", SELECT_LABEL_X0 + 2, y + 6, 0xFFFFFFFFu);
+    ui_draw_text(main, ui_text_in(rt_language(), "System settings"), SELECT_LABEL_X0 + 2, y + 6, 0xFFFFFFFFu);
 }
 
 static void compose_settings(Scene sc, uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
@@ -1148,7 +1149,7 @@ static int blank(const uint32_t *px) {
  * at *(0x0207b520) + 0x407 set to 0xff meanwhile. */
 static int field_paused(void) {
     if (!rt_overlay_resident(0)) return 0;
-    uint32_t base = rt_r32(0x0207b520u);
+    uint32_t base = rt_r32(GAME_ADDR(0x0207b520u, 0x0207b540u));
     return base >> 24 == 0x02 && rt_r8(base + 0x407) == 0xff;
 }
 
@@ -1184,7 +1185,7 @@ static int map_panel_shown(const uint32_t *bottom) {
 
 /* The field paused: how to open the System Settings menu, at the bottom of the main screen (w columns). */
 static void pause_hint(uint32_t *main, int w, int h) {
-    const char *hint = rt_french() ? "Appuyez sur SELECT pour les options syst\xC3\xA8me" : "Press SELECT to open System Settings";
+    const char *hint = ui_text_in(rt_language(), "Press SELECT to open System Settings");
     ui_draw_text_in(main, w, hint, (w - ui_text_width(hint)) / 2, h - UI_FONT_H - 6, 0xFFFFFFFFu);
 }
 

@@ -44,6 +44,7 @@
 #include "single_screen.h"
 #include "system_menu.h"
 #include "ui_font.h"
+#include "ui_text.h"
 #include "video.h"
 
 #define WINDOW_SCALE 3
@@ -92,7 +93,9 @@ static const char *const color_labels[] = {"Original (DS)", "SNES light", "SNES 
  * Each channel is raised to an exponent: black and white stay, midtones darken and colors deepen. */
 static const float color_exponents[] = {1.0f, 1.1f, 1.2f, 1.4f};
 static const char *const language_names[] = {"english", "french"};
-static const char *const language_labels[] = {"English", "French"};
+static const char *const language_labels[] = {"English", "Fran\xC3\xA7" "ais"}; /* each in its own language */
+static const char *const language_jp_names[] = {"japanese", "english"};
+static const char *const language_jp_labels[] = {"\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", "English"};
 static const char *const ff_music_names[] = {"fast", "normal"};
 static const char *const ff_music_labels[] = {"Sped up", "Normal speed"};
 static const char *const ff_sound_names[] = {"all", "music"};
@@ -106,6 +109,7 @@ static const char **shader_names; /* "off", then shader_key() of each listed sha
 static Setting settings[SET_COUNT] = {
     /* The DS's system language, which the game reads at power-on (boot.c): changes apply at the next start. */
     [SET_LANGUAGE] = {"language", "Language", 2, LANGUAGE_ENGLISH, language_names, language_labels},
+    [SET_LANGUAGE_JP] = {"languagejp", "Language", 2, LANGUAGE_JP_JAPANESE, language_jp_names, language_jp_labels},
     [SET_WINDOW] = {"window", "Window mode", 3, WINDOW_BORDERLESS, window_names, window_labels},
     [SET_LAYOUT] = {"layout", "Layout", LAYOUT_COUNT, EGG_SINGLE_SCREEN ? LAYOUT_TOP : LAYOUT_STACKED, layout_names, layout_labels}, /* also F2 */
     /* The other DS screen in a window of its own, for a second monitor; the main window shows the top only. */
@@ -174,8 +178,15 @@ static uint8_t gamma_lut[256];
 static int gamma_lut_for = -1;                         /* the Color value gamma_lut was built for */
 static char ini_path[1024];
 static char capture_path[1024]; /* save the next presented window here (bring-up aid) */
-static char message[64];
+/* The message box (display_message): drawn into message_px with the runtime's pixel font, which has the menu's
+ * languages. */
+#define MESSAGE_W 400
+#define MESSAGE_H 16
+static char message[128];
+static uint32_t message_px[MESSAGE_W * MESSAGE_H];
+static int message_w, message_dirty;
 static Uint64 message_until;
+static SDL_Texture *message_tex;
 /* The popup (display_popup): drawn into popup_px with the runtime's pixel font, shown scaled like the message box. */
 #define POPUP_W 200
 #define POPUP_H 41
@@ -186,9 +197,17 @@ static Uint64 popup_from, popup_until;
 static SDL_Texture *popup_tex;
 static SDL_Texture *minimap_tex; /* the bottom screen's map panel (main window) */
 
+static void message_changed(unsigned ms) {
+    message_w = SDL_min(ui_text_width(message) + 8, MESSAGE_W);
+    for (int i = 0; i < message_w * MESSAGE_H; i++) message_px[i] = 0xB4000000u;
+    ui_draw_text_in(message_px, message_w, message, 4, 4, 0xFFFFFFFFu);
+    message_dirty = 1;
+    message_until = SDL_GetTicks() + ms;
+}
+
 static void show_message(const char *fmt, const char *arg) {
     snprintf(message, sizeof message, fmt, arg);
-    message_until = SDL_GetTicks() + MESSAGE_MS;
+    message_changed(MESSAGE_MS);
 }
 
 void display_text_input(int on) {
@@ -198,24 +217,28 @@ void display_text_input(int on) {
 
 void display_message(const char *text, unsigned ms) {
     snprintf(message, sizeof message, "%s", text);
-    message_until = SDL_GetTicks() + ms;
+    message_changed(ms);
 }
 
-/* The last change, in SDL's built-in 8x8 font, scaled with the window, top left on a dark box. */
+/* The last change, scaled with the window, top left on a dark box. */
 static void draw_message(void) {
     if (!message[0] || SDL_GetTicks() >= message_until) return;
     int ww, wh;
     SDL_Renderer *ren = primary.ren;
+    if (!message_tex) {
+        message_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, MESSAGE_W, MESSAGE_H);
+        if (!message_tex) return;
+        SDL_SetTextureBlendMode(message_tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(message_tex, SDL_SCALEMODE_NEAREST);
+    }
+    if (message_dirty) {
+        SDL_UpdateTexture(message_tex, &(SDL_Rect){0, 0, message_w, MESSAGE_H}, message_px, message_w * 4);
+        message_dirty = 0;
+    }
     SDL_GetRenderOutputSize(ren, &ww, &wh);
     float k = SDL_max(2.0f, SDL_floorf(wh / 270.0f));
-    float w = (float)strlen(message) * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE + 8, h = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE + 8;
-    SDL_SetRenderScale(ren, k, k);
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 180);
-    SDL_RenderFillRect(ren, &(SDL_FRect){4, 4, w, h});
-    SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
-    SDL_RenderDebugText(ren, 8, 8, message);
-    SDL_SetRenderScale(ren, 1, 1);
+    SDL_RenderTexture(ren, message_tex, &(SDL_FRect){0, 0, (float)message_w, MESSAGE_H},
+                      &(SDL_FRect){4 * k, 4 * k, message_w * k, MESSAGE_H * k});
 }
 
 void display_popup(const uint32_t *image, int size, const char *line1, const char *line2, unsigned ms) {
@@ -1110,6 +1133,8 @@ int display_setting_get(int id) { return settings[id].value; }
 int display_setting_shown(int id) {
     switch (id) {
     case SET_LAYOUT: return !secondary.win; /* one screen per window */
+    case SET_LANGUAGE: return !RT_JAPAN;
+    case SET_LANGUAGE_JP: return RT_JAPAN;
     case SET_FILL: return SETTING(SET_ASPECT) != ASPECT_ORIGINAL || SETTING(SET_ZOOM);
     case SET_MINIMAP: return minimap_allowed(&primary);
     case SET_MINIMAP_SIZE:
@@ -1119,6 +1144,11 @@ int display_setting_shown(int id) {
     case SET_FILTER: return !SETTING(SET_SHADER); /* a shader replaces them */
     default: return 1;
     }
+}
+
+int display_language(void) {
+    if (RT_JAPAN) return SETTING(SET_LANGUAGE_JP) == LANGUAGE_JP_ENGLISH ? LANGUAGE_ID_ENGLISH : LANGUAGE_ID_JAPANESE;
+    return SETTING(SET_LANGUAGE) == LANGUAGE_FRENCH ? LANGUAGE_ID_FRENCH : LANGUAGE_ID_ENGLISH;
 }
 
 const char *display_shader_path(void) { return SETTING(SET_SHADER) ? settings[SET_SHADER].names[SETTING(SET_SHADER)] : NULL; }

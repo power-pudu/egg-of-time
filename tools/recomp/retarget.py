@@ -1,6 +1,7 @@
-"""Carries a translation made for another version of Chrono Trigger DS over to the ROM the port runs (USA).
+"""Carries a translation made for another version of Chrono Trigger DS over to the player's USA or European ROM.
 
-The port runs the USA game's code, so a patch made for the Japanese ROM cannot be applied to it. What such a
+(Europe's files are the USA's, so what is said of the USA ROM here holds for both; "USA" below is the ROM being
+built.) A patch made for the Japanese ROM cannot be applied to a USA ROM. What such a
 translation changes is data: runtime/translation.c applies the patches to the player's dump of the version they
 were made for, and this script moves what they changed into the USA ROM:
 

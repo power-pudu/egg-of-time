@@ -20,11 +20,11 @@
 #include "dispatch.h"
 #include "rt.h"
 
-/* Game addresses (YQUE). */
+/* Game addresses. */
 #define CP_SAVE_CONTEXT 0x02010d18u     /* divider/sqrt state, called by the original routines */
 #define CP_RESTORE_CONTEXT 0x02010d58u
 #define IRQ_THREAD_QUEUE 0x027e0060u    /* threads waiting for an IRQ (OS_WaitIrq) */
-#define THREAD_INFO 0x02067b00u         /* OSThreadInfo: +0 reschedule flag, +4 current, +8 list, +0xC switch callback */
+#define THREAD_INFO GAME_ADDR(0x02067b00u, 0x02067b20u)         /* OSThreadInfo: +0 reschedule flag, +4 current, +8 list, +0xC switch callback */
 #define THREAD_STATE 0x64u              /* OSThread fields */
 #define THREAD_LINK_PRIO 0x68u
 

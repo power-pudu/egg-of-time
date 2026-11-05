@@ -36,6 +36,7 @@
 #include "single_screen.h"
 #include "system_menu.h"
 #include "ui_font.h"
+#include "ui_text.h"
 #include "video.h"
 
 #define REPEAT_DELAY_MS 400
@@ -53,6 +54,7 @@
 
 static const char *const descriptions[ROW_COUNT] = {
     [SET_LANGUAGE] = "Game text. Applies at the next start.",
+    [SET_LANGUAGE_JP] = "Game text. Applies at the next start.",
     [SET_WINDOW] = "How the game window is shown.",
     [SET_LAYOUT] = "Which screens are shown, and how.",
     [SET_SECOND] = "The other screen in its own window.",
@@ -101,7 +103,7 @@ static void controls_input(uint32_t act) {
     if (act & KEY_A) {
         if (ctl_cursor == ROW_RESET) {
             controls_reset();
-            display_message("Controls: defaults restored", 2000);
+            display_message(ui_text("Controls: defaults restored"), 2000);
         } else {
             controls_capture_start(ctl_cursor, ctl_pad);
         }
@@ -178,7 +180,7 @@ static void cheevos_input(uint32_t act) {
     case CH_PASSWORD: typing = CH_PASSWORD, display_text_input(1); break;
     case CH_LOGIN:
         if (!ch_name[0] || !ch_password[0]) {
-            display_message("RetroAchievements: type your name and password", 2500);
+            display_message(ui_text("RetroAchievements: type your name and password"), 2500);
             break;
         }
         cheevos_login(ch_name, ch_password);
@@ -198,6 +200,7 @@ static uint32_t input(uint32_t keys) {
     if (place == SS_MENU_NONE) {
         if ((pressed & KEY_SELECT) && (place = ss_menu_place()) != SS_MENU_NONE) {
             cursor = top = confirm = controls_page = cheevos_page = 0;
+            while (!row_shown(cursor)) cursor++;
             return 0;
         }
         blocked &= keys;
@@ -239,7 +242,7 @@ static uint32_t input(uint32_t keys) {
                 place = SS_MENU_NONE;
                 blocked = keys;
             } else {
-                display_message("Language: applies at the next start", 2500);
+                display_message(ui_text("Language: applies at the next start"), 2500);
             }
         }
         return 0;
@@ -270,7 +273,7 @@ static uint32_t input(uint32_t keys) {
     } else if (act & (KEY_LEFT | KEY_RIGHT)) {
         int n = display_setting_count(cursor);
         display_setting_set(cursor, (display_setting_get(cursor) + ((act & KEY_RIGHT) ? 1 : n - 1)) % n);
-        if (cursor == SET_LANGUAGE && (display_setting_get(SET_LANGUAGE) == LANGUAGE_FRENCH) != rt_french()) {
+        if ((cursor == SET_LANGUAGE || cursor == SET_LANGUAGE_JP) && display_language() != rt_language()) {
             confirm = CONFIRM_LANGUAGE;
             yes = 0;
         }
@@ -281,8 +284,8 @@ static uint32_t input(uint32_t keys) {
 uint32_t sysmenu_input(uint32_t keys) {
     int images;
     if (gfxdump_finished(&images)) {
-        char text[64];
-        SDL_snprintf(text, sizeof text, "Graphics: %d images in mods/graphics/dump", images);
+        char text[96];
+        SDL_snprintf(text, sizeof text, ui_text("Graphics: %d images in mods/graphics/dump"), images);
         display_message(text, 4000);
     }
     uint32_t game_keys = input(keys);
@@ -387,6 +390,7 @@ static const char *fit(const char *text, int w) {
     static char buf[256];
     if (ui_text_width(text) <= w) return text;
     for (size_t n = SDL_min(SDL_strlen(text), sizeof buf - 3);; n--) {
+        if ((text[n] & 0xC0) == 0x80) continue; /* a whole UTF-8 character */
         SDL_memcpy(buf, text, n);
         SDL_memcpy(buf + n, "..", 3);
         if (n == 0 || ui_text_width(buf) <= w) break;
@@ -400,22 +404,22 @@ static void centered(uint32_t *s, const char *text, Rect r, uint32_t color) {
 
 /* A row's label and value: a display setting's, or an action's (Controls, RetroAchievements, Dump graphics). */
 static const char *row_title(int i) {
-    if (i == ROW_CONTROLS) return "Controls";
+    if (i == ROW_CONTROLS) return ui_text("Controls");
     if (i == ROW_CHEEVOS) return "RetroAchievements";
-    return i == ROW_DUMP ? "Dump graphics" : display_setting_title(i);
+    return ui_text(i == ROW_DUMP ? "Dump graphics" : display_setting_title(i));
 }
 
 static const char *row_value(int i, int w) {
     static char buf[16];
     int done, total;
     float share;
-    if (i == ROW_CONTROLS) return "A: change";
+    if (i == ROW_CONTROLS) return ui_text("A: change");
     if (i == ROW_CHEEVOS) {
         int st = cheevos_state();
-        return st == CHEEVOS_LOGGED_IN ? fit(cheevos_user(), w) : st == CHEEVOS_LOGGING_IN ? "Logging in..." : "A: log in";
+        return st == CHEEVOS_LOGGED_IN ? fit(cheevos_user(), w) : ui_text(st == CHEEVOS_LOGGING_IN ? "Logging in..." : "A: log in");
     }
-    if (i != ROW_DUMP) return fit(display_setting_label(i, display_setting_get(i)), w);
-    if (!gfxdump_running()) return "A: dump";
+    if (i != ROW_DUMP) return fit(ui_text(display_setting_label(i, display_setting_get(i))), w);
+    if (!gfxdump_running()) return ui_text("A: dump");
     gfxdump_progress(&done, &total, &share);
     SDL_snprintf(buf, sizeof buf, "%d%%", (int)(share * 100));
     return buf;
@@ -432,18 +436,18 @@ static void draw_dump_progress(uint32_t *s) {
     int done, total;
     float share;
     gfxdump_progress(&done, &total, &share);
-    char count[48], left[48];
+    char count[80], left[80];
     if (!total) {
-        SDL_snprintf(count, sizeof count, "Listing the game's files...");
+        SDL_strlcpy(count, ui_text("Listing the game's files..."), sizeof count);
         left[0] = 0;
     } else {
-        SDL_snprintf(count, sizeof count, "%d of %d files", done, total);
+        SDL_snprintf(count, sizeof count, ui_text("%d of %d files"), done, total);
         Uint64 spent = SDL_GetTicks() - dump_since, rest = share > 0 ? (Uint64)((double)spent * (1 - share) / share) : 0;
-        if (share < 0.02f || spent < 2000) SDL_snprintf(left, sizeof left, "Working out the time left...");
-        else if (rest < 60000) SDL_snprintf(left, sizeof left, "About %d s left", (int)(rest / 1000) + 1);
-        else SDL_snprintf(left, sizeof left, "About %d min left", (int)((rest + 30000) / 60000));
+        if (share < 0.02f || spent < 2000) SDL_strlcpy(left, ui_text("Working out the time left..."), sizeof left);
+        else if (rest < 60000) SDL_snprintf(left, sizeof left, ui_text("About %d s left"), (int)(rest / 1000) + 1);
+        else SDL_snprintf(left, sizeof left, ui_text("About %d min left"), (int)((rest + 30000) / 60000));
     }
-    const char *lines[] = {"Dumping graphics..."};
+    const char *lines[] = {ui_text("Dumping graphics...")};
     Rect r = {28, 52, 200, 86}, bar = {44, 78, 168, 12};
     dialog(s, r, lines, 1);
     panel(s, bar, &BUTTON);
@@ -456,10 +460,10 @@ static void draw_dump_progress(uint32_t *s) {
 }
 
 static void draw_controls(uint32_t *s) {
-    const char *title = "Controls";
+    const char *title = ui_text("Controls");
     ui_draw_text(s, title, 12, 8, WHITE);
-    centered(s, "Keyboard", (Rect){92, 4, 78, 16}, GREY);
-    centered(s, "Gamepad", (Rect){174, 4, 62, 16}, GREY);
+    centered(s, ui_text("Keyboard"), (Rect){92, 4, 78, 16}, GREY);
+    centered(s, ui_text("Gamepad"), (Rect){174, 4, 62, 16}, GREY);
     scroll_to(s, &ctl_top, ctl_cursor, ROW_RESET + 1);
     int capturing = controls_capturing();
     for (int r = ctl_top; r <= ROW_RESET && r < ctl_top + ROWS_SHOWN; r++) {
@@ -468,17 +472,17 @@ static void draw_controls(uint32_t *s) {
             Rect b = {6, y, 244, ROW_H};
             panel(s, b, sel ? &BUTTON_LIT : &BUTTON);
             if (sel) frame(s, b, TEAL);
-            centered(s, "Reset to defaults", b, sel ? WHITE : GREY);
+            centered(s, ui_text("Reset to defaults"), b, sel ? WHITE : GREY);
             continue;
         }
         Rect lr = {6, y, 82, ROW_H}, cells[2] = {{92, y, 78, ROW_H}, {174, y, 76, ROW_H}};
         panel(s, lr, sel ? &BUTTON_LIT : &BUTTON);
-        ui_draw_text(s, controls_name(r), lr.x + 6, y + 4, sel ? WHITE : GREY);
+        ui_draw_text(s, ui_text(controls_name(r)), lr.x + 6, y + 4, sel ? WHITE : GREY);
         for (int c = 0; c < 2; c++) {
             int on = sel && c == ctl_pad;
             panel(s, cells[c], &BUTTON);
             if (on) frame(s, cells[c], TEAL);
-            const char *v = on && capturing ? "Press..." : c ? controls_pad_label(r) : controls_key_label(r);
+            const char *v = on && capturing ? ui_text("Press...") : c ? ui_text(controls_pad_label(r)) : controls_key_label(r);
             centered(s, v, cells[c], on ? YELLOW : WHITE);
         }
     }
@@ -489,7 +493,7 @@ static const char *field_value(int row, int w) {
     static char buf[80];
     const char *text = row == CH_NAME ? ch_name : ch_password;
     if (row == CH_NAME && cheevos_state() == CHEEVOS_LOGGED_IN) return fit(cheevos_user(), w);
-    if (!text[0] && typing != row) return "A: type";
+    if (!text[0] && typing != row) return ui_text("A: type");
     size_t n = 0;
     if (row == CH_PASSWORD) {
         for (const char *p = text; *p && n < 40; p++) {
@@ -577,9 +581,9 @@ static void draw_cheevos(uint32_t *s) {
     int rows[3], fixed;
     const CheevosItem *items;
     int n = ch_total(rows, &fixed, &items), unlocked = 0;
-    char title[48] = "RetroAchievements";
+    char title[64] = "RetroAchievements";
     for (int i = 0; i < n - fixed; i++) unlocked += items[i].unlocked;
-    if (n > fixed) SDL_snprintf(title, sizeof title, "Achievements: %d of %d", unlocked, n - fixed);
+    if (n > fixed) SDL_snprintf(title, sizeof title, ui_text("Achievements: %d of %d"), unlocked, n - fixed);
     ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
     ch_cursor = SDL_min(ch_cursor, n - 1);
     ch_scroll(s, n, fixed);
@@ -596,7 +600,7 @@ static void draw_cheevos(uint32_t *s) {
             const char *label = rows[r] == CH_LOGOUT                       ? "Log out"
                                 : cheevos_state() == CHEEVOS_LOGGING_IN ? "Logging in..."
                                                                         : "Log in";
-            centered(s, label, b, sel ? WHITE : GREY);
+            centered(s, ui_text(label), b, sel ? WHITE : GREY);
             continue;
         }
         Rect lr = {6, y, 112, ROW_H}, vr = {122, y, 128, ROW_H};
@@ -604,7 +608,7 @@ static void draw_cheevos(uint32_t *s) {
         panel(s, vr, &BUTTON);
         if (sel) frame(s, vr, TEAL);
         const char *label = rows[r] == CH_PASSWORD ? "Password" : cheevos_state() == CHEEVOS_LOGGED_IN ? "Player" : "Name";
-        ui_draw_text(s, label, lr.x + 6, y + 4, sel ? WHITE : GREY);
+        ui_draw_text(s, ui_text(label), lr.x + 6, y + 4, sel ? WHITE : GREY);
         const char *v = field_value(rows[r], vr.w - 12);
         ui_draw_text(s, v, vr.x + (vr.w - ui_text_width(v)) / 2, y + 4, sel ? YELLOW : WHITE);
     }
@@ -614,22 +618,22 @@ static const char *cheevos_footer(void) {
     int rows[3], fixed;
     const CheevosItem *items;
     ch_total(rows, &fixed, &items);
-    if (typing) return "Type, then Enter.";
-    if (cheevos_state() == CHEEVOS_LOGGING_IN) return "Logging in...";
+    if (typing) return ui_text("Type, then Enter.");
+    if (cheevos_state() == CHEEVOS_LOGGING_IN) return ui_text("Logging in...");
     if (ch_cursor >= fixed) {
         const CheevosItem *a = &items[ch_cursor - fixed];
-        static char buf[64];
-        if (a->unlocked) return "Unlocked.";
-        if (!a->progress[0]) return "Not unlocked yet.";
-        SDL_snprintf(buf, sizeof buf, "Not unlocked yet: %s so far.", a->progress);
+        static char buf[96];
+        if (a->unlocked) return ui_text("Unlocked.");
+        if (!a->progress[0]) return ui_text("Not unlocked yet.");
+        SDL_snprintf(buf, sizeof buf, ui_text("Not unlocked yet: %s so far."), a->progress);
         return buf;
     }
     switch (rows[ch_cursor]) {
     case CH_NAME:
-        return cheevos_state() == CHEEVOS_LOGGED_IN ? "Achievements unlock as you play." : "Your retroachievements.org name.";
-    case CH_PASSWORD: return "Only a login token is saved.";
-    case CH_LOGIN: return "No keyboard? See retroachievements.ini";
-    default: return "A: log out.";
+        return ui_text(cheevos_state() == CHEEVOS_LOGGED_IN ? "Achievements unlock as you play." : "Your retroachievements.org name.");
+    case CH_PASSWORD: return ui_text("Only a login token is saved.");
+    case CH_LOGIN: return ui_text("No keyboard? See retroachievements.ini");
+    default: return ui_text("A: log out.");
     }
 }
 
@@ -643,7 +647,7 @@ void sysmenu_draw(uint32_t *s) {
     } else if (cheevos_page) {
         draw_cheevos(s);
     } else {
-        const char *title = "System Settings";
+        const char *title = ui_text("System Settings");
         ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
 
         int rows[ROW_COUNT], n = 0, at = 0;
@@ -667,33 +671,33 @@ void sysmenu_draw(uint32_t *s) {
         }
     }
 
-    const char *footer = descriptions[cursor];
+    const char *footer = ui_text(descriptions[cursor]);
     if (cursor == SET_SHADER && display_shader_path()) footer = fit(display_shader_path(), 208);
-    if (confirm) footer = "A: confirm.  B: not now.";
-    else if (gfxdump_running() && !controls_page && !cheevos_page) footer = "Closing the menu leaves it running.";
+    if (confirm) footer = ui_text("A: confirm.  B: not now.");
+    else if (gfxdump_running() && !controls_page && !cheevos_page) footer = ui_text("Closing the menu leaves it running.");
     else if (controls_page && controls_capturing() && controls_capture_conflict()) {
-        static char used[64];
-        SDL_snprintf(used, sizeof used, "%s uses that one. Press another.", controls_capture_conflict());
+        static char used[96];
+        SDL_snprintf(used, sizeof used, ui_text("%s uses that one. Press another."), ui_text(controls_capture_conflict()));
         footer = used;
-    } else if (controls_page && controls_capturing()) footer = ctl_pad ? "Press a gamepad button. Esc: cancel." : "Press a key. Esc: cancel.";
-    else if (controls_page) footer = ctl_cursor == ROW_RESET ? "A: restore the default controls." : "A: change.  Left/Right: key or pad.";
+    } else if (controls_page && controls_capturing()) footer = ui_text(ctl_pad ? "Press a gamepad button. Esc: cancel." : "Press a key. Esc: cancel.");
+    else if (controls_page) footer = ui_text(ctl_cursor == ROW_RESET ? "A: restore the default controls." : "A: change.  Left/Right: key or pad.");
     else if (cheevos_page) footer = cheevos_footer();
     panel(s, (Rect){0, 166, 222, 26}, &BAR);
     draw_lines(s, footer, 8, ui_text_width(footer) <= 208 ? 175 : 170, 208, WHITE);
     panel(s, (Rect){224, 166, 32, 26}, &BAR);
     b_sign(s, 240, 179);
     if (confirm) {
-        static const char *const language[] = {"Restart the game now?", "The new language needs a restart.",
-                                               "Unsaved progress will be lost."};
-        static const char *const dump[] = {"Dump all game graphics?", "Every sprite and background, to",
-                                           "mods/graphics/dump. May take a while."};
+        const char *const language[] = {ui_text("Restart the game now?"), ui_text("The new language needs a restart."),
+                                        ui_text("Unsaved progress will be lost.")};
+        const char *const dump[] = {ui_text("Dump all game graphics?"), ui_text("Every sprite and background, to"),
+                                    ui_text("mods/graphics/dump. May take a while.")};
         dialog(s, (Rect){28, 52, 200, 86}, confirm == CONFIRM_DUMP ? dump : language, 3);
         for (int i = 0; i < 2; i++) {
             Rect b = {64 + 72 * i, 106, 56, 20};
             int sel = (i == 0) == yes;
             panel(s, b, sel ? &BUTTON_LIT : &BUTTON);
             if (sel) frame(s, b, TEAL);
-            const char *label = i == 0 ? "Yes" : "No";
+            const char *label = ui_text(i == 0 ? "Yes" : "No");
             ui_draw_text(s, label, b.x + (b.w - ui_text_width(label)) / 2, b.y + 6, sel ? WHITE : GREY);
         }
     } else if (gfxdump_running() && !controls_page && !cheevos_page) {

@@ -12,7 +12,7 @@ and mods.
 
 > [!IMPORTANT]
 > **You need your own copy of the game.** Egg of Time contains no ROM, no game code and no game assets. The game
-> is built on your computer from your own ROM dump of *Chrono Trigger* (USA). See [Your ROM](#your-rom).
+> is built on your computer from your own ROM dump of *Chrono Trigger*. See [Your ROM](#your-rom).
 
 ## Disclaimers
 
@@ -79,14 +79,21 @@ and mods.
 
 ## Your ROM
 
-Egg of Time runs one version of the game only:
+Egg of Time builds the game from your dump of *Chrono Trigger* for Nintendo DS, in any of these versions:
 
-- *Chrono Trigger*, Nintendo DS, **USA** release (game code `YQUE`, English/French)
-- SHA-1 `11f9e8204e484eab42181b210c9f214584be75bf`
+| Version | Game code | Languages | SHA-1 |
+| --- | --- | --- | --- |
+| USA | `YQUE` | English, French | `11f9e8204e484eab42181b210c9f214584be75bf` |
+| Europe | `YQUP` | English, French | `a6c69d789a6f2e31b27fba950423bea3c2f30a37` |
+| Japan | `YQUJ` | Japanese, English | `afc91a3f1f6c1bd02845b76416239e4dabfae19f` |
+
+The game is built for the version you choose. To change version, delete `rom\CT.nds` (or start the game with
+another ROM as its argument): the game is built again. `rom\CT.sav` stays, so keep a copy of it if you go back and
+forth. RetroAchievements only knows the versions the achievement set lists.
 
 > [!CAUTION]
-> Dump it from your own cartridge. The Windows release refuses any other file (other regions, modified ROMs). A
-> source build only warns, but the game will not work with them.
+> Dump it from your own cartridge. The release refuses any other file (modified ROMs, other dumps). A source build
+> is made for the version in `extract/`, and refuses a ROM of another version.
 
 ## Features
 
@@ -135,18 +142,19 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 - **Translations**: put a translation patch in `mods\translation\`: IPS (`.ips`), BPS (`.bps`), xdelta
   (`.xdelta`, `.vcdiff`, `.xdelta3`) or xdelta 1 (`.delta`). It is applied to your ROM when the game is built,
   so `rom\CT.nds` stays the unmodified dump. Patches apply in file-name order, so a translation split into
-  several files works, and so does a base patch followed by a fix. A translation made for Chrono Trigger
-  (Japan) or (Europe) works too: put your dump of that version next to it (`.nds`), and its text, fonts and
-  graphics are carried over to the USA game. The `readme.txt` there has the details. Changing a patch rebuilds
+  several files works, and so does a base patch followed by a fix. A translation made for another version
+  works on a USA or European game too: put your dump of that version next to it (`.nds`), and its text, fonts and
+  graphics are carried over. The Japanese game takes only patches made for it. The `readme.txt` there has the details. Changing a patch rebuilds
   the game on the next start.
 - Cutscene and music mods can be turned off in System Settings > Mods.
 
 ### System Settings
 
 Open it with **SELECT** on the title menu or the Game Settings screen, or while the game is paused (START). Close
-it with B or SELECT. Changes apply immediately and are saved in `eggoftime.ini`. Language (English or French, the
-two the USA release has) needs the game to restart: the menu asks whether to restart now (unsaved progress is
-lost) or keep the change for the next start.
+it with B or SELECT. Changes apply immediately and are saved in `eggoftime.ini`. Language (English or French on the USA
+and European games, Japanese or English on the Japanese one) also sets the language of this menu, at once; the game
+needs a restart for it: the menu asks whether to restart now (unsaved progress is lost) or keep the change for the
+next start.
 
 **Controls** remaps the buttons: each DS button, fast forward, Save state and Load state has a keyboard key and a
 gamepad button. Left/Right pick the column, A waits for the new key or button (Escape cancels). Choosing one that
@@ -288,6 +296,8 @@ For development, or to play on Linux and macOS.
      cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang "-DCMAKE_PREFIX_PATH=<SDL3>/x86_64-w64-mingw32;<FFmpeg>;<curl>"
      cmake --build build
      ```
+
+   For the European or Japanese game, extract its ROM to a folder of its own and add `-DEGG_EXTRACT=<folder>`.
 
 4. **Run.** Copy your ROM to `build/rom/CT.nds`. Then run `Egg of Time` (`Egg of Time.exe` on Windows) from
    `build/`. You can also pass a ROM path: `"Egg of Time" path/to/rom.nds`. Saves go next to the ROM.

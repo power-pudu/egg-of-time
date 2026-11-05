@@ -17,6 +17,11 @@ int rt_game_load(const char *path, const char **error) {
         SDL_UnloadObject(lib);
         return 0;
     }
+    if (strcmp(g->game_code, rt_rom.code) != 0) {
+        *error = "the game library was built from another version of the game than this ROM";
+        SDL_UnloadObject(lib);
+        return 0;
+    }
     rt_game = g; /* stays loaded */
     return 1;
 }

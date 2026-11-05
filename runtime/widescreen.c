@@ -56,10 +56,10 @@
 #include "video.h"
 #include "widescreen.h"
 
-#define SCROLL 0x020708e0u
-#define TILESETS 0x020708d4u
-#define ROOM 0x0207b518u
-#define PAL_REMAP 0x02058714u
+#define SCROLL GAME_ADDR(0x020708e0u, 0x02070900u)
+#define TILESETS GAME_ADDR(0x020708d4u, 0x020708f4u)
+#define ROOM GAME_ADDR(0x0207b518u, 0x0207b538u)
+#define PAL_REMAP GAME_ADDR(0x02058714u, 0x02058744u)
 
 static int ram_ptr(uint32_t p) { return p >> 24 == 0x02; }
 
@@ -169,11 +169,11 @@ static int bg_follows(int bg, uint32_t scroll, int L) {
  * placed relative to its top-left. In the field it is widened to the margins, so characters beyond the 4:3 view
  * are drawn; their OAM X then counts from the left margin (ws_sprite_origin). Its top-left also moves with the
  * view's shift at the room's ends, so only its size tells how far it is widened. */
-#define G2D_VIEW 0x02058070u
+#define G2D_VIEW GAME_ADDR(0x02058070u, 0x020580a0u)
 #define FX(v) ((uint32_t)((v) * 4096))
 
 /* The field camera's top-left in the room, in pixels (0x020760f8: x, y; BG scroll moves with it). */
-#define CAMERA 0x020760f8u
+#define CAMERA GAME_ADDR(0x020760f8u, 0x02076118u)
 
 int ws_camera(int *x, int *y) {
     if (!ss_in_field()) return 0;
@@ -183,7 +183,7 @@ int ws_camera(int *x, int *y) {
 }
 
 /* The current location (the game's location id, as the SNES game numbers them: 0x1d0 the End of Time). */
-#define LOCATION 0x020720a0u
+#define LOCATION GAME_ADDR(0x020720a0u, 0x020720c0u)
 
 /* Rooms whose bounds hold more than the room: the right bound (metatile column) the room really ends at. */
 static const struct { uint16_t location; uint8_t right; } narrow_rooms[] = {
@@ -306,7 +306,7 @@ static void set_sprite_view(int margin, int rows, int dx, int dy) {
  * the G2D view above for world sprites (characters, gauges, damage numbers) and puts it back for the UI drawn in
  * screen coordinates (battle menus and their text, the command cursor). In the field that view starts at the
  * left margin, so the UI keeps its 4:3 place, centred. */
-#define CURRENT_SCENE 0x0207088cu
+#define CURRENT_SCENE GAME_ADDR(0x0207088cu, 0x020708acu)
 #define SCENE_SURFACE 0xd748u
 
 static void set_screen_view(int margin) {
@@ -397,10 +397,10 @@ void rt_ws_object_visible(CPU *cpu) {
  *     for the call that threshold is put where the comparison comes out as it would have there. */
 #define CELL_MATRIX_PTR 0x0201a3d4u
 #define CELL_DEFAULT_MATRIX 0x0201a3d8u
-#define OAM_PRIORITY_ON 0x020fd614u
-#define OAM_PRIORITY_Y 0x020fd618u
+#define OAM_PRIORITY_ON GAME_ADDR(0x020fd614u, 0x020fd634u)
+#define OAM_PRIORITY_Y GAME_ADDR(0x020fd618u, 0x020fd638u)
 
-#define BATTLE_HUD_LIST 0x02041a34u
+#define BATTLE_HUD_LIST GAME_ADDR(0x02041a34u, 0x02041a64u)
 #define BATTLE_HUD_TOP 132 /* the DS screen's row */
 
 static int cell_y, cell_ui, cell_hud, cell_known;
@@ -430,7 +430,7 @@ void rt_ws_draw_cell(CPU *cpu) {
     cell_known = 0;
 }
 
-static void game_enter_oam(CPU *cpu) { rt_call_wrapped(cpu, "main", 0x02048098u); } /* the original */
+static void game_enter_oam(CPU *cpu) { rt_call_wrapped(cpu, "main", GAME_ADDR(0x02048098u, 0x020480c8u)); } /* the original */
 void rt_ws_enter_oam(CPU *cpu) {
     if (!field_rows || !cell_known || cpu->resume_pc) {
         game_enter_oam(cpu);
@@ -475,11 +475,11 @@ int ws_world_sprite_limit(int rows) {
  * X tests (by return address: the sprite pieces' X + 15 against 0x10f, ov005; the objects' X - camera + 16 against
  * 0x120, ov002, negative values wrapped at 0x600) compare A + margin against M + 2 * margin instead, a value just
  * below zero (the left margin) taken as negative. */
-#define SNES_FLAGS 0x0207b43cu
+#define SNES_FLAGS GAME_ADDR(0x0207b43cu, 0x0207b45cu)
 #define SPRITE_X_TEST 0x0212c0e4u
-#define OBJECT_X_TEST 0x0210ce50u
+#define OBJECT_X_TEST GAME_ADDR(0x0210ce50u, 0x0210ce70u)
 #define SPRITE_Y_TEST 0x0212c178u
-#define OBJECT_Y_TEST 0x0210ce80u
+#define OBJECT_Y_TEST GAME_ADDR(0x0210ce80u, 0x0210cea0u)
 
 void rt_ws_snes_cmp(CPU *cpu) {
     uint32_t a = rt_r16(R[0]), m = R[1] & 0xFFFF, wrap = 0, w = 0;
@@ -500,7 +500,7 @@ void rt_ws_snes_cmp(CPU *cpu) {
 }
 
 /* World map sprite piece to DS (ov002 0x0211cc20, r2 = X, signed 16-bit). */
-static void game_world_sprite(CPU *cpu) { rt_call_wrapped(cpu, "ov002", 0x0211cc20u); } /* the original */
+static void game_world_sprite(CPU *cpu) { rt_call_wrapped(cpu, "ov002", GAME_ADDR(0x0211cc20u, 0x0211cc40u)); } /* the original */
 void rt_ws_world_sprite(CPU *cpu) {
     if (world_margin && !cpu->resume_pc && (int16_t)R[2] < -128) R[2] = (uint32_t)((int16_t)R[2] + 512) & 0xFFFF;
     if (world_rows && !cpu->resume_pc && (int16_t)R[3] >= ws_world_sprite_limit(world_rows)) R[3] = (uint32_t)((int16_t)R[3] - 256) & 0xFFFF;
@@ -654,7 +654,7 @@ void ws_sprite_lag(int *x, int *y) {
  * entry to the destination. Battle effects drawn with the windows (the rays of Lightning II...) use one with
  * WIN0H/WIN1H as one word a line. */
 #define HDMA_CHANNELS 0x027e0068u
-#define HDMA_END 0x02057944u
+#define HDMA_END GAME_ADDR(0x02057944u, 0x02057974u)
 
 int ws_window_lines(uint32_t h[SCREEN_H]) {
     uint32_t end = rt_r32(HDMA_END);

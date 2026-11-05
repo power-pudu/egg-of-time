@@ -121,13 +121,18 @@ typedef struct RtRom {
     char path[1024];      /* the ROM file */
     char save_path[1024]; /* cartridge backup memory file: ROM path with .sav */
     char state_path[1024]; /* save state (F5/F7): ROM path with .state */
+    char code[5];         /* game code of the dump as loaded (a translation's patched copy may change the header's) */
 } RtRom;
 extern RtRom rt_rom;
+/* A game address the runtime uses: the USA and European one, and the Japanese one. Europe's code is the USA's but for
+ * its secure area (config/regions/YQUP). Addresses in comments are the USA ones. */
+#define RT_JAPAN (rt_rom.code[3] == 'J')
+#define GAME_ADDR(usa, japan) (RT_JAPAN ? (japan) : (usa))
 int rt_load_rom(const char *path);
 void rt_boot(CPU *cpu);
 void rt_write_console_mac(void);  /* firmware data the ARM7 puts in RAM at power-on */
 int rt_console_mac_missing(void);
-int rt_french(void); /* the game runs in French (the language in its firmware settings, save states included) */
+int rt_language(void); /* the language the game runs in: LANGUAGE_ID_* (its firmware settings, save states included) */
 void rt_selftest(CPU *cpu); /* selftest.c */
 
 /* ---- state.c: save states ---- */

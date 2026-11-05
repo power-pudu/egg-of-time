@@ -1,8 +1,9 @@
 """EggOfTime static recompiler: dsd project + extracted ARM9 binaries -> C11 sources.
 
-Usage: python -I tools/recomp/recomp.py <project_root> <out_dir> [--no-comments] [--extract <dir>]
+Usage: python -I tools/recomp/recomp.py <project_root> <out_dir> [--no-comments] [--extract <dir>] [--region <code>]
   --extract: the dsd extraction (default <project_root>/extract); --no-comments: no disassembly comments,
-  which also leaves out capstone (the player-side build in runtime/game_build.c uses both).
+  which also leaves out capstone (the player-side build in runtime/game_build.c uses both); --region: the version
+  of the game (YQUE, YQUP, YQUJ), when the extraction's header may not say (a translation patch can change it).
 """
 
 import os
@@ -25,7 +26,7 @@ def fnv1a(data):
     return h
 
 
-def load_overrides(path):
+def load_overrides(path, region):
     """(module, addr) -> runtime C function name, and the set of (module, addr) marked `wrap`: their
     recompiled code is still emitted under its own name, for the runtime function to call."""
     out, wrapped = {}, set()
@@ -33,9 +34,13 @@ def load_overrides(path):
         for line in f:
             fields = line.split("#", 1)[0].split()
             if fields:
-                key = (fields[0], int(fields[1], 16))
+                addr = fields[1]
+                for extra in fields[3:]:
+                    if region == "YQUJ" and extra.startswith("jp="):
+                        addr = extra[3:]
+                key = (fields[0], int(addr, 16))
                 out[key] = fields[2]
-                if fields[3:] == ["wrap"]:
+                if "wrap" in fields[3:]:
                     wrapped.add(key)
     return out, wrapped
 
@@ -103,8 +108,10 @@ def main():
     extract = sys.argv[sys.argv.index("--extract") + 1] if "--extract" in sys.argv else None
     comments = None if "--no-comments" in sys.argv else Disasm()
     t0 = time.time()
-    p = Project(root, extract)
-    overrides, wrapped = load_overrides(os.path.join(os.path.dirname(os.path.abspath(__file__)), "overrides.txt"))
+    region = sys.argv[sys.argv.index("--region") + 1] if "--region" in sys.argv else None
+    p = Project(root, extract, region)
+    overrides, wrapped = load_overrides(os.path.join(os.path.dirname(os.path.abspath(__file__)), "overrides.txt"),
+                                        p.region)
     for mod, addr in overrides:
         if addr not in p.modules[mod].functions:
             sys.exit(f"overrides.txt: no function at {mod} 0x{addr:08x}")
@@ -204,8 +211,8 @@ def main():
         wrap_rows = [f"    {{\"{mod}\", {h(addr)}, {p.modules[mod].functions[addr].cname}}},"
                      for mod, addr in sorted(wrapped)]
         fd.write("static const RtWrapped wrapped[] = {\n" + "\n".join(wrap_rows or ["    {0, 0, 0},"]) + "\n};\n\n")
-        fd.write(f"RT_GAME_EXPORT const RtGame egg_game = {{RT_API_VERSION, modules, {len(mod_rows)}, {h(p.entry)}, "
-                 f"wrapped, {len(wrap_rows)}}};\n")
+        fd.write(f"RT_GAME_EXPORT const RtGame egg_game = {{RT_API_VERSION, \"{p.region}\", modules, {len(mod_rows)}, "
+                 f"{h(p.entry)}, wrapped, {len(wrap_rows)}}};\n")
 
     with open(os.path.join(out, "sources.cmake"), "w", newline="\n") as fs:
         fs.write("set(GEN_SOURCES\n" + "".join(f"    ${{GEN_DIR}}/{f}\n" for f in files + ["dispatch.c"]) + ")\n")

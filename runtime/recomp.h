@@ -17,7 +17,7 @@
 #else
 #define RT_API
 #endif
-#define RT_API_VERSION 1
+#define RT_API_VERSION 2
 
 enum { RT_RET_STACK = 1024, RT_IRQ_NEST = 4 };
 

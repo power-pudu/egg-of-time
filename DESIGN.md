@@ -1,6 +1,6 @@
 # EggOfTime — static recompilation design
 
-Goal: native Windows/Linux/macOS build of Chrono Trigger DS (USA, `YQUE`) by translating
+Goal: native Windows/Linux/macOS build of Chrono Trigger DS (USA `YQUE`, Europe `YQUP`, Japan `YQUJ`) by translating
 the game's ARM9 machine code to C11 ahead of time, linked against a runtime that emulates
 the DS hardware the code talks to. Rendering is enhanced (GPU, higher resolution), and the
 game starts in Classic (one-screen) mode with the second screen hidden by default.
@@ -545,6 +545,22 @@ original bytes, and caches the result per region until the region is written.
   records, controls by their distance from the glyph count. Glyphs the USA font lacks (Portuguese ã, õ, ...) are
   drawn over glyphs no USA text uses, so the glyph count and the control codes stay put. Changed files go past the
   last file in the ROM, the FAT points at them; the header and code are untouched.
+- **Versions of the game**: the ROM's game code (`rt_rom.code`, kept as loaded: a patch may change the header's) picks
+  what the game is built from. Europe is the USA game but for its secure area, where the 18 BIOS call stubs sit in
+  another order, and a constant in ov013 (no address): `config/regions/YQUP/` holds only its `symbols.txt`. A region's
+  config holds the files that differ from `config/arm9/`, each falling back to the USA one (`dsdconfig.py`). Japan is
+  the same source shifted around (main by up to +0x40 in rodata, overlay base +0x20, ov007 -0x128 to -0x180, ov012 up
+  to +0x60): `config/regions/YQUJ/` is its own `dsd init` output with the same hand fixes as NOTES.md (ov002's two
+  Thumb helpers at +0x20, ov008's trampoline). `overrides.txt` carries `jp=` where a hook moved, and the runtime names
+  each game address with `GAME_ADDR(usa, japan)` where it is used (`rt.h`); struct offsets matched where checked. They
+  were mapped by matching functions in order (USA and Japan have the same list but for dsd's split in ov002 and one in
+  ov007), and checked by content: functions byte-identical at the address, vtables by their mapped entries, rodata by
+  its bytes, BSS by the code's literals. The game library records the code it was built for and `rt_game_load` refuses
+  another's ROM, so a developer build (`-DEGG_EXTRACT`) can't run a mismatched one. System Settings > Language offers each game's two languages
+  (`SET_LANGUAGE`, or `SET_LANGUAGE_JP` on the Japanese game, its own ini key), given to the game as firmware language
+  (0 Japanese, 1 English, 2 French) at power-on; the menu's own text follows the choice at once (`runtime/ui_text.c`,
+  English keys; Japanese glyphs from PixelMplus10, only those used, `tools/font/ui_font_ja.py`). Translations for other versions aren't carried over to it, as its text
+  has 2 language slots against 4 and other fonts. Saves share `rom/CT.sav`; save states check the game code.
 - **RetroAchievements** (`runtime/cheevos.c`): rcheevos' `rc_client` (v12.5.0, fetched and built by CMake as a
   static library, cartridge hashes only) with libcurl for its server calls, each on a detached thread of its own.
   `rc_client_do_frame` runs on the game thread at VBlank (`sched.c`), so achievements read memory between frames;
@@ -604,8 +620,8 @@ original bytes, and caches the result per region until the region is written.
   ROM-derived data.
 - **Release builds** (Windows, Linux): the release holds the executable and `kit/`, and builds the game library on the
   player's machine from their ROM on the first start (`runtime/game_build.c`): it finds `rom/CT.nds` or asks for
-  the ROM (a file dialog; copied to `rom/CT.nds`), checks its SHA-1, then runs `kit/dsd/dsd.exe rom extract`,
-  `kit/python/python.exe kit/recomp/recomp.py kit <gen> --no-comments --extract <dir>` (no capstone needed
+  the ROM (a file dialog; copied to `rom/CT.nds`), checks its SHA-1 against the three known dumps, then runs `kit/dsd/dsd.exe rom extract`,
+  `kit/python/python.exe kit/recomp/recomp.py kit <gen> --no-comments --extract <dir> --region <code>` (no capstone needed
   without the comments), one `kit/llvm/bin/clang.exe` per core over the generated files (the developer build's
   flags without `-g`) and the link against `kit/lib/libeggoftime.a`, showing progress in the window, the tools'
   output in `game/build.log`. `game/build.id` holds `kit/kit.id` (a hash of the recompiler, config and

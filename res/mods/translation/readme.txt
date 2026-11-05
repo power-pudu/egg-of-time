@@ -21,12 +21,14 @@ a fix. To apply a patch after another, give it a name that sorts later, for exam
 Patches for another version of the game
 ---------------------------------------
 
-Egg of Time runs the USA version, but many translations were made for Chrono Trigger
-(Japan) or (Europe). Put your own dump of the version the patches were made for in this folder
-too (any file name ending in .nds). The patches are then applied to that ROM, and
-what they translated (text, fonts, graphics) is carried over to the USA game. Text
-the translation left untouched stays in English. The log (eggoftime.log) lists what
-was carried over.
+With a USA or European ROM, translations made for another version work too. Put your own
+dump of the version the patches were made for in this folder too (any file name ending in
+.nds). The patches are then applied to that ROM, and what they translated (text, fonts,
+graphics) is carried over to your game. Text the translation left untouched stays in
+English. The log (eggoftime.log) lists what was carried over.
+
+With a Japanese ROM, only patches made for the Japanese ROM apply: nothing is carried over
+to it.
 
 Only one .nds may be in this folder. A translation that changes the game's code
 cannot be carried over, and the game says so; changes to the ARM7's code (a flash
@@ -34,7 +36,8 @@ cart fix, for example) are left out, because the port does not run that code.
 
 Notes:
 
-- rom/CT.nds must be the unmodified Chrono Trigger (USA) dump, as the game checks.
+- rom/CT.nds must be an unmodified Chrono Trigger dump (USA, Europe or Japan), as the
+  game checks.
 - A translation patch usually also translates the game's graphics and text in the
   ROM; the port plays them as the patch left them.
 - Changing the patch files makes the next start build the game again (a few minutes).

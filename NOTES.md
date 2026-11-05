@@ -1,5 +1,8 @@
 # EggOfTime — Chrono Trigger DS (USA, YQUE) decomp setup
 
+The European and Japanese configs in `config/regions/` come from the same `dsd init` and `dsd sig apply` run on their
+ROMs, with the fixes below applied where they recur (see DESIGN.md, "Versions of the game").
+
 ## Layout
 - `rom/` — base ROM (untouched).
 - `tools/dsd/dsd.exe` — ds-decomp v0.12.1.

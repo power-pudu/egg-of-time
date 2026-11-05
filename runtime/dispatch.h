@@ -32,6 +32,7 @@ typedef struct RtWrapped {
 /* What the game library (gen/dispatch.c) exports as RT_GAME_SYMBOL for the runtime. */
 typedef struct RtGame {
     uint32_t api_version; /* RT_API_VERSION it was built with */
+    const char *game_code; /* the version of the game it was recompiled from (YQUE, YQUP, YQUJ) */
     const RtModule *modules;
     unsigned module_count;
     uint32_t entry_point; /* ARM9 entry address it was recompiled from */
@@ -48,7 +49,8 @@ typedef struct RtGame {
 
 /* The loaded game library (rt_game_load). */
 extern const RtGame *rt_game;
-/* Loads the game library at path; 0 (with *error set) if it is missing or built for another runtime. */
+/* Loads the game library at path; 0 (with *error set) if it is missing or built for another runtime or version of
+ * the game than the ROM. */
 int rt_game_load(const char *path, const char **error);
 /* Calls the recompiled original of a `wrap` override. */
 void rt_call_wrapped(CPU *cpu, const char *module, uint32_t addr);

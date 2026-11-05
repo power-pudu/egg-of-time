@@ -35,7 +35,7 @@
 #include "movie.h"
 #include "rt.h"
 
-#define SKIPPED_FLAG 0x0207b3d0u /* set by the game's per-frame callbacks when the player skips */
+#define SKIPPED_FLAG GAME_ADDR(0x0207b3d0u, 0x0207b3f0u) /* set by the game's per-frame callbacks when the player skips */
 #define LATE_DROP 0.1            /* seconds: a frame this late is not shown (decoding is behind) */
 #define AUDIO_AHEAD 0.3          /* seconds of audio kept queued ahead of the speakers */
 #define VIDEO_AHEAD 240          /* packets: the most video read ahead of decoding to reach that audio */

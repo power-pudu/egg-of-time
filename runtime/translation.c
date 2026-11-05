@@ -12,10 +12,11 @@
  * rom/CT.nds so saves keep their place. Only release builds apply patches (game_build.c calls this when kit/kit.id
  * exists); a developer build runs its own generated code and ignores them.
  *
- * Patches made for another version of the game (Chrono Trigger DS (Japan), say) cannot be applied to the USA ROM the
- * port runs. With the player's dump of that version in mods/translation too (any name ending in .nds), the patches
- * are applied to it instead, and kit/recomp/retarget.py carries what they changed (text, fonts, graphics) over to
- * the verified ROM; it explains what cannot be carried over (a change to the game's code).
+ * Patches made for another version of the game (Chrono Trigger DS (Japan), say) cannot be applied to the player's
+ * USA or European ROM. With the player's dump of that version in mods/translation too (any name ending in .nds), the
+ * patches are applied to it instead, and kit/recomp/retarget.py carries what they changed (text, fonts, graphics) over
+ * to the verified ROM; it explains what cannot be carried over (a change to the game's code). The Japanese game holds
+ * fewer languages and other fonts, so nothing is carried over to it: only patches made for it apply there.
  *
  * xdelta3 and the scripts work on files, not memory: a ROM a patch changed is written to
  * game/.translation-source.nds for them, and they write game/.translation-target.nds, which is read back. */
@@ -340,6 +341,14 @@ int translation_apply(char *err, size_t err_size) {
             free(data); /* the port's own version: the patches go to the verified ROM */
             rt_log("translation: %s is the game's own version, not used", found.roms.names[0]);
             original[0] = 0;
+        } else if (RT_JAPAN) {
+            free(data);
+            snprintf(err, err_size,
+                     "%s: a translation made for another version cannot be carried over to the Japanese game. "
+                     "Use a USA or European ROM with it, or a patch made for the Japanese ROM.",
+                     found.roms.names[0]);
+            result = -1;
+            goto done;
         } else {
             rom = (PatchedRom){data, size, original, 0};
             rt_log("translation: patching %s (%.4s)", found.roms.names[0], (const char *)data + 0xC);
@@ -352,7 +361,7 @@ int translation_apply(char *err, size_t err_size) {
     } else {
         rt_rom.data = rom.data;
         rt_rom.size = rom.size;
-        if (result && strstr(err, "another ROM")) {
+        if (result && strstr(err, "another ROM") && !RT_JAPAN) {
             size_t n = strlen(err);
             snprintf(err + n, err_size - n,
                      "\n\nIf the patches were made for another version of the game (Japan), put your dump of that "

@@ -89,31 +89,41 @@ def _parse_overlays_yaml(path):
     return overlays
 
 
+REGIONS = ("YQUE", "YQUP", "YQUJ")  # USA, Europe, Japan
+
+
 class Project:
-    def __init__(self, root, extract=None):
+    def __init__(self, root, extract=None, region=None):
         self.root = root
         ext = extract or os.path.join(root, "extract")
-        cfg = os.path.join(root, "config", "arm9")
+        self.region = region or _read_yaml_scalars(os.path.join(ext, "header.yaml"))["gamecode"]
+        if self.region not in REGIONS:
+            raise SystemExit(f"game code {self.region} is not a known version of the game")
         self.modules = {}
+
+        def config_file(rel):
+            """A region's config holds the files that differ from the USA one in config/arm9."""
+            own = os.path.join(root, "config", "regions", self.region, "arm9", rel)
+            return own if os.path.exists(own) else os.path.join(root, "config", "arm9", rel)
 
         def add(name, base, binpath, cfgdir, overlay_id=None):
             with open(binpath, "rb") as f:
                 data = f.read()
             m = Module(name, base, data, overlay_id=overlay_id)
-            self._load_symbols(m, os.path.join(cfgdir, "symbols.txt"))
-            self._load_relocs(m, os.path.join(cfgdir, "relocs.txt"))
+            self._load_symbols(m, config_file(os.path.join(cfgdir, "symbols.txt")))
+            self._load_relocs(m, config_file(os.path.join(cfgdir, "relocs.txt")))
             self.modules[name] = m
 
         arm9 = _read_yaml_scalars(os.path.join(ext, "arm9", "arm9.yaml"))
         self.entry = int(arm9["entry_function"])
-        add("main", int(arm9["base_address"]), os.path.join(ext, "arm9", "arm9.bin"), cfg)
+        add("main", int(arm9["base_address"]), os.path.join(ext, "arm9", "arm9.bin"), "")
         for tcm in ("itcm", "dtcm"):
             y = _read_yaml_scalars(os.path.join(ext, "arm9", f"{tcm}.yaml"))
-            add(tcm, int(y["base_address"]), os.path.join(ext, "arm9", f"{tcm}.bin"), os.path.join(cfg, tcm))
+            add(tcm, int(y["base_address"]), os.path.join(ext, "arm9", f"{tcm}.bin"), tcm)
         for ov in _parse_overlays_yaml(os.path.join(ext, "arm9_overlays", "overlays.yaml")):
             name = f"ov{ov['id']:03d}"
             add(name, int(ov["base_address"]), os.path.join(ext, "arm9_overlays", ov["file_name"]),
-                os.path.join(cfg, "overlays", name), overlay_id=ov["id"])
+                os.path.join("overlays", name), overlay_id=ov["id"])
 
         from extracode import load_extra_modules
         for m in load_extra_modules(self, os.path.join(os.path.dirname(os.path.abspath(__file__)), "extra_code.txt")):

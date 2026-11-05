@@ -35,9 +35,8 @@ int rt_load_rom(const char *path) {
     if (dot && strpbrk(dot, "/\\") == NULL) n = (size_t)(dot - path);
     snprintf(rt_rom.save_path, sizeof rt_rom.save_path, "%.*s.sav", (int)n, path);
     snprintf(rt_rom.state_path, sizeof rt_rom.state_path, "%.*s.state", (int)n, path);
-    if (memcmp(rt_rom.data + 0x0C, "YQUE", 4) != 0) {
-        rt_log("warning: game code is not YQUE (Chrono Trigger USA); generated code will not match");
-    }
+    memcpy(rt_rom.code, rt_rom.data + 0x0C, 4);
+    rt_rom.code[4] = 0;
     return 1;
 }
 
@@ -55,11 +54,12 @@ static void write_user_settings(uint32_t a) {
     /* Touch calibration: two ADC/screen point pairs, 16 ADC units per pixel. */
     rt_w16(a + 0x58, 32 * 16); rt_w16(a + 0x5A, 32 * 16); rt_w8(a + 0x5C, 32); rt_w8(a + 0x5D, 32);
     rt_w16(a + 0x5E, 224 * 16); rt_w16(a + 0x60, 160 * 16); rt_w8(a + 0x62, 224); rt_w8(a + 0x63, 160);
-    /* Language (1 English, 2 French: the two the USA game has), backlight max. */
-    rt_w16(a + 0x64, (display_setting_get(SET_LANGUAGE) == LANGUAGE_FRENCH ? 2 : 1) | 3 << 4);
+    /* Language (the Japanese game has Japanese and English; the USA and European games English and French),
+     * backlight max. */
+    rt_w16(a + 0x64, display_language() | 3 << 4);
 }
 
-int rt_french(void) { return (rt_r16(USER_SETTINGS + 0x64) & 7) == 2; }
+int rt_language(void) { return rt_r16(USER_SETTINGS + 0x64) & 7; }
 
 /* Console Wi-Fi MAC address, which the ARM7 copies from firmware to RAM at power-on (OS_GetMacAddress).
  * DS Protect's emulator check (func_0204e334) treats an all-zero MAC, or the one emulators used

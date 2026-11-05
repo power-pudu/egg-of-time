@@ -4,9 +4,9 @@
  * translation of the game's code and must not be distributed: a release holds the runtime and the tools to make it
  * (kit/), and builds it on the player's machine from their ROM on the first start:
  *   1. ROM: rom/CT.nds in the data folder, or one the player picks (copied there, so saves stay beside it);
- *      its SHA-1 must be the one the recompiler's config was made from.
+ *      its SHA-1 must be one the recompiler has a config for (USA, Europe, Japan).
  *   2. kit/dsd/dsd.exe rom extract                -> game/build/extract (ARM9 binaries, overlays)
- *   3. kit/python/python.exe kit/recomp/recomp.py  -> game/build/gen (C sources)
+ *   3. kit/python/python.exe kit/recomp/recomp.py  -> game/build/gen (C sources, for the ROM's version)
  *   4. kit/llvm/bin/clang.exe, one process per core -> game/build/obj, then linked against kit/lib/libeggoftime.a
  *      (the executable's import library) into game/eggoftime_game.dll.
  *   5. game/build.id records what it was built from (kit/kit.id and the ROM's SHA-1); game/build/ is deleted.
@@ -34,7 +34,12 @@
 #include "video.h"
 
 #define DEFAULT_ROM "rom/CT.nds"
-#define ROM_SHA1 "11f9e8204e484eab42181b210c9f214584be75bf" /* Chrono Trigger (USA), YQUE */
+/* The versions of the game the recompiler has a config for (config/, config/regions): their unmodified dumps. */
+static const char *const ROM_SHA1[] = {
+    "11f9e8204e484eab42181b210c9f214584be75bf", /* USA, YQUE */
+    "a6c69d789a6f2e31b27fba950423bea3c2f30a37", /* Europe, YQUP */
+    "afc91a3f1f6c1bd02845b76416239e4dabfae19f", /* Japan, YQUJ */
+};
 #ifdef _WIN32
 #define GAME_LIBRARY "game/eggoftime_game.dll"
 #define EXE ".exe"
@@ -150,7 +155,7 @@ static void SDLCALL on_pick(void *user, const char *const *files, int filter) {
 /* Asks for the ROM file and loads it; 0 if the window was closed. */
 static int pick_rom(void) {
     static const SDL_DialogFileFilter filter = {"Nintendo DS ROM (*.nds)", "nds"};
-    static const char *const ask[] = {"Egg of Time", "Choose your Chrono Trigger (USA) ROM", "(a .nds file)"};
+    static const char *const ask[] = {"Egg of Time", "Choose your Chrono Trigger ROM", "(a .nds file)"};
     for (;;) {
         SDL_SetAtomicInt(&picked, 0);
         SDL_ShowOpenFileDialog(on_pick, NULL, NULL, &filter, 1, NULL, false);
@@ -160,7 +165,7 @@ static int pick_rom(void) {
             SDL_Delay(16);
         }
         if (SDL_GetAtomicInt(&picked) > 0 && rt_load_rom(picked_path)) return 1;
-        static const char *const none[] = {"No ROM chosen", "The game needs your own Chrono Trigger (USA) ROM.",
+        static const char *const none[] = {"No ROM chosen", "The game needs your own Chrono Trigger ROM.",
                                            "Press a key to choose it, or Esc to quit."};
         if (!wait_key(none, 3)) return 0;
     }
@@ -184,10 +189,12 @@ static int load_rom(const char *rom_arg, int release) {
     for (;;) {
         if (!ok && !pick_rom()) return 0;
         sha1_hex(rt_rom.data, rt_rom.size, rom_sha);
-        if (!strcmp(rom_sha, ROM_SHA1)) break;
-        rt_log("rom: SHA-1 %s, expected %s", rom_sha, ROM_SHA1);
-        static const char *const wrong[] = {"This is not the right ROM", "Egg of Time needs Chrono Trigger (USA),",
-                                            "an unmodified dump (game code YQUE).",
+        int known = 0;
+        for (size_t i = 0; i < SDL_arraysize(ROM_SHA1); i++) known |= !strcmp(rom_sha, ROM_SHA1[i]);
+        if (known) break;
+        rt_log("rom: SHA-1 %s is not a known dump (game code %s)", rom_sha, rt_rom.code);
+        static const char *const wrong[] = {"This is not the right ROM", "Egg of Time needs Chrono Trigger for the DS",
+                                            "(USA, Europe or Japan), an unmodified dump.",
                                             "Press a key to choose another file, or Esc to quit."};
         if (!wait_key(wrong, 4)) return 0;
         ok = 0;
@@ -365,7 +372,8 @@ static int SDLCALL build_thread(void *unused) {
     const char *ex[] = {dsd, "rom", "extract", "--rom", b.rom, "--output-path", extract, NULL};
     if (run(ex, 0)) goto fail;
     set_step("Translating the game's code to C");
-    const char *rc[] = {b.python, "-I", recomp, kit, gen, "--no-comments", "--extract", extract, NULL};
+    const char *rc[] = {b.python, "-I", recomp, kit, gen, "--no-comments", "--extract", extract,
+                        "--region", rt_rom.code, NULL};
     if (run(rc, 0)) goto fail;
 
     set_step("Compiling the game");
