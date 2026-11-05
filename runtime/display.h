@@ -55,3 +55,5 @@ const char *display_setting_label(int id, int value); /* may use a buffer shared
 void display_setting_set(int id, int value);
 /* Window frame interval for the chosen framerate, in nanoseconds; 0 for unlimited. */
 uint64_t display_frame_ns(void);
+/* The framerate is the game's own: a frame is presented as it arrives (60 fps). */
+int display_follows_game(void);

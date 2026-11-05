@@ -419,7 +419,22 @@ int main(int argc, char **argv) {
         if (frame_ns) {
             uint64_t t = SDL_GetTicksNS();
             next_present = next_present + frame_ns > t ? next_present + frame_ns : t; /* never catch up a backlog */
-            if (next_present > t) SDL_DelayPrecise(next_present - t);
+            if (display_follows_game() && !ff && !sysmenu_is_open()) {
+                /* The game's 59.83 frames a second against 60 presents drift through each other every 5.8 s: for a
+                 * moment a frame lands right on a present, and frames repeat and skip, which a moving camera shows
+                 * as a stutter (a state load moves that moment, to just after it). So a frame is presented as it
+                 * arrives; the time limit is for when none comes (loading). */
+                uint64_t limit = next_present + frame_ns / 4;
+                int ignore_dx, ignore_dy, ignore_cut;
+                uint64_t ignore_t;
+                while (video_frame_serial(&ignore_dx, &ignore_dy, &ignore_cut, &ignore_t) == shown_serial && t < limit) {
+                    SDL_DelayPrecise(100000);
+                    t = SDL_GetTicksNS();
+                }
+                next_present = t;
+            } else if (next_present > t) {
+                SDL_DelayPrecise(next_present - t);
+            }
         }
 
         Uint64 now = SDL_GetTicks();

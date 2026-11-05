@@ -307,6 +307,10 @@ original bytes, and caches the result per region until the region is written.
   - Framerate paces only the host loop's presentation (`display_frame_ns`, `SDL_DelayPrecise`): the game thread
     keeps its emulated 60 Hz clock. Measured with `EGG_LOG_FPS=1`: 30/60/90/144 exact, unlimited ~1000-2000 with
     V-Sync off, the display's rate with it on; the game stays at 60 in every case.
+  - At 60 fps the host loop presents each game frame as it arrives (`display_follows_game`), up to a quarter frame
+    late, not on a timer of its own: the game's 59.83 Hz against 60 Hz drifted through each other every 5.8 s, a burst of
+    repeated and skipped frames each time, seen as a camera stutter. A state load moves the next burst to about 1.6 s
+    after it. Fast forward and the menu keep the timer.
   - Camera smoothing (framerates above 60): each published frame carries how far the field camera moved
     (`video_frame_serial`; camera at 0x020760f8, steps over 8 pixels, and frames outside the field, count as
     cuts). The game moves that camera a frame before the BG scroll and OAM that show it (written at the next

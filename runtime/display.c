@@ -1150,6 +1150,8 @@ void display_setting_set(int id, int v) {
 
 int display_camera_smoothing(void) { return camera_smoothing(); }
 
+int display_follows_game(void) { return fps_values[SETTING(SET_FRAMERATE)] == 60; }
+
 uint64_t display_frame_ns(void) {
     int fps = fps_values[SETTING(SET_FRAMERATE)];
     return fps ? SDL_NS_PER_SECOND / (uint64_t)fps : 0;
