@@ -237,7 +237,9 @@ static void set_screen_view(int margin) {
  * empty (their map holds other rooms there, e.g. a sea of fire). The room's own layer (BG2) must agree with its
  * ring origin (a shaking screen moves every layer). Once seen off its ring origin, a layer keeps repeating while
  * it stays in the room: in passing, its scroll agrees with the origin for a frame (the clouds at VOFS 0 and 256),
- * which would blank the margins. A layer blended onto a repeated one repeats with it (the parked Epoch's water
+ * which would blank the margins. So do BG2's own steps: walking, the origin in RAM is a tile ahead of the frame's
+ * scroll for one frame at each tile (VOFS 198 with row 25), so what already repeats carries on through a BG2 a
+ * tile off, and nothing starts repeating there. A layer blended onto a repeated one repeats with it (the parked Epoch's water
  * is BG0 with a grey BG3 added onto it, BLDCNT 0x014a: without it the sides were dimmer), and keeps repeating
  * while the room stays: as the Epoch warps, the game brightens instead (BLDCNT 0x00bf), and the opaque BG3 then
  * covers the water, as it must beside the screen too. */
@@ -248,6 +250,12 @@ int ws_repeat_bgs(void) { return repeat_bgs; }
 
 static int picture_bgs;
 int ws_picture_bgs(void) { return picture_bgs; }
+
+/* The BG is within a tile of layer L's ring origin, both ways. */
+static int bg_near(int bg, uint32_t scroll, int L) {
+    int dc = (io_get16(0x10 + 4 * bg) >> 3) - rt_r8(scroll + 0x8e + 2 * L), dr = (io_get16(0x12 + 4 * bg) >> 3) - rt_r8(scroll + 0x8f + 2 * L);
+    return ((dc + 1) & 63) <= 2 && ((dr + 1) & 31) <= 2;
+}
 
 /* 0: not a 512x256 text BG; 1: one on layer L's ring origin; 2: one off it. */
 static int scrolls_alone(int bg, uint32_t scroll, int L) {
@@ -350,9 +358,13 @@ void ws_fill_margins(int margin) {
     uint32_t scroll = rt_r32(SCROLL), room = rt_r32(ROOM), tilesets = rt_r32(TILESETS);
     if (!ram_ptr(scroll) || !ram_ptr(room) || !ram_ptr(tilesets)) return;
     int x0, x1;
-    if (ws_room_span(&x0, &x1) && x0 == 0 && x1 == SCREEN_W && bg_follows(2, scroll, 0)) {
+    int one_screen = ws_room_span(&x0, &x1) && x0 == 0 && x1 == SCREEN_W;
+    if (one_screen) {
         uint32_t here = room ^ rt_r32(scroll + 0x16); /* the room's bounds */
         if (here != repeat_room) seen = 0, repeat_room = here;
+        if (!bg_follows(2, scroll, 0) && bg_near(2, scroll, 0)) repeat_bgs = seen;
+    }
+    if (one_screen && bg_follows(2, scroll, 0)) {
         static const int layer_of[4] = {2, -1, -1, 1}; /* BG1: priority tiles; BG2: the room itself */
         for (int bg = 0; bg < 4; bg++) {
             int s = layer_of[bg] < 0 ? 0 : scrolls_alone(bg, scroll, layer_of[bg]);
