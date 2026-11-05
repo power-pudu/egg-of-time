@@ -31,6 +31,8 @@ static const struct { const char *name, *ini; uint32_t ds; } actions[CTL_COUNT] 
     [CTL_LEFT] = {"Left", "left", KEY_LEFT},
     [CTL_RIGHT] = {"Right", "right", KEY_RIGHT},
     [CTL_FAST_FORWARD] = {"Fast forward", "fastforward", 0},
+    [CTL_SAVE_STATE] = {"Save state", "savestate", 0},
+    [CTL_LOAD_STATE] = {"Load state", "loadstate", 0},
 };
 
 static const Binding defaults[CTL_COUNT] = {
@@ -47,11 +49,13 @@ static const Binding defaults[CTL_COUNT] = {
     [CTL_LEFT] = {SDL_SCANCODE_LEFT, SDL_GAMEPAD_BUTTON_DPAD_LEFT},
     [CTL_RIGHT] = {SDL_SCANCODE_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT},
     [CTL_FAST_FORWARD] = {SDL_SCANCODE_LSHIFT, PAD_RT},
+    [CTL_SAVE_STATE] = {SDL_SCANCODE_UNKNOWN, PAD_NONE},
+    [CTL_LOAD_STATE] = {SDL_SCANCODE_UNKNOWN, PAD_NONE},
 };
 
 static Binding binds[CTL_COUNT];
 static SDL_GamepadType pad_type; /* of the last gamepad read, for its face button labels */
-static int capture_action = -1, capture_pad;
+static int capture_action = -1, capture_pad, capture_conflict = -1;
 static Uint64 capture_until;
 static char ini_path[1024];
 
@@ -122,7 +126,7 @@ static int pad_held(SDL_Gamepad *pad, int b) {
     return SDL_GetGamepadButton(pad, (SDL_GamepadButton)b);
 }
 
-static int held(SDL_Gamepad *pad, int action) {
+int controls_held(SDL_Gamepad *pad, int action) {
     SDL_Scancode k = binds[action].key;
     return (k != SDL_SCANCODE_UNKNOWN && SDL_GetKeyboardState(NULL)[k]) || pad_held(pad, binds[action].pad);
 }
@@ -130,7 +134,7 @@ static int held(SDL_Gamepad *pad, int action) {
 uint32_t controls_read(SDL_Gamepad *pad) {
     uint32_t keys = 0;
     for (int i = 0; i < CTL_COUNT; i++) {
-        if (actions[i].ds && held(pad, i)) keys |= actions[i].ds;
+        if (actions[i].ds && controls_held(pad, i)) keys |= actions[i].ds;
     }
     if (pad) {
         pad_type = SDL_GetGamepadType(pad);
@@ -144,8 +148,6 @@ uint32_t controls_read(SDL_Gamepad *pad) {
     if ((keys & (KEY_UP | KEY_DOWN)) == (KEY_UP | KEY_DOWN)) keys &= ~(KEY_UP | KEY_DOWN);
     return keys;
 }
-
-int controls_fast_forward(SDL_Gamepad *pad) { return held(pad, CTL_FAST_FORWARD); }
 
 /* ---- labels ---- */
 
@@ -191,6 +193,7 @@ const char *controls_pad_label(int action) {
 void controls_capture_start(int action, int pad) {
     capture_action = action;
     capture_pad = pad;
+    capture_conflict = -1;
     capture_until = SDL_GetTicks() + CAPTURE_MS;
 }
 
@@ -201,18 +204,35 @@ int controls_capturing(void) {
     return capture_action >= 0;
 }
 
-static void bind_key(int a, SDL_Scancode k) {
+const char *controls_capture_conflict(void) { return capture_conflict >= 0 ? actions[capture_conflict].name : NULL; }
+
+static int is_state_slot(int a) { return a == CTL_SAVE_STATE || a == CTL_LOAD_STATE; }
+
+/* Gives action a the input, swapping as controls.h says; 0 if it is refused (capture_conflict: whose it is). */
+static int bind_key(int a, SDL_Scancode k) {
     for (int i = 0; i < CTL_COUNT; i++) {
-        if (i != a && binds[i].key == k) binds[i].key = binds[a].key;
+        if (i == a || binds[i].key != k) continue;
+        if (!is_state_slot(i) && is_state_slot(a) && binds[a].key == SDL_SCANCODE_UNKNOWN) {
+            capture_conflict = i;
+            return 0;
+        }
+        binds[i].key = is_state_slot(i) ? SDL_SCANCODE_UNKNOWN : binds[a].key;
     }
     binds[a].key = k;
+    return 1;
 }
 
-static void bind_pad(int a, int b) {
+static int bind_pad(int a, int b) {
     for (int i = 0; i < CTL_COUNT; i++) {
-        if (i != a && binds[i].pad == b) binds[i].pad = binds[a].pad;
+        if (i == a || binds[i].pad != b) continue;
+        if (!is_state_slot(i) && is_state_slot(a) && binds[a].pad == PAD_NONE) {
+            capture_conflict = i;
+            return 0;
+        }
+        binds[i].pad = is_state_slot(i) ? PAD_NONE : binds[a].pad;
     }
     binds[a].pad = b;
+    return 1;
 }
 
 int controls_capture(const SDL_Event *e) {
@@ -222,9 +242,10 @@ int controls_capture(const SDL_Event *e) {
         SDL_Scancode k = e->key.scancode;
         if (k == SDL_SCANCODE_ESCAPE) capture_action = -1;
         else if (!capture_pad && !e->key.repeat && k != SDL_SCANCODE_UNKNOWN && !(k >= SDL_SCANCODE_F1 && k <= SDL_SCANCODE_F12)) {
-            bind_key(capture_action, k);
-            capture_action = -1;
-            save();
+            if (bind_key(capture_action, k)) {
+                capture_action = -1;
+                save();
+            }
         }
         return 1;
     }
@@ -234,8 +255,7 @@ int controls_capture(const SDL_Event *e) {
         if (e->gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) b = PAD_RT;
     }
     if (b == PAD_NONE) return 0;
-    if (capture_pad) {
-        bind_pad(capture_action, b);
+    if (capture_pad && bind_pad(capture_action, b)) {
         capture_action = -1;
         save();
     }

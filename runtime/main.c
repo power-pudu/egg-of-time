@@ -274,6 +274,7 @@ int main(int argc, char **argv) {
     /* The mouse cursor hides after CURSOR_HIDE_MS without mouse use, and shows again when the mouse moves. */
     enum { CURSOR_HIDE_MS = 2000 };
     Uint64 mouse_used = SDL_GetTicks();
+    int save_held = 0, load_held = 0; /* the Save state and Load state inputs (System Settings > Controls) */
     while (running && !SDL_GetAtomicInt(&game_finished)) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -322,9 +323,20 @@ int main(int argc, char **argv) {
             esc_since = 0;
         }
         cheevos_poll();
+        /* Pressed, not held, and not in the menu, where a key can be typed or being assigned. F5 and F7 stay above. */
+        int save_now = controls_held(pad, CTL_SAVE_STATE), load_now = controls_held(pad, CTL_LOAD_STATE);
+        if (!sysmenu_is_open()) {
+            if (save_now && !save_held) rt_state_request = RT_STATE_SAVE;
+            if (load_now && !load_held) {
+                rt_state_load_path[0] = 0;
+                rt_state_request = RT_STATE_LOAD;
+            }
+        }
+        save_held = save_now;
+        load_held = load_now;
         rt_keys = sysmenu_input(controls_read(pad) | (autok & ~AUTO_HOST));
         /* Fast forward (2x) while its key or button is held (default: Left Shift, the right trigger). */
-        int ff = controls_fast_forward(pad) || (autok & AUTO_FF);
+        int ff = controls_held(pad, CTL_FAST_FORWARD) || (autok & AUTO_FF);
         rt_set_speed(ff ? 2 : 1);
 
         /* Touch: left mouse button on the bottom screen, when it is shown. */

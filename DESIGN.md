@@ -239,10 +239,13 @@ original bytes, and caches the result per region until the region is written.
   there: light bars, dark buttons, lit label and teal frame on the cursor row, striped backdrop, B sign),
   so it looks the same from the pause; text in the runtime's small font (`runtime/ui_font.c`).
   - Controls (last row, A): the button mapping (`runtime/controls.c`), one keyboard key and one gamepad input
-    (button or trigger) per DS button and for fast forward, saved in `controls.ini` (SDL key and gamepad button
+    (button or trigger) per DS button, for fast forward and for Save state and Load state, saved in `controls.ini` (SDL key and gamepad button
     names). A on a cell takes the next key or gamepad press from the event loop (`controls_capture`, before the
     hotkeys; function keys are refused, Escape or 5 s cancels); an input another action had swaps with this
-    one's, so no action is left without one. Afterwards the menu ignores input until every key is released.
+    one's, so no action is left without one. The two state slots start unbound and stay optional: one taken from
+    a slot leaves it unbound, and an unbound slot refuses (and keeps waiting on) an input in use, as the swap would
+    unbind that action. They act on the press, outside the menu, beside F5 and F7, which capture cannot take.
+    Afterwards the menu ignores input until every key is released.
   - Pause (field, ov000 func 0x0210155c, START): the game dims both screens (MASTER_BRIGHT darken 4) and loops
     waiting for START, with the byte at `*(0x0207b520) + 0x407` set to 0xff; single screen mode then writes
     "Press SELECT to open System Settings" at the bottom of the main screen.
@@ -498,7 +501,7 @@ original bytes, and caches the result per region until the region is written.
   System Settings page types its fields with SDL text input (`display_text_input`, `sysmenu_text_event`); logged in, it
   lists the set's achievements (`cheevos_list`, a copy refreshed twice a second) with their badges, downloaded a few
   at a time when first shown and cached as the server's PNGs in the data folder's `cache/badges`.
-- **Save states** (F5 save, F7 load; one slot: `<rom>.state` next to the ROM; `EGG_LOAD_STATE=<file>` starts
+- **Save states** (F5 save, F7 load, or the inputs assigned under Controls; one slot: `<rom>.state` next to the ROM; `EGG_LOAD_STATE=<file>` starts
   from a state): `runtime/state.c`. A state holds emulated state only (memory, device state, and per game thread its
   ARM registers and the address it continues at), so it stays loadable after rebuilding, as long as the tagged
   blocks keep their sizes; loading checks every block before changing anything. Every generated function can be

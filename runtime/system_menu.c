@@ -18,8 +18,8 @@
  * while it downloads), title, points and description; Left/Right turn a page. The password shows as stars and is
  * forgotten once sent. B or SELECT goes back.
  *
- * A on Controls opens the button mapping: a row per DS button and fast forward, with its keyboard
- * key and gamepad button. Left/Right pick the key or the button, A waits for the new one (controls_capture), a
+ * A on Controls opens the button mapping: a row per DS button, fast forward and the save state slots, with its
+ * keyboard key and gamepad button. Left/Right pick the key or the button, A waits for the new one (controls_capture), a
  * last row restores the defaults; B or SELECT goes back to the settings. After a rebinding, input is kept from
  * the menu until every key is released, so the new key does not act on the menu.
  *
@@ -670,7 +670,11 @@ void sysmenu_draw(uint32_t *s) {
     if (cursor == SET_SHADER && display_shader_path()) footer = fit(display_shader_path(), 208);
     if (confirm) footer = "A: confirm.  B: not now.";
     else if (gfxdump_running() && !controls_page && !cheevos_page) footer = "Closing the menu leaves it running.";
-    else if (controls_page && controls_capturing()) footer = ctl_pad ? "Press a gamepad button. Esc: cancel." : "Press a key. Esc: cancel.";
+    else if (controls_page && controls_capturing() && controls_capture_conflict()) {
+        static char used[64];
+        SDL_snprintf(used, sizeof used, "%s uses that one. Press another.", controls_capture_conflict());
+        footer = used;
+    } else if (controls_page && controls_capturing()) footer = ctl_pad ? "Press a gamepad button. Esc: cancel." : "Press a key. Esc: cancel.";
     else if (controls_page) footer = ctl_cursor == ROW_RESET ? "A: restore the default controls." : "A: change.  Left/Right: key or pad.";
     else if (cheevos_page) footer = cheevos_footer();
     panel(s, (Rect){0, 166, 222, 26}, &BAR);

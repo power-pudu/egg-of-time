@@ -145,10 +145,12 @@ it with B or SELECT. Changes apply immediately and are saved in `eggoftime.ini`.
 two the USA release has) needs the game to restart: the menu asks whether to restart now (unsaved progress is
 lost) or keep the change for the next start.
 
-**Controls** remaps the buttons: each DS button and fast forward has a keyboard key and a gamepad
-button. Left/Right pick the column, A waits for the new key or button (Escape cancels). Choosing one that another
-button already uses swaps the two. The last row, Reset to defaults, restores the table below. The mapping is
-saved in `controls.ini`.
+**Controls** remaps the buttons: each DS button, fast forward, Save state and Load state has a keyboard key and a
+gamepad button. Left/Right pick the column, A waits for the new key or button (Escape cancels). Choosing one that
+another button already uses swaps the two. Save state and Load state start empty and only ever get what you give
+them: an empty slot refuses a key or button that a DS button or fast forward uses, and one taken from a slot leaves
+it empty. The last row, Reset to defaults, restores the table below and empties the slots. The mapping is saved in
+`controls.ini`.
 
 ### RetroAchievements
 
@@ -175,7 +177,8 @@ mutes everything but the music while fast forwarding, sparing you the sped-up so
 
 ### Save states
 
-**F5** saves and **F7** loads. There is one slot, `rom\CT.state`, next to your in-game saves. States keep working
+**F5** saves and **F7** loads, plus any key or gamepad button you assign under System Settings > Controls (none by
+default; F5 and F7 keep working). There is one slot, `rom\CT.state`, next to your in-game saves. States keep working
 after updates and move between Windows and Linux.
 
 ## Controls
