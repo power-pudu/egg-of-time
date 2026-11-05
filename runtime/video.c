@@ -113,6 +113,7 @@ typedef struct Engine {
     int obj_stretch; /* the sprites' screen columns are stretched across the margins (the warp, single_screen.c) */
     int repeat_256; /* 256-wide text BGs repeat into the margins (the race's sky, single_screen.c) */
     int view_x, view_y, view_bgs; /* the view's shift from the camera at the room's ends, the BGs it moves (ws_view_shift) */
+    int obj_dx, obj_dy;           /* the world's sprites are that much off it (ws_sprite_lag) */
     int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
     int repeat_bgs; /* BGs whose screen columns repeat into the margins, the others empty beyond the room
                      * (ws_repeat_bgs: a one-screen room's layer scrolling on its own, the clouds of the Epoch's flight),
@@ -501,13 +502,14 @@ static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, i
         if (e->rows && !ui) { /* Y 8 bits: from the view's top; the rows left over are above it, or tagged so */
             int oy = a0 & 0xFF, limit = e->obj_rows ? SCREEN_H + e->rows + e->obj_rows : ws_world_sprite_limit(e->rows);
             if (oy >= limit || (!affine && (a1 & WS_OAM_ABOVE))) oy -= 256;
-            ly = y + e->obj_rows - oy;
+            ly = y + e->obj_rows - oy - e->obj_dy;
             if (ly < 0) continue;
         }
         if (ly >= bh) continue;
         int ox = a1 & 0x1FF;
         if (ox >= 256) ox -= 512;
         ox += m - e->obj_origin;        /* buffer column */
+        if (!ui) ox += e->obj_dx;
         if (ox + bw <= 0) ox += 512;   /* X wraps at 512: beyond the left edge is the right one */
         if (shift && ((a0 & 0xFF) < e->sel_rows || (a0 & 0xFF) >= SCREEN_H)) ox -= shift;
         int mode = (a0 >> 10) & 3, prio = (a2 >> 10) & 3;
@@ -618,6 +620,9 @@ static int sprite_hidden(uint16_t a0) { return !(a0 & 0x100) && (a0 & 0x200); }
  * then follows if its match followed in the previous frame. */
 static void find_party(Engine *e, int dx, int dy, int gliding) {
     static uint8_t prev_follows[128];
+    static int prev_ox, prev_oy; /* the previous frame's Engine.obj_dx, obj_dy: part of a sprite's move on screen */
+    int ox = e->obj_dx - prev_ox, oy = e->obj_dy - prev_oy;
+    prev_ox = e->obj_dx, prev_oy = e->obj_dy;
     const uint8_t *c = &rt_oam[e->oam];
     e->party = 0;
     memset(e->follows, 0, sizeof e->follows);
@@ -634,6 +639,7 @@ static void find_party(Engine *e, int dx, int dy, int gliding) {
             if (best < 0 || SDL_abs(mx) + SDL_abs(my) < SDL_abs(bx) + SDL_abs(by)) best = j, bx = mx, by = my;
         }
         if (best < 0) continue;
+        bx += ox, by += oy;
         if (dx || dy ? SDL_abs(bx) + SDL_abs(by) < SDL_abs(bx + dx) + SDL_abs(by + dy) : prev_follows[best]) {
             e->follows[i] = 1, e->party = 1;
         }
@@ -931,7 +937,7 @@ static void engine_frame_start(Engine *e) {
         }
         if (e->rows) memset(ui_frame, 0, sizeof ui_frame);
         e->party = e->sliding = e->still_bgs = 0;
-        e->view_x = e->view_y = e->view_bgs = 0;
+        e->view_x = e->view_y = e->view_bgs = e->obj_dx = e->obj_dy = 0;
         e->box_top = SCREEN_H;
         e->track_top = e->id == a_top && SDL_GetAtomicInt(&track_bottom);
         e->panel_ui = e->track_top && panel_has_ui(e);
@@ -947,6 +953,7 @@ static void engine_frame_start(Engine *e) {
             int shown_margin = e->margin - (SDL_GetAtomicInt(&party_wanted) ? VIDEO_SLIDE_MAX : 0);
             ws_fill_margins(e->margin, e->rows, SDL_GetAtomicInt(&fill_sides) ? 0 : SDL_max(shown_margin, 0));
             ws_view_shift(&e->view_x, &e->view_y, &e->view_bgs);
+            ws_sprite_lag(&e->obj_dx, &e->obj_dy);
             win_ext_on = e->margin && ws_window_lines(win_lines);
             if (win_ext_on) window_margins();
             e->mirror_bg = 0;

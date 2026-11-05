@@ -8,6 +8,8 @@
 void ws_fill_margins(int margin, int rows, int limit);
 /* This frame's shift of the view from the camera at the room's ends (pixels, 0 normally), and the BGs that move by it. */
 void ws_view_shift(int *x, int *y, int *bgs);
+/* How far this frame's sprites in the world are to be moved to go with that shift. */
+void ws_sprite_lag(int *x, int *y);
 /* Columns the game's sprite coordinates are shifted by (the widened view's left margin; 0 normally). */
 int ws_sprite_origin(void);
 /* Rows they are shifted by (the widened view's rows above the screen; 0 normally). */

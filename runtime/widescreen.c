@@ -65,7 +65,9 @@ static int ram_ptr(uint32_t p) { return p >> 24 == 0x02; }
 
 static int field_rows; /* this frame's rows above and below the screen in the field (zoom out), 0 elsewhere */
 static int view_x, view_y; /* the view's shift from the camera (the room's ends) for this frame's scroll */
-static int next_x, next_y; /* and for the next frame's, whose camera and sprites the game is about to use */
+static int next_x, next_y; /* and for the next frame's, from the camera in RAM */
+static int oam_x, oam_y;   /* the one this frame's sprites were placed with (ws_sprite_lag) */
+static int view_loaded;    /* a state was loaded: its sprite view says the shift */
 static int view_bgs;       /* the BGs it moves */
 
 /* The room map's metatile rows (room + 0x1000: 0x100 a row) as the field last had them. */
@@ -104,6 +106,7 @@ void ws_reset(void) { room_copy.of = 0; }
 
 void ws_state(RtStateIO *s) {
     if (!rt_state_optional(s, "ws_room_copy", &room_copy, sizeof room_copy) && rt_state_loading(s)) room_copy.of = 0;
+    if (rt_state_loading(s)) view_loaded = 1;
 }
 
 /* Packed tile (b0 | b1 << 8 | b2 << 16) of layer L at world tile (c, r). */
@@ -604,6 +607,13 @@ void ws_fill_margins(int margin, int rows, int limit) {
     int field = margin > 0 && ss_in_field();
     field_margin = field ? margin : 0;
     field_rows = field ? rows : 0;
+    if (view_loaded) {
+        int origin = ws_sprite_origin();
+        view_x = next_x = origin ? (int32_t)rt_r32(G2D_VIEW) / 4096 + origin : 0;
+        view_y = next_y = origin ? (int32_t)rt_r32(G2D_VIEW + 4) / 4096 + 1 + ws_sprite_rows() : 0;
+        view_loaded = 0;
+    }
+    oam_x = view_x, oam_y = view_y;
     view_x = next_x, view_y = next_y;
     if (ss_in_field()) set_screen_view(field_margin);
     fill_field_margins(margin, rows);
@@ -618,6 +628,14 @@ void ws_fill_margins(int margin, int rows, int limit) {
 
 void ws_view_shift(int *x, int *y, int *bgs) {
     *x = view_x, *y = view_y, *bgs = view_bgs;
+}
+
+/* The game moves its camera after the sprite view is set here, then places the sprites with that camera and this
+ * view; they are on screen the frame after, with the BGs of that camera. So a frame's sprites have the view of two
+ * frames' starts ago, the BGs that of the last one. While the shift changes (the view reaching a room's end) the
+ * sprites are that much off. */
+void ws_sprite_lag(int *x, int *y) {
+    *x = oam_x - view_x, *y = oam_y - view_y;
 }
 
 /* The game's software HDMA (the HBlank handler, ITCM 0x01ff8580): channels of 0x28 bytes from 0x027e0068 up to
