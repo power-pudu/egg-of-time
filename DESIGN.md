@@ -215,6 +215,12 @@ original bytes, and caches the result per region until the region is written.
       list's target bracket (4 sprites) and the hand over a target stay in the world, with the actors. Under the box,
       the picture has the room (the frame's BG0 / BG1, as camera smoothing's box). UI pixels have no HD sources. The
       world map's labels (year, place name) are in the world's sprites, so they zoom.
+    - The world map's sprites: the game's tests of Y go as those of X (`rt_ws_snes_cmp`): a piece's Y + 15 below 0xef
+      (return address ov005 0x0212c178), an object's on-screen flag at Y - camera + 16, wrapped at 0x400, below 0x110
+      (ov002 0x0210ce80). Widened by the rows, the Epoch and the birds go on to the view's edge. Y stays 8 bits in the SNES
+      table and in OAM, too few for 248 rows and a piece above them, so `ws_world_sprite_limit` splits them: from that
+      row up it means 256 less, for the test, `rt_ws_world_sprite` and `render_objs` alike. At 77% a few rows of a
+      piece at the top and bottom edges are lost.
     - The room's ends: with Fill screen sides off, a view wider than the 4:3 one (widescreen too, not only zoomed out)
       stops at them instead of passing them, and a room smaller than the view stays centred in it. The game clamps
       its camera for 256 x 192 and is left alone (`ws_fill_margins`, `view_shift`, `ws_view_shift`): the picture is

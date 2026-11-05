@@ -12,6 +12,8 @@ void ws_view_shift(int *x, int *y, int *bgs);
 int ws_sprite_origin(void);
 /* Rows they are shifted by (the widened view's rows above the screen; 0 normally). */
 int ws_sprite_rows(void);
+/* Zoom out on the world map: a sprite's 8-bit Y from this row up means 256 less. */
+int ws_world_sprite_limit(int rows);
 /* Zoom out: bits of a sprite's attribute 1 (unused without rotation): its Y is 256 too high (it starts above the
  * view); it is in screen coordinates (the UI, not shifted by the rows). */
 #define WS_OAM_ABOVE 0x200u

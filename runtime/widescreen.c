@@ -37,7 +37,9 @@
  * turns into DS sprites (0x0211cbb4: X 256-511 read as -256..-1). Objects also keep an on-screen flag (ov002
  * 0x0210cd24: X - camera + 16, wrapped at 0x600, below 0x120; the birds go away once it clears). In widescreen both
  * tests are widened by the margins (rt_ws_snes_cmp) and a converted X below -128 (never kept by the game) is the
- * right margin's (rt_ws_world_sprite).
+ * right margin's (rt_ws_world_sprite). Their Y has tests of the same kind, a piece's Y + 15 below 0xef (Y -15..223) and
+ * an object's Y - camera + 16, wrapped at 0x400, below 0x110; zoomed out, those are widened by the rows. The SNES table
+ * keeps Y in 8 bits, read as -32..223, which 248 rows and a piece above them do not fit: ws_world_sprite_limit.
  *
  * Zoom out draws rows above and below the view as well: the same fills reach them, and so does the sprite view, with
  * what sprites' 8-bit Y can no longer say kept in their attributes (rt_ws_draw_cell, rt_ws_enter_oam).
@@ -451,6 +453,14 @@ void rt_ws_enter_oam(CPU *cpu) {
 #define WORLD 0xddc0u
 
 static int world_margin; /* this frame's margin columns in the world map, 0 elsewhere */
+static int world_rows;   /* and its rows above and below the screen (zoom out) */
+
+/* A piece's row must be told from 8 bits, and a piece (16 rows) above the view can show as well as one below. Zoomed
+ * out the two ends take what does not fit evenly, a few of a piece's rows at the view's edge. */
+int ws_world_sprite_limit(int rows) {
+    int end = SCREEN_H + rows, over = end + rows + 15 - 256;
+    return over > 0 ? end - over / 2 : end;
+}
 
 /* The SNES-style code's 16-bit compare (main 0x020305ac, r0 = the accumulator's address, r1 = the operand): sets
  * the emulated flags (0x0207b43c: carry bit 0, zero bit 1, negative bit 7) from A - M. Its calls in the world map's
@@ -460,16 +470,22 @@ static int world_margin; /* this frame's margin columns in the world map, 0 else
 #define SNES_FLAGS 0x0207b43cu
 #define SPRITE_X_TEST 0x0212c0e4u
 #define OBJECT_X_TEST 0x0210ce50u
+#define SPRITE_Y_TEST 0x0212c178u
+#define OBJECT_Y_TEST 0x0210ce80u
 
 void rt_ws_snes_cmp(CPU *cpu) {
-    uint32_t a = rt_r16(R[0]), m = R[1] & 0xFFFF, wrap = 0;
-    if (world_margin && R[14] == SPRITE_X_TEST && rt_overlay_resident(5)) wrap = 0x10000;
-    if (world_margin && R[14] == OBJECT_X_TEST) wrap = 0x600;
+    uint32_t a = rt_r16(R[0]), m = R[1] & 0xFFFF, wrap = 0, w = 0;
+    if (world_margin && R[14] == SPRITE_X_TEST && rt_overlay_resident(5)) wrap = 0x10000, w = (uint32_t)world_margin;
+    if (world_margin && R[14] == OBJECT_X_TEST) wrap = 0x600, w = (uint32_t)world_margin;
+    if (world_rows && R[14] == OBJECT_Y_TEST) wrap = 0x400, w = (uint32_t)world_rows;
     if (wrap) {
-        uint32_t w = (uint32_t)world_margin;
         a = (a >= wrap - w ? a - wrap : a) + w; /* the left margin's values (just below zero) wrapped back */
         a &= 0xFFFF;
         m = (m + 2 * w) & 0xFFFF;
+    }
+    if (world_rows && R[14] == SPRITE_Y_TEST && rt_overlay_resident(5)) { /* within what 8 bits can tell */
+        a = (a - 15 + 256 - (uint32_t)ws_world_sprite_limit(world_rows)) & 0xFFFF;
+        m = 256;
     }
     uint32_t d = a + (~m & 0xFFFF) + 1;
     rt_w8(SNES_FLAGS, (rt_r8(SNES_FLAGS) & 0x7c) | ((d >> 16) & 1) | ((d & 0xFFFF) == 0) << 1 | ((d & 0x8000) >> 8));
@@ -479,6 +495,7 @@ void rt_ws_snes_cmp(CPU *cpu) {
 static void game_world_sprite(CPU *cpu) { rt_call_wrapped(cpu, "ov002", 0x0211cc20u); } /* the original */
 void rt_ws_world_sprite(CPU *cpu) {
     if (world_margin && !cpu->resume_pc && (int16_t)R[2] < -128) R[2] = (uint32_t)((int16_t)R[2] + 512) & 0xFFFF;
+    if (world_rows && !cpu->resume_pc && (int16_t)R[3] >= ws_world_sprite_limit(world_rows)) R[3] = (uint32_t)((int16_t)R[3] - 256) & 0xFFFF;
     game_world_sprite(cpu);
 }
 
@@ -582,6 +599,7 @@ static int view_shift(int lo, int hi, int size, int pad) {
 
 void ws_fill_margins(int margin, int rows, int limit) {
     world_margin = margin > 0 && ss_in_overworld() ? margin : 0;
+    world_rows = world_margin ? rows : 0;
     if (world_margin) fill_world_margins(margin, rows);
     int field = margin > 0 && ss_in_field();
     field_margin = field ? margin : 0;

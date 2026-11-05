@@ -499,7 +499,7 @@ static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, i
         if (ui && skip_ui) continue;
         int ly = (y - (a0 & 0xFF)) & 0xFF;
         if (e->rows && !ui) { /* Y 8 bits: from the view's top; the rows left over are above it, or tagged so */
-            int oy = a0 & 0xFF, limit = SCREEN_H + e->rows + e->obj_rows;
+            int oy = a0 & 0xFF, limit = e->obj_rows ? SCREEN_H + e->rows + e->obj_rows : ws_world_sprite_limit(e->rows);
             if (oy >= limit || (!affine && (a1 & WS_OAM_ABOVE))) oy -= 256;
             ly = y + e->obj_rows - oy;
             if (ly < 0) continue;
