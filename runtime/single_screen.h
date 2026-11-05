@@ -28,6 +28,10 @@ int ss_bottom_shift(int *rows);
  * Game Settings screen, the field paused, or the title screen's menu (New Game...). */
 enum { SS_MENU_NONE, SS_MENU_GAME_SETTINGS, SS_MENU_PAUSE, SS_MENU_TITLE };
 int ss_menu_place(void);
+/* The Minimap setting (display.c) shows this rectangle of the bottom screen: the field's and the world map's
+ * map panel. Any thread: the rows at the top of the main screen the map may cover now (0: it is not shown). */
+enum { SS_MAP_X = 26, SS_MAP_Y = 26, SS_MAP_W = 204, SS_MAP_H = 140 };
+int ss_minimap_rows(void);
 /* Builds the main screen from both screens of a finished frame (each 256x192 ABGR8888) and the top screen
  * with its widescreen margins (wide_w columns), and the bottom screen with sprites moved and the same margins
  * (ss_bottom_shift; NULL when not drawn) with which of its pixels are sprites; returns the main screen's width

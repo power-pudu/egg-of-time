@@ -78,6 +78,10 @@
  *     margins are filled from its own map data (widescreen.c); and the race against Johnny in Lab 32 (ov011),
  *     whose road is an affine BG with wraparound (drawn as it is) and whose sky layers are 256-wide maps that
  *     repeat into the margins (video.c). Its sprites (the bikes, the HUD) stay within the 4:3 view, centred.
+ *   - The Minimap setting: the field's and the world map's map panel (ov016, cFieldMenu and cWorldMenu, always on
+ *     the bottom screen) made smaller in the top left of the main screen, drawn by the display over the picture
+ *     (display.c), since the field's picture slides with camera smoothing and the map must not. Left out in
+ *     battles and while the text box would be under it.
  *   - Everything else, the intro movie included, shows the top screen as it is; while the field is paused,
  *     with "Press SELECT to open System Settings" at the bottom (the menu opens from there too). */
 #include <SDL3/SDL.h>
@@ -1099,9 +1103,26 @@ int ss_bottom_shift(int *rows) {
     return ss_enabled() && current().kind == SCENE_AGES ? AGES_SHIFT : 0;
 }
 
-static SDL_AtomicInt menu_place;
+static SDL_AtomicInt menu_place, minimap_rows;
 
 int ss_menu_place(void) { return SDL_GetAtomicInt(&menu_place); }
+int ss_minimap_rows(void) { return SDL_GetAtomicInt(&minimap_rows); }
+
+/* The map panel is on the bottom screen: black just outside it, its parchment inside (red over blue whatever the
+ * map, and through a fade until it is nearly black). */
+static int map_panel_shown(const uint32_t *bottom) {
+    enum { CX = SS_MAP_X + SS_MAP_W / 2, IN = 8, MIN_TINT = 8 };
+    static const struct { short x, y; } inside[] = {
+        {CX, SS_MAP_Y + 1}, {CX, SS_MAP_Y + SS_MAP_H - 2}, {SS_MAP_X + IN, SS_MAP_Y + IN}, {SS_MAP_X + SS_MAP_W - IN, SS_MAP_Y + IN},
+        {SS_MAP_X + IN, SS_MAP_Y + SS_MAP_H - IN}, {SS_MAP_X + SS_MAP_W - IN, SS_MAP_Y + SS_MAP_H - IN},
+    };
+    if (bottom[(SS_MAP_Y - 1) * SCREEN_W + CX] != BLACK || bottom[(SS_MAP_Y + SS_MAP_H) * SCREEN_W + CX] != BLACK) return 0;
+    for (size_t i = 0; i < SDL_arraysize(inside); i++) {
+        uint32_t p = bottom[inside[i].y * SCREEN_W + inside[i].x];
+        if ((int)(p & 0xFF) < (int)((p >> 16) & 0xFF) + MIN_TINT) return 0;
+    }
+    return 1;
+}
 
 /* The field paused: how to open the System Settings menu, at the bottom of the main screen (w columns). */
 static void pause_hint(uint32_t *main, int w) {
@@ -1122,6 +1143,9 @@ int ss_compose(uint32_t *main, const uint32_t *top, const uint32_t *bottom, cons
                                   : paused     ? SS_MENU_PAUSE
                                   : title_menu ? SS_MENU_TITLE
                                                : SS_MENU_NONE);
+    int map_ok = ss_enabled() && (sc.kind == SCENE_FIELD || sc.kind == SCENE_OVERWORLD) &&
+                 !rt_overlay_resident(3) /* a battle */ && map_panel_shown(bottom);
+    SDL_SetAtomicInt(&minimap_rows, map_ok ? video_box_top() : 0);
     if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE) { /* widescreen: the top screen with its margins (also with single screen mode off: the second window) */
         memcpy(main, wide, (size_t)wide_w * SCREEN_H * 4);
         *from = SS_FROM_WIDE;

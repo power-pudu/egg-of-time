@@ -37,10 +37,12 @@
 
 #include "display.h"
 #include "gfx_mod.h"
+#include "minimap.h"
 #include "movie.h"
 #include "rt.h"
 #include "shader.h"
 #include "single_screen.h"
+#include "system_menu.h"
 #include "ui_font.h"
 #include "video.h"
 
@@ -92,6 +94,9 @@ static const char *const ff_music_names[] = {"fast", "normal"};
 static const char *const ff_music_labels[] = {"Sped up", "Normal speed"};
 static const char *const ff_sound_names[] = {"all", "music"};
 static const char *const ff_sound_labels[] = {"All", "Music only"};
+static const char *const minimap_size_names[] = {"big", "medium", "small"};
+static const char *const minimap_size_labels[] = {"Big", "Medium", "Small"};
+static const float minimap_scales[] = {1.0f / 2, 3.0f / 8, 1.0f / 4}; /* of the panel on the bottom screen */
 static const char *const off_names[] = {"off"};
 static const char **shader_names; /* "off", then shader_key() of each listed shader */
 
@@ -105,6 +110,10 @@ static Setting settings[SET_COUNT] = {
     [SET_ASPECT] = {"aspect", "Aspect ratio", 5, ASPECT_16_9, aspect_names, aspect_labels},
     /* Widescreen in rooms narrower than the view: No leaves the room as it is, black beside it (video.c). */
     [SET_FILL] = {"fillsides", "Fill screen sides", 2, 0, yesno_names, yesno_labels},
+    /* The bottom screen's map, small, over the main screen (single_screen.c). */
+    [SET_MINIMAP] = {"minimap", "Minimap", 2, 1, onoff_names, onoff_labels},
+    [SET_MINIMAP_SIZE] = {"minimapsize", "Minimap size", 3, 1, minimap_size_names, minimap_size_labels},
+    [SET_MINIMAP_BG] = {"minimapbg", "Minimap background", 2, 0, onoff_names, onoff_labels}, /* off: the map alone (minimap.c) */
     [SET_FRAMERATE] = {"framerate", "Framerate", 6, 1, fps_names, fps_labels},
     [SET_VSYNC] = {"vsync", "V-Sync", 2, 1, onoff_names, onoff_labels},
     [SET_FILTER] = {"filter", "Graphics filter", 4, FILTER_SHARP, filter_names, filter_labels},
@@ -165,6 +174,7 @@ static uint32_t popup_px[POPUP_W * POPUP_H];
 static int popup_w, popup_dirty;
 static Uint64 popup_from, popup_until;
 static SDL_Texture *popup_tex;
+static SDL_Texture *minimap_tex; /* the bottom screen's map panel (main window) */
 
 static void show_message(const char *fmt, const char *arg) {
     snprintf(message, sizeof message, fmt, arg);
@@ -440,6 +450,58 @@ static const uint32_t *color_corrected(const uint32_t *px, int w) {
                        (uint32_t)gamma_lut[(c >> 8) & 0xFF] << 8 | gamma_lut[c & 0xFF];
     }
     return corrected;
+}
+
+/* ---- minimap ---- */
+
+/* The setting can apply to the view: it shows the main screen of single screen mode. */
+static int minimap_allowed(const View *v) { return v == &primary && ss_enabled() && main_shown(v); }
+
+#define MINIMAP_MARGIN 4
+
+static float minimap_scale(void) { return minimap_scales[SETTING(SET_MINIMAP_SIZE)]; }
+
+/* A text box stays uncovered: the map's last row must be above its first. */
+static int minimap_shown(const View *v) {
+    return SETTING(SET_MINIMAP) && minimap_allowed(v) && !sysmenu_is_open() &&
+           ss_minimap_rows() >= MINIMAP_MARGIN + (int)SDL_ceilf(SS_MAP_H * minimap_scale());
+}
+
+/* The map alone is asked for: the renderer tells which pixels are the parchment. */
+static int minimap_cut(void) { return SETTING(SET_MINIMAP) && !SETTING(SET_MINIMAP_BG) && minimap_allowed(&primary); }
+
+/* The map panel of the bottom screen, with the Color setting, its rounded corners (black beside it) transparent;
+ * with Minimap background off, its parchment too. */
+static void upload_minimap(const uint32_t *bottom) {
+    if (!minimap_tex) {
+        minimap_tex = SDL_CreateTexture(primary.ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, SS_MAP_W, SS_MAP_H);
+        if (!minimap_tex) return;
+        SDL_SetTextureBlendMode(minimap_tex, SDL_BLENDMODE_BLEND);
+    }
+    static uint32_t px[SS_MAP_W * SS_MAP_H];
+    const uint32_t *in = color_corrected(bottom, SCREEN_W);
+    for (int y = 0; y < SS_MAP_H; y++) {
+        const uint32_t *src = &in[(SS_MAP_Y + y) * SCREEN_W + SS_MAP_X];
+        uint32_t *dst = &px[y * SS_MAP_W];
+        int x0 = 0, x1 = SS_MAP_W;
+        while (x0 < x1 && src[x0] == 0xFF000000u) x0++;
+        while (x1 > x0 && src[x1 - 1] == 0xFF000000u) x1--;
+        for (int x = 0; x < SS_MAP_W; x++) dst[x] = x >= x0 && x < x1 ? src[x] : 0;
+    }
+    static uint8_t keep[SS_MAP_W * SS_MAP_H];
+    if (minimap_cut() && minimap_cutout(video_bottom_top(), keep)) {
+        for (int i = 0; i < SS_MAP_W * SS_MAP_H; i++) px[i] = keep[i] ? px[i] : 0;
+    }
+    SDL_UpdateTexture(minimap_tex, NULL, px, SS_MAP_W * 4);
+}
+
+/* Into the internal target (n x native), at the view's top left. Nearest at a whole multiple of the panel's pixels;
+ * otherwise nearest would drop or double some of them. */
+static void draw_minimap(SDL_Renderer *ren, int n) {
+    if (!minimap_tex) return;
+    float k = minimap_scale() * (float)n, at = MINIMAP_MARGIN * (float)n;
+    SDL_SetTextureScaleMode(minimap_tex, k >= 1 && k == SDL_floorf(k) ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
+    SDL_RenderTexture(ren, minimap_tex, NULL, &(SDL_FRect){at, at, SDL_roundf(SS_MAP_W * k), SDL_roundf(SS_MAP_H * k)});
 }
 
 /* ---- HD graphics mods ---- */
@@ -726,6 +788,7 @@ static void draw_screens(View *v) {
                               &(SDL_FRect){(float)x * n, (float)y * n, vw * n, (float)SCREEN_H * n});
         }
     }
+    if (minimap_shown(v)) draw_minimap(ren, n);
     SDL_Texture *grid = !shader && SETTING(SET_FILTER) == FILTER_LCD ? lcd_grid(v, n) : NULL;
     for (int i = 0; grid && i < nshown; i++) SDL_RenderTextureTiled(ren, grid, NULL, 1, &shown[i]);
     SDL_SetRenderTarget(ren, NULL);
@@ -904,6 +967,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
     asked_margin = SDL_min(wide_margin() + asked_guard, VIDEO_MARGIN_MAX);
     video_set_wide_margin(asked_margin);
     video_set_fill_sides(SETTING(SET_FILL));
+    video_set_track_bottom(minimap_cut());
     video_set_camera_smoothing(asked_guard != 0);
     main_w = width;
     party_on = main_guard && party;
@@ -922,6 +986,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
             }
         }
         for (int i = 0; i < 3; i++) upload(at[i], i, screens[i], shown[i]);
+        if (minimap_shown(&primary)) upload_minimap(screens[1]);
         if (party_on) upload(&primary, 3, party, shown[2]);
         if (still_on) upload(&primary, 4, still, shown[2]);
         hd_frame = NULL;
@@ -991,6 +1056,9 @@ int display_setting_get(int id) { return settings[id].value; }
 int display_setting_shown(int id) {
     switch (id) {
     case SET_FILL: return SETTING(SET_ASPECT) != ASPECT_ORIGINAL;
+    case SET_MINIMAP: return minimap_allowed(&primary);
+    case SET_MINIMAP_SIZE:
+    case SET_MINIMAP_BG: return SETTING(SET_MINIMAP) && minimap_allowed(&primary);
     case SET_SHADER: return settings[SET_SHADER].count > 1;
     case SET_RESOLUTION:
     case SET_FILTER: return !SETTING(SET_SHADER); /* a shader replaces them */

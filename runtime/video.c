@@ -116,6 +116,8 @@ typedef struct Engine {
                                    * top) in the last frame and in this one so far, text box lines left out */
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
     int sliding;    /* camera smoothing: the display may slide this frame (the camera moved within VIDEO_GLIDE_FRAMES) */
+    int box_top;    /* the first line of the field's text box this frame (see box_bg; SCREEN_H: no box) */
+    int track_top;  /* this frame's top layers go to bottom_top (the bottom screen, video_set_track_bottom) */
     int still_bgs;  /* camera smoothing: BGs that hold still on screen while the room slides (ws_picture_bgs, the
                      * prison bridge's sky): their pixels, and the backdrop's, go to the still layer when on top */
     int sel_shift, sel_rows; /* single screen's age selector: a second picture with the sprites starting above
@@ -128,6 +130,9 @@ typedef struct Engine {
 } Engine;
 
 static Engine engines[2];
+static SDL_AtomicInt track_bottom; /* video_set_track_bottom */
+static VideoBottomTop bottom_top, present_bottom_top, shown_bottom_top; /* being drawn, finished, copied by the host */
+static int present_bottom_top_on;
 #define SIDE_COLS 8 /* the screen columns at each side whose layers may repeat into the margins (repeat_bgs) */
 static SDL_AtomicInt wide_margin; /* requested by the display (video_set_wide_margin) */
 static uint32_t frame[2][VIDEO_LINE_MAX * SCREEN_H]; /* by engine, VIDEO_LINE_MAX apart */
@@ -261,9 +266,11 @@ void video_reset(void) {
  * in the screen's columns alone, and the margins keep the layer as the frame started (its map, scroll, priority
  * and blending), so the room goes on beside the box. In the race (repeat_256) the sky, mountains and skyline are
  * 256-wide maps that tile seamlessly, so they repeat into the margins as they would on a wider screen. */
-static int margin_bg(const Engine *e, int bg) {
-    return e->margin && !(reg16(e, 0x08 + 2 * bg) & 0x4000) && (e->frame_bg[bg][0] & 0x4000);
+static int box_bg(const Engine *e, int bg) {
+    return !(reg16(e, 0x08 + 2 * bg) & 0x4000) && (e->frame_bg[bg][0] & 0x4000);
 }
+
+static int margin_bg(const Engine *e, int bg) { return e->margin && box_bg(e, bg); }
 
 /* Columns x0..x1-1 of a text BG line, with these register values. */
 static void bg_text_cols(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t cnt, uint32_t hofs, uint32_t vofs,
@@ -849,6 +856,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         /* Widescreen: the top screen, and the bottom one when the age selector's picture is the main screen. */
         e->margin = e->id == !a_top || e->sel_shift ? SDL_GetAtomicInt(&wide_margin) : 0;
         e->party = e->sliding = e->still_bgs = 0;
+        e->box_top = SCREEN_H;
+        e->track_top = e->id == a_top && SDL_GetAtomicInt(&track_bottom);
         for (int bg = 0; bg < 4; bg++) {
             e->frame_bg[bg][0] = reg16(e, 0x08 + 2 * bg);
             e->frame_bg[bg][1] = reg16(e, 0x10 + 4 * bg);
@@ -938,6 +947,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
          * under the box (the layers as the frame started, as in the margins). */
         static uint16_t under[2][VIDEO_LINE_MAX];
         int box = 0;
+        if (y < e->box_top && ((enabled[0] && box_bg(e, 0)) || (enabled[1] && box_bg(e, 1)))) e->box_top = y;
         for (int bg = 0; bg < 2; bg++) {
             if (!e->sliding || !enabled[bg] || !margin_bg(e, bg)) continue;
             const uint16_t *f = e->frame_bg[bg];
@@ -1021,6 +1031,10 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 }
             }
             uint16_t c = col[0];
+            if (e->track_top && !pass && x - m == wx) {
+                bottom_top.color[y][wx] = col[0] & 0x7FFF;
+                bottom_top.layer[y][wx] = (uint8_t)layer[0];
+            }
             int first = (bldcnt >> layer[0]) & 1, second = (bldcnt >> (8 + layer[1])) & 1;
             int sprite_shows = layer[0] == 4; /* the sprite on top, or seen through a translucent layer on top */
             int weight = 16;    /* the top layer's share, and the colour added (HD sources) */
@@ -1107,6 +1121,12 @@ void video_render_line(int line) {
 
 void video_set_fill_sides(int on) { SDL_SetAtomicInt(&fill_sides, on); }
 
+void video_set_track_bottom(int on) { SDL_SetAtomicInt(&track_bottom, on); }
+
+const VideoBottomTop *video_bottom_top(void) { return &shown_bottom_top; }
+
+int video_box_top(void) { return engines[(io_get16(0x304) >> 15) & 1 ? 0 : 1].box_top; }
+
 void video_set_wide_margin(int margin) { SDL_SetAtomicInt(&wide_margin, SDL_clamp(margin, 0, VIDEO_MARGIN_MAX)); }
 
 void video_end_frame(void) {
@@ -1158,6 +1178,12 @@ void video_end_frame(void) {
         memcpy(present_palette, rt_palette, sizeof present_palette);
         hd_stamp++;
     }
+    present_bottom_top_on = eb->track_top;
+    if (eb->track_top) {
+        for (int i = 0; i < 256; i++) bottom_top.palette[i] = pal16(eb->pal + (uint32_t)i * 2) & 0x7FFF;
+        bottom_top.bg3_hofs = reg16(eb, 0x1C) & 0x1FF, bottom_top.bg3_vofs = reg16(eb, 0x1E) & 0x1FF;
+        present_bottom_top = bottom_top;
+    }
     present_dx = frame_dx, present_dy = frame_dy, present_cut = frame_cut;
     present_time = SDL_GetTicksNS();
     present_serial++;
@@ -1171,6 +1197,7 @@ int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, uint32_t *
     memcpy(bottom, present[1], sizeof present[1]);
     memcpy(main, present_main, (size_t)present_main_w * SCREEN_H * 4);
     int w = present_main_w;
+    if (present_bottom_top_on) shown_bottom_top = present_bottom_top;
     *party_on = present_party_on;
     if (present_party_on) memcpy(party, present_party, (size_t)w * SCREEN_H * 4);
     *still_on = present_still_on;

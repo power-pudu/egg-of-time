@@ -194,6 +194,16 @@ original bytes, and caches the result per region until the region is written.
   (`EGG_WINDOWED=1` starts windowed without changing the setting, for automated runs). Each change shows a short message in the window; Sharp is the default filter. Holding Escape shows
   "Exiting..." and quits after 1 s (releasing cancels). The mouse is the stylus wherever the bottom screen is
   shown. Layout, swap and the System Settings persist in `eggoftime.ini` next to the executable.
+- **Minimap** (System Settings, on by default): in single screen mode, the bottom screen's map panel (x 26-229,
+  y 26-165; ov016's `cFieldMenu`, `cWorldMenu`) in the top left of the main window, at 1/2, 3/8 (the default) or 1/4 size (Minimap
+  size). `runtime/display.c`
+  draws it into the internal target after the picture, not into the main screen: the picture slides with camera
+  smoothing and the map must not, and with enough internal resolution no pixel of the map is lost (nearest at a whole
+  multiple of its pixels, else linear). Minimap background (off by default) keeps the map's parchment; off,
+  `runtime/minimap.c` cuts it out with what the renderer says is on top at each pixel (`video_bottom_top`): the game has
+  the parchment baked into BG3, so it goes by BG1 and by BG3's pixels in the plain parchment's colour (`minimap_000`). `ss_compose` decides whether it may show: the field or world map, no battle
+  (ov003) and the panel on the bottom screen (by its pixels); the display also needs its rows free of the text box
+  (`video_box_top`). HD art does not apply to it.
 - **Second screen window** (System Settings, `runtime/display.c`): the screen the main window does not show,
   in a window of its own (a `View`: window, renderer and the screen textures it draws with, since SDL
   textures belong to one renderer). While it is open single screen mode is off at run time

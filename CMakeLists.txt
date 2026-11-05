@@ -70,6 +70,7 @@ set(RUNTIME_SOURCES
     runtime/game_build.c
     runtime/gfx_dump.c
     runtime/gfx_mod.c
+    runtime/minimap.c
     runtime/gfx_rom.c
     runtime/card.c
     runtime/cheevos.c

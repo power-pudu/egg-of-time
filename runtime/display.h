@@ -36,7 +36,7 @@ void display_capture(const char *path);
 
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
  * Setting one applies it at once and saves eggoftime.ini. */
-enum { SET_LANGUAGE, SET_WINDOW, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND,
+enum { SET_LANGUAGE, SET_WINDOW, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_FILL, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND,
        SET_COUNT };
 enum { LANGUAGE_ENGLISH, LANGUAGE_FRENCH }; /* SET_LANGUAGE values */
 enum { FF_MUSIC_FAST, FF_MUSIC_NORMAL };    /* SET_FF_MUSIC values */
@@ -44,7 +44,8 @@ enum { FF_SOUND_ALL, FF_SOUND_MUSIC };      /* SET_FF_SOUND values */
 const char *display_setting_title(int id);
 int display_setting_count(int id);
 int display_setting_get(int id);
-/* The menu lists it: Fill screen sides only with a wide aspect ratio, Shader only with shaders in mods/shaders,
+/* The menu lists it: Fill screen sides only with a wide aspect ratio, Minimap only where the main screen of single
+ * screen mode is shown, Minimap size and background only with Minimap on, Shader only with shaders in mods/shaders,
  * Internal resolution and Graphics filter only without a shader. */
 int display_setting_shown(int id);
 /* The chosen shader's path under mods/shaders (e.g. "glsl/crt/crt-geom.glslp"); NULL when Shader is Off. */

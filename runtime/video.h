@@ -38,6 +38,19 @@ void video_set_wide_margin(int margin);
 /* Widescreen: in the field, the margins show the room's map repeated beyond a room narrower than the view
  * (1), or black (0, the default; any thread). */
 void video_set_fill_sides(int on);
+/* Game thread: the top screen's first line of the field's text box in the frame just drawn (SCREEN_H: no box). */
+int video_box_top(void);
+/* What is on top at each pixel of the bottom screen: its layer (0-3 BG, 4 OBJ, 5 backdrop) and colour (BGR555, before
+ * blending and brightness), with the BG palette and BG3's scroll, as the frame being shown by video_copy_frame had
+ * them. Kept while video_set_track_bottom is on (any thread). Host thread. */
+typedef struct VideoBottomTop {
+    uint16_t color[SCREEN_H][SCREEN_W];
+    uint8_t layer[SCREEN_H][SCREEN_W];
+    uint16_t palette[256];
+    int bg3_hofs, bg3_vofs;
+} VideoBottomTop;
+void video_set_track_bottom(int on);
+const VideoBottomTop *video_bottom_top(void);
 /* Latest finished frame (ABGR8888): top screen, bottom screen (256x192 each), and the main screen of single
  * screen mode (single_screen.c; the top screen when that is off), 192 rows of the returned width (up to
  * VIDEO_LINE_MAX). Copies under a lock. */
