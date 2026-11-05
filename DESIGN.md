@@ -348,9 +348,11 @@ original bytes, and caches the result per region until the region is written.
     screen in state 1, the top screen otherwise.
   - Shops (ov012, vtable 0x021575f0): every member's attack and defense (now and with the highlighted item) on
     the top screen (the party at the left, the others at the right, up to four each), everything else on the
-    bottom one, whose help bar stays empty. The main screen shows the bottom screen moved up into the gap under
-    the tabs and, in place of the help bar, a 3 x 3 grid of text lines (the party first): each member's name and
-    only the stat the item changes (defense when only defense values are coloured, else attack), old -> new.
+    bottom one, the item's description in its help bar. The main screen shows the bottom screen moved up into the gap
+    under the tabs and, in place of the help bar, a 3 x 3 grid of text lines (the party first): each member's name and
+    only the stat the item changes (defense when only defense values are coloured, else attack), old -> new. The
+    item's panel is packed (its text lines 8 rows apart, not 16) to make room for a box under it with the description,
+    the help bar's pixels in up to two lines of 110, broken at word gaps; a longer text would be cut.
     The shop's Equip opens the field menu's Equipment page.
   - Age selector (time travel; ov012, vtable 0x02158290): the chosen age's map on the top screen; on the bottom
     one the ring of ages, the age's name with a line to it, A Warp and B, all sprites over a swirl (affine BG3

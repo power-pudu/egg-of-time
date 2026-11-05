@@ -51,8 +51,9 @@
  *     and under the monster the list as lines of text, the selected one framed, then the count.
  *   - Shops (ov012): each member's sprite, name and attack and defense (now and with the item highlighted) on the
  *     top screen; Buy / Sell / Equip, the categories, the gold, the item's panel, the list or the quantity on the
- *     bottom one, whose help bar stays empty. The main screen shows the bottom screen moved up into the gap
- *     under the tabs and, in place of the help bar, every member's name and the stat the item changes as lines
+ *     bottom one, with the item's description in the help bar. The main screen shows the bottom screen moved up into
+ *     the gap under the tabs, the item's panel packed to make room for the description in a box under it, and, in
+ *     place of the help bar, every member's name and the stat the item changes as lines
  *     of text, three to a line. Equip opens the Equipment page.
  *   - Arena of the Ages (ov013), a monster's page: its name, wins, HP, element and sprite, then its stats (or with
  *     Toggle Display nothing in their place) on the top screen; Train Monster, Toggle Display and Release Monster
@@ -961,14 +962,21 @@ static void compose_bestiary(uint32_t *main, const uint32_t *top, const uint32_t
  * the value right-aligned at x 80, and for a member who can use the item highlighted an arrow x 91-97 and the
  * value with it from x 104 (blue: higher, red: lower). Text and icons are white, black or coloured on a dark
  * backdrop (never black, no channel above 80; its tint follows the menu colour). Bottom screen: tabs rows 0-23,
- * backdrop rows 24-37, everything else in rows 38-167, the help bar (empty) from row 168. Main screen: tabs, the
- * bottom screen from row 38 at row 24, then the members as lines of text in a 3 x 3 grid (the party on the first
- * line): the name and the stat the item changes (defense if only defense values are coloured, else attack), these
- * spans of its line packed. */
+ * backdrop rows 24-37, everything else in rows 38-167, the help bar from row 168 (the item's description, white on
+ * black shadow, rows 176-185). Main screen: tabs, the bottom screen from row 38 at row 24, then the members as lines
+ * of text in a 3 x 3 grid (the party on the first line): the name and the stat the item changes (defense if only
+ * defense values are coloured, else attack), these spans of its line packed.
+ * The item's panel (x 8-127, rows 64-159, with its shadow) holds up to three lines of text 16 rows apart and the
+ * members who can use the item in rows 122-151: the lines go 8 rows apart, and under them a box of the panel's own
+ * rows shows the description in up to two lines, broken between words. */
 #define SHOP_SHIFT 14
 #define SHOP_GRID_Y 154
 #define SHOP_LINE_H 11
 static const struct { uint8_t x, w; } SHOP_SPANS[] = {{40, 9}, {66, 15}, {91, 7}, {104, 16}};
+#define SHOP_PANEL_X 8
+#define SHOP_PANEL_W 120
+#define SHOP_PANEL_Y 50 /* on the main screen */
+static const struct { uint8_t y, h; } SHOP_PANEL_ROWS[] = {{64, 5}, {74, 8}, {90, 8}, {106, 8}, {122, 30}, {154, 6}};
 
 static int shop_fg(uint32_t p) {
     return p == BLACK || (p & 0xFF) > 80 || ((p >> 8) & 0xFF) > 80 || ((p >> 16) & 0xFF) > 80;
@@ -980,6 +988,57 @@ static void blit_shop_fg(uint32_t *main, int dx, int dy, const uint32_t *top, in
             uint32_t p = top[(sy + y) * SCREEN_W + sx + x];
             if (shop_fg(p)) main[(dy + y) * SCREEN_W + dx + x] = p;
         }
+    }
+}
+
+static void blit_shop_panel_row(uint32_t *main, int dy, const uint32_t *bottom, int sy) {
+    memcpy(&main[dy * SCREEN_W + SHOP_PANEL_X], &bottom[sy * SCREEN_W + SHOP_PANEL_X], SHOP_PANEL_W * 4);
+}
+
+static void compose_shop_panel(uint32_t *main, const uint32_t *bottom) {
+    enum { TEXT_X0 = 6, TEXT_X1 = 222, TEXT_Y = 176, TEXT_H = 10, BOX_X = 13, BOX_W = 110, WORD_GAP = 3, LINES = 2 };
+    /* The panel's black shadow: nothing else is there (Buy / Sell, nothing available). */
+    if (bottom[63 * SCREEN_W + 64] != BLACK || bottom[159 * SCREEN_W + 64] != BLACK || bottom[110 * SCREEN_W + 127] != BLACK) return;
+    int dy = SHOP_PANEL_Y;
+    for (size_t i = 0; i < SDL_arraysize(SHOP_PANEL_ROWS); i++) {
+        for (int y = 0; y < SHOP_PANEL_ROWS[i].h; y++) blit_shop_panel_row(main, dy++, bottom, SHOP_PANEL_ROWS[i].y + y);
+    }
+    /* The box: the panel's top edge, its fill above the first line (rows 68-73), repeated, and its bottom edge. */
+    int box = dy;
+    for (int y = 0; y < 4; y++) blit_shop_panel_row(main, dy++, bottom, 64 + y);
+    while (dy < SHOP_PANEL_Y + 96 - 6) blit_shop_panel_row(main, dy, bottom, 68 + (dy - box) % 6), dy++;
+    for (int y = 0; y < 6; y++) blit_shop_panel_row(main, dy++, bottom, 154 + y);
+    uint8_t used[TEXT_X1] = {0};
+    int last = -1;
+    for (int x = TEXT_X0; x < TEXT_X1; x++) {
+        for (int y = 0; y < TEXT_H; y++) {
+            uint32_t p = bottom[(TEXT_Y + y) * SCREEN_W + x];
+            used[x] |= p == BLACK || p == 0xFFFFFFFFu;
+        }
+        if (used[x]) last = x;
+    }
+    int at = TEXT_X0;
+    for (int line = 0; line < LINES && last >= 0; line++) {
+        while (at <= last && !used[at]) at++;
+        if (at > last) break;
+        int end = at + BOX_W; /* one word too long for the line: cut */
+        if (last < end) {
+            end = last + 1;
+        } else {
+            int run = 0, word_end = 0;
+            for (int x = at; x < at + BOX_W; x++) {
+                if (used[x]) run = 0;
+                else if (++run == WORD_GAP) word_end = x - WORD_GAP + 1;
+            }
+            if (word_end) end = word_end;
+        }
+        for (int y = 0; y < TEXT_H; y++) {
+            for (int x = at; x < end; x++) {
+                uint32_t p = bottom[(TEXT_Y + y) * SCREEN_W + x];
+                if (p == BLACK || p == 0xFFFFFFFFu) main[(box + 4 + line * TEXT_H + y) * SCREEN_W + BOX_X + x - at] = p;
+            }
+        }
+        at = end;
     }
 }
 
@@ -1002,6 +1061,7 @@ static void compose_shop(uint32_t *main, const uint32_t *top, const uint32_t *bo
     memcpy(&main[24 * SCREEN_W], &bottom[(24 + SHOP_SHIFT) * SCREEN_W], (SHOP_GRID_Y - 24) * SCREEN_W * 4);
     for (int y = SHOP_GRID_Y; y < SCREEN_H; y += SHOP_SHIFT) /* the backdrop the shift left out */
         memcpy(&main[y * SCREEN_W], &bottom[24 * SCREEN_W], (size_t)SDL_min(SHOP_SHIFT, SCREEN_H - y) * SCREEN_W * 4);
+    compose_shop_panel(main, bottom);
     int line = shop_changed(top, 21) || !shop_changed(top, 31) ? 21 : 31;
     for (int m = 0, n = 0; m < 8; m++) { /* the party (three at most), then the others */
         int sx = 128 * (m >> 2), sy = 24 + 40 * (m & 3);
