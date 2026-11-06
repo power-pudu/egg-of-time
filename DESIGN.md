@@ -212,9 +212,11 @@ original bytes, and caches the result per region until the region is written.
     - UI: the text box and sprites in screen coordinates stay at the original scale in their original place in the
       window: `ui_frame`, 192 rows, composed in a third pass, its middle columns drawn over the whole picture
       (`draw_ui`). Sprites drawn with the surface's own view are marked `WS_OAM_UI`, as is the battle HUD, which uses
-      the G2D view: in a battle, one-sprite cells on the panel's rows (from 132) of the list the scene's draw calls
-      returning to 0x02041a34 (gauges, HP / MP, the menu's hand; found by logging cells while fighting). The same
-      list's target bracket (4 sprites) and the hand over a target stay in the world, with the actors. Under the box,
+      the G2D view: in a battle, one-sprite cells on the rows of the panel, at the top (above 60) or the bottom (from
+      132), of the list the scene's draw calls returning to 0x02041a34 (gauges, HP / MP, the menu's hand; found by
+      logging cells while fighting). That list's target bracket (4 sprites) and the hand over a target (the next cell
+      in the table) stay in the world, with the actors. The HUD is also put back with zoom out off: the view's shift at
+      a room's ends (Fill screen sides off) is not its own. Under the box,
       the picture has the room (the frame's BG0 / BG1, as camera smoothing's box). UI pixels have no HD sources. The
       world map's labels (year, place name) are in the world's sprites, so they zoom.
     - The world map's sprites: the game's tests of Y go as those of X (`rt_ws_snes_cmp`): a piece's Y + 15 below 0xef

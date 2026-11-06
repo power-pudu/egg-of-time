@@ -390,8 +390,9 @@ void rt_ws_object_visible(CPU *cpu) {
  *   - the surface's own view is 1024 wide (screen coordinates: set_screen_view); world sprites use the G2D view;
  *   - in a battle, the scene's draw also uses the G2D view for its first list of sprites (main 0x02041940, the call
  *     returning to 0x02041a34), the HUD beside the menus: gauges, HP / MP, the menu's hand, one sprite each on the rows
- *     of the panel at the bottom. They become UI too, their Y put back in the DS screen's rows. The same list's other
- *     cells stay in the world: the target's bracket (4 sprites) and the hand over a target higher up;
+ *     of the panel, at the top of the screen or the bottom. They become UI too, put back where the screen's own view
+ *     would have them: the shift of the view at a room's ends is not theirs, with or without zoom out. The same list's
+ *     other cells stay in the world: the target's bracket (4 sprites) and the hand over a target, the cell after it;
  *   - main 0x02048098 (r0 = the sprite's attributes) enters each sprite. While the byte at 0x020fd614 is set, it also
  *     chooses the sprite's priority by comparing its Y with the threshold at 0x020fd618, in the DS screen's rows, so
  *     for the call that threshold is put where the comparison comes out as it would have there. */
@@ -413,9 +414,15 @@ static int called_from(const CPU *cpu, uint32_t ret) {
     return 0;
 }
 
+/* A cell of the HUD's list (cell: its entry in the 8-byte table, sprite count first) at this row on the DS screen. */
+static int battle_hud_cell(const CPU *cpu, uint32_t cell, int row) {
+    return rt_overlay_resident(3) && rt_r16(cell) == 1 && rt_r16(cell - 8) != 4 &&
+           (row < SCREEN_H - BATTLE_HUD_TOP || row >= BATTLE_HUD_TOP) && called_from(cpu, BATTLE_HUD_LIST);
+}
+
 static void game_draw_cell(CPU *cpu) { rt_call_wrapped(cpu, "main", 0x02019fd4u); } /* the original */
 void rt_ws_draw_cell(CPU *cpu) {
-    if (!field_rows || cpu->resume_pc) {
+    if ((!field_rows && !next_x && !next_y) || cpu->resume_pc) {
         game_draw_cell(cpu);
         return;
     }
@@ -425,14 +432,14 @@ void rt_ws_draw_cell(CPU *cpu) {
     cell_ui = rt_r32(surface + 8) == FX(1024);
     /* Another surface (the bottom screen's) is none of this. */
     cell_known = cell_ui || (rt_r32(surface) == rt_r32(G2D_VIEW) && rt_r32(surface + 8) == rt_r32(G2D_VIEW + 8));
-    cell_hud = !cell_ui && rt_overlay_resident(3) && rt_r16(R[1]) == 1 && cell_y - field_rows + next_y >= BATTLE_HUD_TOP && called_from(cpu, BATTLE_HUD_LIST);
+    cell_hud = !cell_ui && battle_hud_cell(cpu, R[1], cell_y - field_rows + next_y);
     game_draw_cell(cpu);
     cell_known = 0;
 }
 
 static void game_enter_oam(CPU *cpu) { rt_call_wrapped(cpu, "main", GAME_ADDR(0x02048098u, 0x020480c8u)); } /* the original */
 void rt_ws_enter_oam(CPU *cpu) {
-    if (!field_rows || !cell_known || cpu->resume_pc) {
+    if ((!field_rows && !cell_hud) || !cell_known || cpu->resume_pc) {
         game_enter_oam(cpu);
         return;
     }
