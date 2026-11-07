@@ -77,6 +77,8 @@ static const char *const aspect_labels[] = {"Original (4:3)", "5:3", "16:9", "Ul
 static const float aspect_ratios[] = {4.0f / 3, 5.0f / 3, 16.0f / 9, 21.0f / 9, 0}; /* 0: the window's */
 static const char *const zoom_names[] = {"off", "85", "77"};
 static const char *const zoom_labels[] = {"Off", "85%", "77%"};
+static const char *const zoom_ui_names[] = {"smaller", "original"};
+static const char *const zoom_ui_labels[] = {"Smaller", "Original size"};
 static const int zoom_totals[] = {0, 226, VIDEO_ROWS_MAX}; /* rows of the picture (192 at the original scale) */
 static const char *const fps_names[] = {"30", "60", "90", "120", "144", "unlimited"};
 static const char *const fps_labels[] = {"30", "60", "90", "120", "144", "Unlimited"};
@@ -118,6 +120,8 @@ static Setting settings[SET_COUNT] = {
     [SET_ASPECT] = {"aspect", "Aspect ratio", 5, ASPECT_16_9, aspect_names, aspect_labels},
     /* Zoom out: more rows in the same place, in the field and the world map (video.c). */
     [SET_ZOOM] = {"zoomout", "Zoom out", 3, 0, zoom_names, zoom_labels},
+    /* Zoomed out, the text boxes and the battle HUD: zoomed out too, or at their original size (draw_ui). */
+    [SET_ZOOM_UI] = {"zoomtext", "Zoomed out text", 2, 0, zoom_ui_names, zoom_ui_labels},
     /* Widescreen in rooms narrower than the view: No leaves the room as it is, black beside it (video.c). */
     [SET_FILL] = {"fillsides", "Fill screen sides", 2, 0, yesno_names, yesno_labels},
     /* The bottom screen's map, small, over the main screen (single_screen.c). */
@@ -791,14 +795,23 @@ static int draw_shaded(const SDL_FRect *shown, const int *screens, int nshown, i
     return 1;
 }
 
-/* Zoomed out, the UI layer over the main screen (at x, y, cw x ch native pixels): at the scale and in the place it has
- * when not zoomed out, its 192 rows over the whole height. */
+/* Zoomed out, the UI layer over the main screen (at x, y, cw x ch native pixels), not slid with camera smoothing.
+ * Smaller: at the picture's scale, on the screen's own 192 rows in its middle (on the picture's pixels, so its text
+ * scales as evenly). Original size: at the scale and in the place it has when not zoomed out, its 192 rows over the
+ * whole height (between the picture's pixels: the text scales less evenly, the more so at 77%). */
 static void draw_ui(const View *v, int x, int y, int n, int cw, int ch) {
     if (!ui_on) return;
     int k = !view_shader(v) && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
-    float columns = (float)cw * SCREEN_H / ch;
-    SDL_RenderTexture(v->ren, k > 1 ? v->smooth[5] : v->native[5], &(SDL_FRect){((float)main_w - columns) / 2 * k, 0, columns * k, (float)SCREEN_H * k},
-                      &(SDL_FRect){(float)x * n, (float)y * n, (float)cw * n, (float)ch * n});
+    SDL_Texture *t = k > 1 ? v->smooth[5] : v->native[5];
+    if (SETTING(SET_ZOOM_UI)) {
+        float columns = (float)cw * SCREEN_H / ch;
+        SDL_RenderTexture(v->ren, t, &(SDL_FRect){((float)main_w - columns) / 2 * k, 0, columns * k, (float)SCREEN_H * k},
+                          &(SDL_FRect){(float)x * n, (float)y * n, (float)cw * n, (float)ch * n});
+        return;
+    }
+    float top = (float)(ch - SCREEN_H) / 2;
+    SDL_RenderTexture(v->ren, t, &(SDL_FRect){(float)main_guard * k, 0, (float)cw * k, (float)SCREEN_H * k},
+                      &(SDL_FRect){(float)x * n, ((float)y + top) * n, (float)cw * n, (float)SCREEN_H * n});
 }
 
 /* Draws the view's shown screens into its internal target, then the target into its window (through the shader
@@ -1135,6 +1148,7 @@ int display_setting_shown(int id) {
     case SET_LAYOUT: return !secondary.win; /* one screen per window */
     case SET_LANGUAGE: return !RT_JAPAN;
     case SET_LANGUAGE_JP: return RT_JAPAN;
+    case SET_ZOOM_UI: return SETTING(SET_ZOOM) != 0;
     case SET_FILL: return SETTING(SET_ASPECT) != ASPECT_ORIGINAL || SETTING(SET_ZOOM);
     case SET_MINIMAP: return minimap_allowed(&primary);
     case SET_MINIMAP_SIZE:

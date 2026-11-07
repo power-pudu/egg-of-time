@@ -209,9 +209,11 @@ original bytes, and caches the result per region until the region is written.
       sprites without rotation do not use: `WS_OAM_ABOVE`. That entry also picks a priority from Y against a threshold
       (0x020fd618, when 0x020fd614 is set), in DS rows, so the threshold is moved for the call. World map sprites
       are not marked: Y from `SCREEN_H + rows` up counts as above.
-    - UI: the text box and sprites in screen coordinates stay at the original scale in their original place in the
-      window: `ui_frame`, 192 rows, composed in a third pass, its middle columns drawn over the whole picture
-      (`draw_ui`). Sprites drawn with the surface's own view are marked `WS_OAM_UI`, as is the battle HUD, which uses
+    - UI: the text box and sprites in screen coordinates zoom out with the rest, on the screen's own rows in the
+      middle of the picture, but are not slid by camera smoothing: `ui_frame`, 192 rows, composed in a third pass
+      (`draw_ui`). Kept at the original scale over the whole picture, as they first were, their pixels fell between
+      the picture's and the text was scaled unevenly (worse at 77%), and the boxes did not shrink with the world; that
+      stays a choice (Zoomed out text: Original size), for screens where the smaller text is too small. Sprites drawn with the surface's own view are marked `WS_OAM_UI`, as is the battle HUD, which uses
       the G2D view: in a battle, one-sprite cells on the rows of the panel, at the top (above 60) or the bottom (from
       132), of the list the scene's draw calls returning to 0x02041a34 (gauges, HP / MP, the menu's hand; found by
       logging cells while fighting). That list's target bracket (4 sprites) and the hand over a target (the next cell

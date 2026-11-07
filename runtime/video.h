@@ -66,8 +66,7 @@ const VideoBottomTop *video_bottom_top(void);
  * screen mode (single_screen.c; the top screen when that is off), *main_h rows (192, more when zoomed out) of the
  * returned width (up to VIDEO_LINE_MAX). Copies under a lock. */
 /* ui (when *ui_on: zoomed out): the text box and the sprites in screen coordinates, 192 rows of the same width,
- * transparent (0) elsewhere, to show at the scale the picture has when not zoomed out, its middle columns over
- * the whole main screen. */
+ * transparent (0) elsewhere, to show over main's middle rows (the screen's own) without camera smoothing's slide. */
 /* party (when *party_on): the main screen's party layer, same size, transparent (0) where the party is not:
  * the sprites the camera follows, left out of main so camera smoothing slides only the scenery. */
 /* still (when *still_on): the main screen's still layer, same size, transparent (0) elsewhere: the pixels of BGs
