@@ -594,8 +594,11 @@ static void fill_field_margins(int margin, int rows) {
     }
     for (int c = left; c <= right; c++) {
         for (int r = top; r <= bottom; r++) {
-            /* The game's own: its columns, the rows of the 4:3 view and the 25th that a fine scroll shows. */
-            if (c >= camc && c < camc + 32 && r >= camr && r <= camr + SCREEN_H / 8) continue;
+            /* The game's own: its columns, the rows of the 4:3 view and the 25th that a fine scroll shows. Told by their
+             * place in the ring: while a room loads, the camera can be outside the new room's bounds for a few frames
+             * (0, 16 after the Lab 32 race), and the view's shift to the room's ends then takes the range around the
+             * ring, onto the game's own cells. */
+            if (((c - camc) & 63) < 32 && ((r - camr) & 31) <= SCREEN_H / 8) continue;
             uint32_t t0 = room_tile(scroll, tilesets, 0, c, r), t1 = room_tile(scroll, tilesets, 1, c, r);
             int pri0 = (t0 >> 16) & 0xFF, pri1 = (t1 >> 16) & 0xFF;
             for (int L = 0; L < 3; L++) {
