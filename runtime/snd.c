@@ -834,24 +834,32 @@ static uint16_t bgm_channels(void) {
 /* One driver frame of emulated time, and its output. Fast forward (sched.c) shortens it in host time: the mixer
  * plays the channels that much faster. With the Fast forward music setting at Normal speed, the BGM players and
  * their channels instead get a frame per SND_FRAME_CYCLES of host time and play at their own pitch; the game
- * then sees the music advance slower than itself. With Fast forward sound at Music only, the other channels
- * are muted meanwhile. */
+ * then sees the music advance slower than itself. The output then goes by the host's clock too: the game falls
+ * short of the speed asked when busy (the time it holds is dropped, `ff_hold`; about 1.86x walking in a forest),
+ * and output by emulated time ran short of the device's rate, its queue running dry every 0.6 s (the music
+ * stuttered). With Fast forward sound at Music only, the other channels are muted meanwhile. */
 static void snd_frame(void) {
     static double bgm_frames; /* BGM frames owed (Normal speed) */
+    static uint64_t last_ns;  /* host time of the last frame at Normal speed, 0: none */
     int speed = sched_speed();
-    double seconds = (double)SND_FRAME_CYCLES / RT_CLOCK_HZ / speed;
+    double frame = (double)SND_FRAME_CYCLES / RT_CLOCK_HZ, seconds = frame / speed;
     int sfx_off = speed > 1 && display_setting_get(SET_FF_SOUND) == FF_SOUND_MUSIC;
     if (speed == 1 || display_setting_get(SET_FF_MUSIC) != FF_MUSIC_NORMAL) {
-        bgm_frames = 0;
+        bgm_frames = 0, last_ns = 0;
         players_main(-1);
         ex_main(0xFFFF);
         update_shared_work();
         spu_render(seconds, speed, 0, sfx_off ? (uint16_t)~bgm_channels() : 0, speed);
         return;
     }
+    uint64_t now = SDL_GetTicksNS();
+    double host = last_ns ? (double)(now - last_ns) / 1e9 : seconds;
+    last_ns = now;
+    if (host > 0.1) host = seconds; /* a stall (a state loaded, the window dragged): not made up */
+    seconds = host;
     players_main(0);
     ex_main((uint16_t)~bgm_channels());
-    for (bgm_frames += 1.0 / speed; bgm_frames >= 1; bgm_frames -= 1) {
+    for (bgm_frames += host / frame; bgm_frames >= 1; bgm_frames -= 1) {
         players_main(1);
         ex_main(bgm_channels());
     }

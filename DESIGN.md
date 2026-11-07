@@ -379,7 +379,10 @@ original bytes, and caches the result per region until the region is written.
   the mixer steps the channels (and the music mods) twice as fast, so the output stays at the device rate, an
   octave higher. System Settings > Fast forward music at Normal speed (Sped up is the default) instead runs the
   players whose sequence is a BGM (`music_is_bgm`) and the channels their tracks hold one driver frame per frame
-  of host time, at their own pitch; the game then sees those players advance slower than itself. System Settings >
+  of host time, at their own pitch; the game then sees those players advance slower than itself. The output then
+  goes by the host's clock too (`snd_frame`): the game reaches less than 2x when busy (`ff_hold` drops the time it
+  holds; 1.86x walking in a forest), and output by emulated time fell short of the device's rate, the queue running
+  dry every 0.6 s, which stuttered the music. The other channels still step at 2x. System Settings >
   Fast forward sound at Music only (All is the default) mixes every other channel at zero volume while fast
   forwarding: they still play, so the driver sees them end on time. The music mods play either way. Only 2x: from about 3x the host cannot keep up in busy scenes (a Zenan Bridge battle) and the
   game freezes, its lower priority threads starved, while VBlanks go on.
