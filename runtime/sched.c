@@ -82,6 +82,10 @@ uint16_t video_dispstat(void) {
 
 /* X/Y buttons and lid state as the ARM7 publishes them for PAD_Read. */
 #define BUTTON_XY_BUF 0x027FFFA8u
+/* The VBlank count the ARM7 keeps (OS_GetVBlankCount). The game's play time goes by it: main 0x0202c95c adds the
+ * seconds it advanced (count / 60) since its last call to the play time (seconds; in RAM at 0x02073204 after loading
+ * a save); left at 0, the TIME stayed 00:00. */
+#define VBLANK_COUNT 0x027FFC3Cu
 
 /* Start of a line: VBlank, VCount match. */
 static void video_line_start(uint64_t abs_line) {
@@ -95,6 +99,7 @@ static void video_line_start(uint64_t abs_line) {
         /* PAD_Read ORs this into KEYINPUT: X = bit 10, Y = bit 11, debug = bit 13 (1 = released);
          * bit 15 = lid closed. */
         rt_w16(BUTTON_XY_BUF, (uint16_t)(0x2C00u & ~(((keys & KEY_X) ? 0x400u : 0) | ((keys & KEY_Y) ? 0x800u : 0))));
+        rt_w32(VBLANK_COUNT, rt_r32(VBLANK_COUNT) + 1);
         if (ds & 0x08) irq_raise(IRQ_VBLANK);
         dma_trigger(DMA_START_VBLANK);
     }

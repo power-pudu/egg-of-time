@@ -686,6 +686,10 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
   F2 = layout, F3 = swap screens, F4 = filter, F11 = fullscreen, F5 = save state, F7 = load state, hold Left Shift = fast forward, hold Esc 3 s = quit. Gamepads use button positions (east = A, south = B,
   north = X, west = Y), shoulders = L/R, Start/Back, D-pad or left stick. X/Y reach the game through the ARM7's
   `HW_BUTTON_XY_BUF` (0x027FFFA8, X = bit 10, Y = bit 11), which `PAD_Read` ORs into KEYINPUT.
+- Play time: the ARM7's VBlank count (0x027FFC3C, `OS_GetVBlankCount`) is kept at each VBlank (`video_line_start`).
+  The game's play time goes by it (main 0x0202c95c adds the seconds it advanced, count / 60, since its last call);
+  never counted, the TIME stayed 00:00. A save made from another emulator holds it as seconds (u32, 109816 for
+  30:30), in its slot and the save's summary.
 - Video timing: each scanline steps through start (VBlank/VCount IRQs) -> draw -> HBlank (IRQ, HBlank DMA), with
   VCOUNT reading that line throughout. Lines follow host time, but a step waits while an enabled interrupt is pending
   (IE & IF, also while CPSR/IME mask it) or while the CPU is in an interrupt handler, up to 192 lines behind; further
