@@ -218,7 +218,11 @@ original bytes, and caches the result per region until the region is written.
       132), of the list the scene's draw calls returning to 0x02041a34 (gauges, HP / MP, the menu's hand; found by
       logging cells while fighting). That list's target bracket (4 sprites) and the hand over a target (the next cell
       in the table) stay in the world, with the actors. The HUD is also put back with zoom out off: the view's shift at
-      a room's ends (Fill screen sides off) is not its own. The field's draw (main 0x0204171c) has such a list too, its
+      a room's ends (Fill screen sides off) is not its own. The battle's numbers over the actors ("Miss!", damage) are
+      the other way round: UI objects (the scene's layer-1 list, main 0x0203ce98) that ov003 0x0214a2a2 places at the
+      actor's screen place (main 0x0203cf4c, wrapped: `rt_ws_place_ui` marks the slot), so the view's shift is theirs:
+      their cells are moved by it while one of the slot's entries is drawn (main 0x020345dc, `rt_ws_draw_ui_entry`); at
+      a forest's west end "Miss!" stood ~50 px right of its target. The field's draw (main 0x0204171c) has such a list too, its
       widgets drawn returning to 0x02041800: the hand of a text box's choices, also UI and put back. Under the box,
       the picture has the room (the frame's BG0 / BG1, as camera smoothing's box). UI pixels have no HD sources. The
       world map's labels (year, place name) are in the world's sprites, so they zoom.

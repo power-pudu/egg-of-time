@@ -30,6 +30,11 @@ ov004 02130dbc rt_ws_object_visible wrap
 main 02019fd4 rt_ws_draw_cell wrap
 main 02048098 rt_ws_enter_oam wrap jp=020480c8
 
+# Battle numbers ("Miss!", damage): UI objects placed at an actor's place in screen coordinates, which go with the
+# view's shift at a room's ends: placing a scene's UI object, and drawing one of its entries (runtime/widescreen.c).
+main 0203cf4c rt_ws_place_ui wrap jp=0203cf7c
+main 020345dc rt_ws_draw_ui_entry wrap jp=020345e8
+
 # World map sprites (drawn while their screen X is within -15..255 of the 4:3 view) and objects (on screen while
 # within -16..271; the birds go away outside): in widescreen, the SNES-style compare those tests use is widened by
 # the margins at those calls, and the converted X of the right margin's pieces

@@ -433,6 +433,11 @@ void rt_ws_object_visible(CPU *cpu) {
  *   - in the field, the scene's draw (main 0x0204171c) does the same for its list of 41 widgets before the characters
  *     (the call returning to 0x02041800): the hand of a text box's choices (the elevator's Up / Down / Cancel), placed
  *     in screen coordinates beside the box. They are UI, put back the same way;
+ *   - in a battle, the numbers over the actors ("Miss!", damage) are UI objects drawn with the surface's own view (the
+ *     scene's layer-1 objects, main 0x0203ce98: slots of 0x18 bytes at +0xb70 of the list at *(0x02041bd0), each with
+ *     entries of 0x9c bytes, each entry drawn by main 0x020345dc), placed by main 0x0203cf4c (r1 = the slot) at the
+ *     actor's place in screen coordinates (ov003 0x0214a2a2, from the SNES battle's screen X and Y). They go with the
+ *     world: the view's shift at a room's ends is theirs (`world_slots`; they stood off their actor by it);
  *   - main 0x02048098 (r0 = the sprite's attributes) enters each sprite. While the byte at 0x020fd614 is set, it also
  *     chooses the sprite's priority by comparing its Y with the threshold at 0x020fd618, in the DS screen's rows, so
  *     for the call that threshold is put where the comparison comes out as it would have there. */
@@ -446,6 +451,41 @@ void rt_ws_object_visible(CPU *cpu) {
 #define FIELD_UI_LIST GAME_ADDR(0x02041800u, 0x02041830u)
 
 static int cell_y, cell_ui, cell_hud, cell_known;
+static int cell_world; /* a UI object placed at an actor's place (world_slots) */
+
+/* The scene's layer-1 objects placed at an actor's place, by slot; the entry being drawn is one of theirs. */
+#define UI_OBJECTS GAME_ADDR(0x02041bd0u, 0x02041c00u) /* the list (a pointer to it) */
+#define UI_PLACED_AT_ACTOR 0x0214a2a6u                  /* ov003, return address of the placing call */
+static uint8_t world_slots[0x80];
+static int drawing_world;
+
+static uint32_t ui_slot(uint32_t list, uint32_t slot) { return list + 0xb70 + slot * 0x18; }
+
+void rt_ws_place_ui(CPU *cpu) { /* main 0x0203cf4c (r0 = the list, r1 = the slot, r2 = x, r3 = y) */
+    if (R[1] < sizeof world_slots) world_slots[R[1]] = rt_overlay_resident(3) && (R[14] & ~1u) == UI_PLACED_AT_ACTOR;
+    rt_call_wrapped(cpu, "main", GAME_ADDR(0x0203cf4cu, 0x0203cf7cu));
+}
+
+/* The entry (r0) lies in a slot placed at an actor's place: its entries as main 0x0203ce98 counts them. */
+static int entry_in_world_slot(uint32_t entry) {
+    uint32_t list = rt_r32(UI_OBJECTS);
+    if (!ram_ptr(list)) return 0;
+    for (uint32_t i = 0; i < sizeof world_slots; i++) {
+        if (!world_slots[i]) continue;
+        uint32_t s = ui_slot(list, i), w = rt_r8(s + 0x14), base = rt_r32(s + 8);
+        if (!rt_r8(s) || !w) continue;
+        uint32_t n = ((rt_r16(s + 0xc) + w - 1) / w) * ((rt_r16(s + 0xe) + 7u) / 8);
+        if (entry >= base && entry < base + n * 0x9c) return 1;
+    }
+    return 0;
+}
+
+void rt_ws_draw_ui_entry(CPU *cpu) { /* main 0x020345dc (r0 = the entry) */
+    int was = drawing_world;
+    drawing_world = (next_x || next_y) && entry_in_world_slot(R[0]);
+    rt_call_wrapped(cpu, "main", GAME_ADDR(0x020345dcu, 0x020345e8u));
+    drawing_world = was;
+}
 
 /* In the current call chain, within the scene's draw: the return address into it. */
 static int called_from(const CPU *cpu, uint32_t ret) {
@@ -474,13 +514,14 @@ void rt_ws_draw_cell(CPU *cpu) {
     /* Another surface (the bottom screen's) is none of this. */
     cell_known = cell_ui || (rt_r32(surface) == rt_r32(G2D_VIEW) && rt_r32(surface + 8) == rt_r32(G2D_VIEW + 8));
     cell_hud = !cell_ui && (battle_hud_cell(cpu, R[1], cell_y - field_rows + next_y) || called_from(cpu, FIELD_UI_LIST));
+    cell_world = cell_ui && drawing_world;
     game_draw_cell(cpu);
-    cell_known = 0;
+    cell_known = cell_world = 0;
 }
 
 static void game_enter_oam(CPU *cpu) { rt_call_wrapped(cpu, "main", GAME_ADDR(0x02048098u, 0x020480c8u)); } /* the original */
 void rt_ws_enter_oam(CPU *cpu) {
-    if ((!field_rows && !cell_hud) || !cell_known || cpu->resume_pc) {
+    if ((!field_rows && !cell_hud && !cell_world) || !cell_known || cpu->resume_pc) {
         game_enter_oam(cpu);
         return;
     }
@@ -492,6 +533,11 @@ void rt_ws_enter_oam(CPU *cpu) {
         if (cell_hud) { /* back to where the screen's own view would have put it */
             a0 = (a0 & ~0xFFu) | ((uint32_t)shown & 0xFF);
             a1 = (a1 & ~0x1FFu) | ((a1 + (uint32_t)next_x) & 0x1FF);
+        }
+        if (cell_world) { /* moved with the world's view instead (still in screen coordinates) */
+            shown -= next_y;
+            a0 = (a0 & ~0xFFu) | ((uint32_t)shown & 0xFF);
+            a1 = (a1 & ~0x1FFu) | ((a1 - (uint32_t)next_x) & 0x1FF);
         }
         if (cell_ui || cell_hud) a1 |= WS_OAM_UI;
         else if (real < 0) a1 |= WS_OAM_ABOVE;
