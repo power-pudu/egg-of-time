@@ -109,7 +109,39 @@ void rt_resume_failed(CPU *cpu, uint32_t target) {
     rt_fatal(cpu, "cannot re-enter code at 0x%08x (not a resume point of its function)", target);
 }
 
+/* The code at addr runs in a module translated as one function (rt_dispatch's choice). */
+static int runs_whole_module(uint32_t addr) {
+    addr &= ~1u;
+    for (unsigned i = 0; i < rt_game->module_count; i++) {
+        const RtModule *m = &rt_game->modules[i];
+        if (addr < m->base || addr >= m->end) continue;
+        int k = find_at_or_before(m, addr);
+        if (k < 0) continue;
+        const RtFuncEntry *e = &m->funcs[k];
+        if (m->overlay_id >= 0 && !code_matches(e->addr, e)) continue;
+        if (e->addr == addr) return m->any != NULL;
+        if (m->any) return 1;
+    }
+    return 0;
+}
+
+/* Out of line, so that only these calls have a jmp_buf in their frame. */
+static __attribute__((noinline)) void call_unwindable_here(CPU *cpu, uint32_t target) {
+    jmp_buf jb;
+    cpu->unwind[cpu->ret_depth - 1] = &jb;
+    if (!setjmp(jb)) rt_call_addr(cpu, target);
+    cpu->unwind[cpu->ret_depth - 1] = NULL; /* after a longjmp here, rt_return_mismatch has cut ret_depth back to this call */
+}
+
 void rt_call_addr(CPU *cpu, uint32_t target) {
+    /* Hand-written code (whole modules) may return several frames up at once, as far as its caller: the Mobiclip
+     * decoder's bit reader returns with `mov pc, r6`, a jump within the module that leaves its C frame, and the
+     * decoder's last return then skips those frames. The call into that code needs an unwind point too (the
+     * in-game movies call the decoder from ov008 0x02122358, code dsd analysed: without one, a fatal error). */
+    if (cpu->ret_depth && !cpu->unwind[cpu->ret_depth - 1] && runs_whole_module(target)) {
+        call_unwindable_here(cpu, target);
+        return;
+    }
     if (!rt_dispatch(cpu, target)) rt_fatal(cpu, "call to unknown code address 0x%08x", target);
 }
 

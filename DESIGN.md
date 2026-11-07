@@ -451,7 +451,10 @@ original bytes, and caches the result per region until the region is written.
   player's status once its tag finishes and releases the handle of a player not yet marked active, after which
   all volume changes for that song are dropped (music cut off instead of fading; Game Over music stayed silent).
 - **Video playback:** the Mobiclip `.mods` cutscenes are decoded by the recompiled Mobiclip
-  SDK code itself. That code is ordinary ARM9 code, so it needs no special handling.
+  SDK code itself. That code is ordinary ARM9 code. Its ITCM decoder is hand-written: its bit reader returns with
+  `mov pc, r6`, a jump within the whole module that leaves its C frame, and its last return skips those frames to its
+  caller. So every call into a whole module records an unwind point, also those from analysed code (`rt_call_addr`;
+  the in-game movies call the decoder from ov008 0x02122358, which ended in a fatal error without one).
 - **Movie mods** (`runtime/movie.c`, FFmpeg): `mods/cutscenes/<name>.mp4` next to the executable replaces the ROM's
   `/movie/<name>.mods` while Mods is on (the build creates the folder and copies `res/mods/cutscenes/readme.txt`,
   the list of names). Every cutscene is played by ov017 0x02198d20 (r0 path, r1 per-frame callback; the in-game
