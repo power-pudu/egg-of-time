@@ -143,7 +143,9 @@ static SDL_AtomicInt track_bottom; /* video_set_track_bottom */
 static VideoBottomTop bottom_top, present_bottom_top, shown_bottom_top; /* being drawn, finished, copied by the host */
 static int present_bottom_top_on;
 static uint16_t marker_now[SCREEN_H][SCREEN_W], marker_held[SCREEN_H][SCREEN_W]; /* the map panel's sprites (OPAQUE set where there is one) */
+static uint16_t marker_left[SCREEN_H][SCREEN_W]; /* marker_held as the previous map left it */
 static int marker_seen, marker_gap; /* the map panel had a sprite this frame; frames since it had any */
+static uint32_t marker_map; /* the map marker_held was seen on (panel_map) */
 #define SIDE_COLS 8 /* the screen columns at each side whose layers may repeat into the margins (repeat_bgs) */
 static SDL_AtomicInt wide_margin; /* requested by the display (video_set_wide_margin) */
 static SDL_AtomicInt zoom_margin, zoom_rows; /* video_set_zoom */
@@ -454,6 +456,22 @@ static inline uint16_t oam16(const Engine *e, uint32_t off) {
     uint16_t v;
     memcpy(&v, &rt_oam[e->oam + (off & 0x3FE)], 2);
     return v;
+}
+
+/* The map the panel shows: BG3's entries under it (the room's or era's picture), the same through a fade. */
+static uint32_t panel_map(const Engine *e, uint32_t dispcnt) {
+    uint16_t cnt = reg16(e, 0x0E);
+    uint32_t hofs = reg16(e, 0x1C) & 0x1FF, vofs = reg16(e, 0x1E) & 0x1FF, h = 0x811C9DC5u ^ cnt;
+    uint32_t w = (cnt & 0x4000) ? 512 : 256, ht = (cnt & 0x8000) ? 512 : 256;
+    uint32_t scr = ((cnt >> 8) & 0x1F) * 0x800u + (e->id ? 0 : ((dispcnt >> 27) & 7) * 0x10000u);
+    for (int y = SS_MAP_Y; y < SS_MAP_Y + SS_MAP_H; y += 8) {
+        for (int x = SS_MAP_X; x < SS_MAP_X + SS_MAP_W; x += 8) {
+            uint32_t xx = ((uint32_t)x + hofs) & (w - 1), yy = ((uint32_t)y + vofs) & (ht - 1);
+            uint32_t block = (xx >> 8) + (yy >> 8) * (w >> 8);
+            h = (h ^ vr16(e->bg, e->bg_mask, scr + block * 0x800 + ((yy & 255) >> 3) * 64 + ((xx & 255) >> 3) * 2)) * 0x01000193u;
+        }
+    }
+    return h;
 }
 
 /* Whether bottom_top leaves out what covers the bottom screen's map panel. Buttons cover it (a choice in the text
@@ -1006,6 +1024,18 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
     int m = e->margin, width = SCREEN_W + 2 * m;
     int on_screen = y >= 0 && y < SCREEN_H, wy = SDL_clamp(y, 0, SCREEN_H - 1); /* the line whose windows it has */
+    if (e->track_top && y == SS_MAP_Y) {
+        /* The marker as it last was belongs to its map: entering a house, the world map's pins and marker are gone
+         * from the room's map, which the game shows a few frames without sprites. Read at the panel's first line,
+         * the map as this frame shows it (the game writes it during VBlank, after the frame's start). For a frame or
+         * two the new map still has the old one's sprites (the pins, on the room's map, black): those are not held. */
+        uint32_t map = panel_map(e, dispcnt);
+        if (map != marker_map) {
+            memcpy(marker_left, marker_held, sizeof marker_left);
+            memset(marker_held, 0, sizeof marker_held);
+            marker_map = map;
+        }
+    }
     if (on_screen) for (int i = 0; i < 2; i++) if (e->ref_reload[i]) reload_ref(e, i);
     VideoHd *hd_row = hd_on ? &hd_frame[e->id][FROW(e, y)] : NULL;
     if (hd_row) memset(hd_row, 0, (size_t)width * sizeof *hd_row);
@@ -1350,7 +1380,9 @@ void video_end_frame(void) {
         for (int i = 0; i < 256; i++) bottom_top.palette[i] = pal16(eb->pal + (uint32_t)i * 2) & 0x7FFF;
         bottom_top.bg3_hofs = reg16(eb, 0x1C) & 0x1FF, bottom_top.bg3_vofs = reg16(eb, 0x1E) & 0x1FF;
         present_bottom_top = bottom_top;
-        if (marker_seen && !eb->panel_ui) memcpy(marker_held, marker_now, sizeof marker_held);
+        if (marker_seen && !eb->panel_ui && memcmp(marker_now, marker_left, sizeof marker_now) != 0) {
+            memcpy(marker_held, marker_now, sizeof marker_held);
+        }
     }
     present_dx = frame_dx, present_dy = frame_dy, present_cut = frame_cut;
     present_time = SDL_GetTicksNS();
