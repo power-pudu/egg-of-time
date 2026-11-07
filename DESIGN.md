@@ -229,7 +229,10 @@ original bytes, and caches the result per region until the region is written.
       row up it means 256 less, for the test, `rt_ws_world_sprite` and `render_objs` alike. At 77% a few rows of a
       piece at the top and bottom edges are lost.
     - The room's ends: with Fill screen sides off, a view wider than the 4:3 one (widescreen too, not only zoomed out)
-      stops at them instead of passing them, and a room smaller than the view stays centred in it. The game clamps
+      stops at them instead of passing them, and a room smaller than the view stays centred in it. With it on, the view
+      stops at the ends beyond which the map is the void over the rows shown (`void_beyond_ends`, `void_column`; above
+      and below, `void_row`), with nothing to fill: a forest's west end, tile 0 on every layer where its map
+      wraps round, showed black there. The game clamps
       its camera for 256 x 192 and is left alone (`ws_fill_margins`, `view_shift`, `ws_view_shift`): the picture is
       shown shifted from the camera, by the BG scroll of the BGs on their ring origin (`Engine.view_bgs`; not a
       picture layer such as the prison bridge's sky, not a box's 256-wide map), the G2D view's top-left (OAM X and Y

@@ -257,10 +257,43 @@ static int void_row(uint32_t scroll, uint32_t tilesets, int left, int right, int
     return 1;
 }
 
+/* A metatile column of the void, as void_row, over rows top..bottom. */
+static int void_column(uint32_t scroll, uint32_t tilesets, int top, int bottom, int m) {
+    uint32_t first[4];
+    for (int i = 0; i < 4; i++) {
+        first[i] = room_tile(scroll, tilesets, 0, m * 2 + (i & 1), top * 2 + (i >> 1));
+        if (!tile_black(first[i])) return 0;
+    }
+    for (int r = top; r <= bottom; r++) {
+        for (int i = 0; i < 4; i++) {
+            int c = m * 2 + (i & 1), row = r * 2 + (i >> 1);
+            if (room_tile(scroll, tilesets, 0, c, row) != first[i]) return 0;
+            if (room_tile(scroll, tilesets, 1, c, row) & 0x3FF || room_tile(scroll, tilesets, 2, c, row) & 0x3FF) return 0;
+        }
+    }
+    return 1;
+}
+
+/* The map beyond the room's left and right ends is the void, over the rows the view shows: Fill screen sides has
+ * nothing to show there (a forest's west end: tile 0 on every layer, the map's other end wrapped round). */
+static void void_beyond_ends(int *left_void, int *right_void) {
+    *left_void = *right_void = 0;
+    uint32_t scroll = rt_r32(SCROLL), tilesets = rt_r32(TILESETS);
+    if (!ram_ptr(scroll) || !ram_ptr(tilesets) || room_copy.of != rt_r32(ROOM)) return;
+    int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17), top = rt_r8(scroll + 0x18), bottom = rt_r8(scroll + 0x19);
+    int view = (int16_t)rt_r16(CAMERA + 2);
+    int from = (view - field_rows) >> 4, to = (view + SCREEN_H - 1 + field_rows) >> 4;
+    from = from < top ? top : from, to = to > bottom ? bottom : to;
+    if (right < left || to < from) return;
+    *left_void = void_column(scroll, tilesets, from, to, left - 1);
+    *right_void = void_column(scroll, tilesets, from, to, right + 1);
+}
+
 /* The bounds can hold several rooms one above the other (the prison's towers), with the void between them; the
  * camera never shows the next one on the DS. So the rows end at the void on either side of the view's middle, though
- * never inside the 192 rows the game draws for itself. */
-int ws_room_rows(int *y0, int *y1) {
+ * never inside the 192 rows the game draws for itself. *top_void, *bottom_void (when not NULL): beyond that end of
+ * the rows is the void (between rooms, or the map beyond the bounds). */
+static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
     if (!ss_in_field()) return 0;
     uint32_t scroll = rt_r32(SCROLL), tilesets = rt_r32(TILESETS);
     if (!ram_ptr(scroll) || !ram_ptr(tilesets) || room_copy.of != rt_r32(ROOM)) return 0;
@@ -281,8 +314,12 @@ int ws_room_rows(int *y0, int *y1) {
     *y1 = (to + 1) * 16 - view;
     if (*y0 > 0 && from > top) *y0 = 0;
     if (*y1 < SCREEN_H && to < bottom) *y1 = SCREEN_H;
+    if (top_void) *top_void = from > top || void_row(scroll, tilesets, left, right, top - 1);
+    if (bottom_void) *bottom_void = to < bottom || void_row(scroll, tilesets, left, right, bottom + 1);
     return 1;
 }
+
+int ws_room_rows(int *y0, int *y1) { return room_rows(y0, y1, NULL, NULL); }
 
 int ws_sprite_origin(void) { /* the view as widened here, recognised by its shape (also after a state load) */
     uint32_t w = rt_r32(G2D_VIEW + 8);
@@ -618,13 +655,14 @@ static void fill_field_margins(int margin, int rows) {
     }
 }
 
-/* How far a view of size + 2 * pad, around a camera's 0..size-1, moves to stay within the room's lo..hi-1. */
-static int view_shift(int lo, int hi, int size, int pad) {
-    if (hi - lo <= size + 2 * pad) return (lo + hi - size) >> 1;
-    return lo + pad > 0 ? lo + pad : hi - size - pad < 0 ? hi - size - pad : 0;
+/* How far a view of size + 2 * pad, around a camera's 0..size-1, moves to stay within the room's lo..hi-1, at the
+ * ends it stops at (at_lo, at_hi); a room smaller than the view, stopping at both, is centred in it. */
+static int view_shift(int lo, int hi, int size, int pad, int at_lo, int at_hi) {
+    if (at_lo && at_hi && hi - lo <= size + 2 * pad) return (lo + hi - size) >> 1;
+    return at_lo && lo + pad > 0 ? lo + pad : at_hi && hi - size - pad < 0 ? hi - size - pad : 0;
 }
 
-void ws_fill_margins(int margin, int rows, int limit, int limit_rows) {
+void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) {
     world_margin = margin > 0 && ss_in_overworld() ? margin : 0;
     world_rows = world_margin ? rows : 0;
     if (world_margin) fill_world_margins(margin, rows);
@@ -644,8 +682,13 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows) {
     next_x = next_y = 0;
     int lo, hi;
     if (field && limit) {
-        if (ws_room_span(&lo, &hi)) next_x = view_shift(lo, hi, SCREEN_W, limit);
-        if (limit_rows && ws_room_rows(&lo, &hi)) next_y = view_shift(lo, hi, SCREEN_H, limit_rows);
+        int at_lo = 1, at_hi = 1;
+        if (fill) void_beyond_ends(&at_lo, &at_hi); /* Fill screen sides: only where it has nothing to show */
+        if (ws_room_span(&lo, &hi)) next_x = view_shift(lo, hi, SCREEN_W, limit, at_lo, at_hi);
+        if (limit_rows && room_rows(&lo, &hi, &at_lo, &at_hi)) {
+            if (!fill) at_lo = at_hi = 1;
+            next_y = view_shift(lo, hi, SCREEN_H, limit_rows, at_lo, at_hi);
+        }
     }
     set_sprite_view(field_margin, field_rows, next_x, next_y);
 }
