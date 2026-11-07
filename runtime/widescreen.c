@@ -393,6 +393,9 @@ void rt_ws_object_visible(CPU *cpu) {
  *     of the panel, at the top of the screen or the bottom. They become UI too, put back where the screen's own view
  *     would have them: the shift of the view at a room's ends is not theirs, with or without zoom out. The same list's
  *     other cells stay in the world: the target's bracket (4 sprites) and the hand over a target, the cell after it;
+ *   - in the field, the scene's draw (main 0x0204171c) does the same for its list of 41 widgets before the characters
+ *     (the call returning to 0x02041800): the hand of a text box's choices (the elevator's Up / Down / Cancel), placed
+ *     in screen coordinates beside the box. They are UI, put back the same way;
  *   - main 0x02048098 (r0 = the sprite's attributes) enters each sprite. While the byte at 0x020fd614 is set, it also
  *     chooses the sprite's priority by comparing its Y with the threshold at 0x020fd618, in the DS screen's rows, so
  *     for the call that threshold is put where the comparison comes out as it would have there. */
@@ -403,6 +406,7 @@ void rt_ws_object_visible(CPU *cpu) {
 
 #define BATTLE_HUD_LIST GAME_ADDR(0x02041a34u, 0x02041a64u)
 #define BATTLE_HUD_TOP 132 /* the DS screen's row */
+#define FIELD_UI_LIST GAME_ADDR(0x02041800u, 0x02041830u)
 
 static int cell_y, cell_ui, cell_hud, cell_known;
 
@@ -432,7 +436,7 @@ void rt_ws_draw_cell(CPU *cpu) {
     cell_ui = rt_r32(surface + 8) == FX(1024);
     /* Another surface (the bottom screen's) is none of this. */
     cell_known = cell_ui || (rt_r32(surface) == rt_r32(G2D_VIEW) && rt_r32(surface + 8) == rt_r32(G2D_VIEW + 8));
-    cell_hud = !cell_ui && battle_hud_cell(cpu, R[1], cell_y - field_rows + next_y);
+    cell_hud = !cell_ui && (battle_hud_cell(cpu, R[1], cell_y - field_rows + next_y) || called_from(cpu, FIELD_UI_LIST));
     game_draw_cell(cpu);
     cell_known = 0;
 }
