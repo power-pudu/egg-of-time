@@ -190,9 +190,9 @@ original bytes, and caches the result per region until the region is written.
     tile seamlessly; in the race they repeat into the margins (`repeat_256`) instead of staying empty. Sprites
     (bikes, HUD) keep their 4:3 place, centred: logged OAM showed the game keeps Crono's bike at X >= 5 and
     Johnny well inside the screen, so no cull needed widening.
-  - **Zoom out** (System Settings, Off / 85% / 77%; `video_set_zoom`): the field and the world map draw more rows and
-    columns into the same place in the window: 226 or 248 rows at the aspect ratio's shape, in the layouts that show
-    the wide picture; other scenes keep 192 rows.
+  - **Zoom out** (System Settings, Off / 90% / 85% / 77%; `video_set_zoom`): the field and the world map draw more rows and
+    columns into the same place in the window: 214 (89.7%, the nearest to 90%), 226 or 248 rows at the aspect ratio's
+    shape, in the layouts that show the wide picture; other scenes keep 192 rows.
     - Limits: BG maps are 32 tile rows tall, and a picture at a fine scroll shows one tile row more than rows / 8, so
       248 rows (77%) is the most that does not show a tile row at both edges (256 would be 75%). They are 512 wide, so
       a ratio beyond 496 columns (21:9 at 212 rows) zooms out less.

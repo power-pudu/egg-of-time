@@ -75,11 +75,11 @@ static const char *const res_names[RES_MAX + 1] = {"auto", "1", "2", "3", "4", "
 static const char *const aspect_names[] = {"original", "5x3", "16x9", "ultrawide", "fit"};
 static const char *const aspect_labels[] = {"Original (4:3)", "5:3", "16:9", "Ultrawide (21:9)", "Fit screen"};
 static const float aspect_ratios[] = {4.0f / 3, 5.0f / 3, 16.0f / 9, 21.0f / 9, 0}; /* 0: the window's */
-static const char *const zoom_names[] = {"off", "85", "77"};
-static const char *const zoom_labels[] = {"Off", "85%", "77%"};
+static const char *const zoom_names[] = {"off", "90", "85", "77"};
+static const char *const zoom_labels[] = {"Off", "90%", "85%", "77%"};
 static const char *const zoom_ui_names[] = {"smaller", "original"};
 static const char *const zoom_ui_labels[] = {"Smaller", "Original size"};
-static const int zoom_totals[] = {0, 226, VIDEO_ROWS_MAX}; /* rows of the picture (192 at the original scale) */
+static const int zoom_totals[] = {0, 214, 226, VIDEO_ROWS_MAX}; /* rows of the picture (192 at the original scale; 214: 89.7%) */
 static const char *const fps_names[] = {"30", "60", "90", "120", "144", "unlimited"};
 static const char *const fps_labels[] = {"30", "60", "90", "120", "144", "Unlimited"};
 static const int fps_values[] = {30, 60, 90, 120, 144, 0};
@@ -119,7 +119,7 @@ static Setting settings[SET_COUNT] = {
     [SET_RESOLUTION] = {"resolution", "Internal resolution", RES_MAX + 1, 0, res_names, NULL},
     [SET_ASPECT] = {"aspect", "Aspect ratio", 5, ASPECT_16_9, aspect_names, aspect_labels},
     /* Zoom out: more rows in the same place, in the field and the world map (video.c). */
-    [SET_ZOOM] = {"zoomout", "Zoom out", 3, 0, zoom_names, zoom_labels},
+    [SET_ZOOM] = {"zoomout", "Zoom out", 4, 0, zoom_names, zoom_labels},
     /* Zoomed out, the text boxes and the battle HUD: zoomed out too, or at their original size (draw_ui). */
     [SET_ZOOM_UI] = {"zoomtext", "Zoomed out text", 2, 0, zoom_ui_names, zoom_ui_labels},
     /* Widescreen in rooms narrower than the view: No leaves the room as it is, black beside it (video.c). */
@@ -1169,7 +1169,7 @@ const char *display_shader_path(void) { return SETTING(SET_SHADER) ? settings[SE
 
 const char *display_setting_label(int id, int v) {
     if (id == SET_SHADER) return v ? shader_label(v - 1) : "Off";
-    if (id == SET_ZOOM && v == 2 && camera_smoothing()) return "80%"; /* the guard rows take 8 of its 248 (zoom_view) */
+    if (id == SET_ZOOM && v == 3 && camera_smoothing()) return "80%"; /* the guard rows take 8 of its 248 (zoom_view) */
     if (id != SET_RESOLUTION) return settings[id].labels[v];
     if (v == 0) return "Auto";
     static char buf[32];
