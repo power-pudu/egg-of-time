@@ -37,6 +37,13 @@ int ws_camera(int *x, int *y);
 /* The window positions of each line of the coming frame (WIN0H | WIN1H << 16), when the game's software HDMA
  * sets them line by line (battle effects); else 0. */
 int ws_window_lines(uint32_t h[192]);
+/* Writes what the game's software HDMA writes before line `line` (registers, palette entries), keeping what was
+ * there in *saved for ws_hdma_restore: to draw rows beyond the screen as that line. */
+enum { WS_HDMA_MAX = 32, WS_HDMA_UNITS = 8 };
+typedef struct WsHdmaWrite { uint32_t dst; int halves; uint16_t old[WS_HDMA_UNITS]; } WsHdmaWrite;
+typedef struct WsHdmaSaved { int n; WsHdmaWrite w[WS_HDMA_MAX]; } WsHdmaSaved;
+void ws_hdma_line(int line, WsHdmaSaved *saved);
+void ws_hdma_restore(const WsHdmaSaved *saved);
 /* Save states: the copy of the room map battles use (an optional block). */
 typedef struct RtStateIO RtStateIO;
 void ws_state(RtStateIO *s);

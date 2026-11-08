@@ -104,9 +104,10 @@ typedef struct Engine {
     int ref_reload[2];
     int margin;     /* columns drawn beyond each side of the screen (widescreen), fixed for a frame */
     int rows;       /* zoom out: rows drawn above and below the screen, fixed for a frame; those above with line 0's
-                     * registers, those below with line 191's. Rows are numbered from the screen's top (-rows..), and
-                     * the buffers hold them from their first (FROW). The text box and the sprites drawn in screen
-                     * coordinates go to ui_frame (192 rows) to be shown at the original scale. */
+                     * registers, those below with line 191's (but see effect_rows). Rows are numbered from the screen's
+                     * top (-rows..), and the buffers hold them from their first (FROW). The text box and the sprites
+                     * drawn in screen coordinates go to ui_frame (192 rows) to be shown at the original scale. */
+    int band_top, band_rows; /* effect_rows: the lines a battle effect is on, stretched over the picture's rows */
     int obj_rows;   /* sprite Y counts from this many rows above the screen (the widened view, widescreen.c) */
     int room_y0, room_y1; /* with room_clip: its rows */
     int obj_origin; /* sprite X counts from this many columns left of the screen (widescreen.c) */
@@ -922,6 +923,40 @@ static void window_margins(void) {
     fit_rays(1, below_menu);
 }
 
+/* Zoom out while a battle effect sets the windows line by line: the game blanks the effect on the lines under the
+ * menu at the top and the text box at the bottom (its table empty there, but for a few leftover lines at the
+ * screen's edges), and the rows above and below the screen, drawn as lines 0 and 191, showed none of it (an enemy's
+ * Rainbow Storm: the starry BG3 coloured line by line through palette entries, under BG0's black bubbles, scrolled
+ * line by line, stopped at the 4:3 picture's top and bottom). The effect is made for its lines alone (its tables,
+ * its map's rows), and repeated beyond them it looked wrong, so the band is stretched over all the picture's rows,
+ * the screen's included: each row is drawn as the band's line at the same height (its windows, the rows of the BGs
+ * not the room's, render_engine_line) with what the game's software HDMA writes for that line (ws_hdma_line,
+ * video_render_line); sprites and the room's BGs (the stars too, coloured by the line's palette) keep their rows. */
+enum { BAND_MIN = 48 };
+static void effect_rows(Engine *e) {
+    int x[2], top = win_top, bottom = SCREEN_H - 1;
+#define WIN_EMPTY(y) (!win_span(y, 0, &x[0], &x[1]) && !win_span(y, 1, &x[0], &x[1]))
+    for (int y = SCREEN_H - 1; y >= SCREEN_H - WIN_LEFTOVERS_MAX; y--) {
+        if (WIN_EMPTY(y)) {
+            bottom = y;
+            break;
+        }
+    }
+    while (top < SCREEN_H && WIN_EMPTY(top)) top++;
+    while (bottom >= top && WIN_EMPTY(bottom)) bottom--;
+#undef WIN_EMPTY
+    /* A band of a few lines (as the effect starts) stretched would streak the rows: the picture stays as it is. */
+    if (bottom - top + 1 < BAND_MIN) return;
+    e->band_top = top, e->band_rows = bottom - top + 1;
+}
+
+/* The line row y is drawn as: the effect's band's line at the same height in the picture (effect_rows), else
+ * itself, or the screen's nearest line beyond it. */
+static int row_line(const Engine *e, int y) {
+    if (!e->band_rows) return SDL_clamp(y, 0, SCREEN_H - 1);
+    return e->band_top + (y + e->rows) * e->band_rows / (SCREEN_H + 2 * e->rows);
+}
+
 /* Screen column sx (wx: it clamped to the screen) in a window with positions h (ext: its span carried into the
  * margins, or NULL). With ext, a window cut at the right side also takes the screen's last column. */
 static inline int in_window(int sx, int wx, uint16_t h, const int16_t *ext) {
@@ -954,6 +989,7 @@ static void engine_frame_start(Engine *e) {
             e->ref_y[i] -= e->rows * (int16_t)reg16(e, 0x26 + 0x10 * i);
         }
         if (e->rows) memset(ui_frame, 0, sizeof ui_frame);
+        e->band_rows = 0;
         e->party = e->sliding = e->still_bgs = 0;
         e->view_x = e->view_y = e->view_bgs = e->obj_dx = e->obj_dy = 0;
         e->box_top = SCREEN_H;
@@ -977,6 +1013,7 @@ static void engine_frame_start(Engine *e) {
             ws_sprite_lag(&e->obj_dx, &e->obj_dy);
             win_ext_on = e->margin && ws_window_lines(win_lines);
             if (win_ext_on) window_margins();
+            if (win_ext_on && e->rows) effect_rows(e);
             e->mirror_bg = 0;
             for (int bg = 0; bg < 4 && win_ext_on; bg++) e->mirror_bg |= (uint8_t)(picture_256(e, bg, dispcnt) << bg);
             if (e->margin) e->mirror_bg |= (uint8_t)ws_picture_bgs();
@@ -1024,7 +1061,8 @@ static void engine_frame_start(Engine *e) {
 static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
     int m = e->margin, width = SCREEN_W + 2 * m;
-    int on_screen = y >= 0 && y < SCREEN_H, wy = SDL_clamp(y, 0, SCREEN_H - 1); /* the line whose windows it has */
+    int on_screen = y >= 0 && y < SCREEN_H, wy = row_line(e, y); /* the line whose windows it has */
+    int by = e->band_rows ? wy : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
     if (e->track_top && y == SS_MAP_Y) {
         /* The marker as it last was belongs to its map: entering a house, the world map's pins and marker are gone
          * from the room's map, which the game shows a few frames without sprites. Read at the panel's first line,
@@ -1069,18 +1107,23 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         memset(&ol, 0, sizeof ol);
         uint32_t mode = dispcnt & 7;
         int enabled[4] = {0};
+        /* Widescreen, beyond the room (room_clip): BGs that are not the room's (its rings are 512x256 text maps, a
+         * box's 256 wide), such as a battle effect on a 512x512 map (BG0's bubbles in an enemy's Rainbow Storm over
+         * the starry one-screen room), go on as drawn. */
+        int own_bgs = 0;
         for (int bg = 0; bg < 4; bg++) {
             if (!(dispcnt & (0x100u << bg))) continue;
             if (bg == 0 && e->id == 0 && (dispcnt & 8)) continue; /* 3D layer: not rendered yet */
             enabled[bg] = 1;
             int affine = (bg == 3 && mode >= 1 && mode <= 5) || (bg == 2 && (mode == 2 || mode == 4 || mode == 5));
+            if (affine || (reg16(e, 0x08 + 2 * bg) & 0xC000) == 0xC000) own_bgs |= 1 << bg;
             if (mode == 6 && e->id == 0) {
                 if (bg == 2) bg_affine(e, 2, dispcnt, 1, bgline[2]);
                 else if (bg != 0) enabled[bg] = 0;
                 continue;
             }
             if (affine) bg_affine(e, bg, dispcnt, 0, bgline[bg]);
-            else bg_text(e, bg, y, dispcnt, bgline[bg], hd_on ? &bghd[bg] : NULL);
+            else bg_text(e, bg, (own_bgs >> bg & 1) ? by : y, dispcnt, bgline[bg], hd_on ? &bghd[bg] : NULL);
         }
         /* Camera smoothing: the text box stays still while the field slides. On its lines (BG0/BG1 switched to
          * one-screen maps, margin_bg) the box's pixels go to the party layer, and the slid picture shows the room
@@ -1155,7 +1198,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             int wx = SDL_clamp(x - m, 0, SCREEN_W - 1), side = x - m != wx || (!pass && box) || !on_screen;
             int still = 0; /* a text box pixel (the party layer keeps it) */
             int beyond = pass != 2 && e->room_clip && (x - m < e->room_x0 || x - m >= e->room_x1 || (e->rows && (y < e->room_y0 || y >= e->room_y1)));
-            int bgs = beyond && e->repeat_bgs ? e->repeat_bgs : 0xF; /* the BGs shown in this column */
+            int bgs = beyond ? e->repeat_bgs | own_bgs : 0xF; /* the BGs shown in this column */
             for (int bg = 0; bg < 2; bg++) still |= (pass == 2 || !e->rows) && (box >> bg & 1) && x - m == wx && (bgline[bg][x] & OPAQUE);
             const int *pr = prio[side];
             uint16_t bldcnt = bld[side][0], bldalpha = bld[side][1];
@@ -1228,14 +1271,16 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 if (layer[1] < 4 && blended) e->shown_now |= (uint8_t)(1 << layer[1]);
             }
             if (pass && e->sel_shift) shifted_sprite[y * VIDEO_LINE_MAX + x] = (uint8_t)sprite_shows;
-            if (beyond && !e->repeat_bgs) dst[x] = pass ? 0 : 0xFF000000u;
+            /* Beyond the room with no layer repeating, black but where a BG of its own is on top. */
+            int cut = beyond && !e->repeat_bgs && !(layer[0] < 4 && (own_bgs >> layer[0] & 1));
+            if (cut) dst[x] = pass ? 0 : 0xFF000000u;
             /* The still layer: a pixel of a still BG or the backdrop on top, not blended with a layer that slides. */
-            int to_still = !pass && e->still_bgs && !(beyond && !e->repeat_bgs) && still_layer(e, layer[0]) &&
+            int to_still = !pass && e->still_bgs && !cut && still_layer(e, layer[0]) &&
                            (!blended || still_layer(e, layer[1]));
             if (to_still) still_frame[FROW(e, y) + x] = dst[x], dst[x] = 0;
             if (hd) {
                 const HdLine *h = layer[0] == 4 ? &o->hd : layer[0] < 4 && src[layer[0]] == bgline[layer[0]] ? &bghd[layer[0]] : NULL;
-                uint32_t s = h && (dst[x] || to_still) && !(beyond && !e->repeat_bgs) ? h->src[x] : 0;
+                uint32_t s = h && (dst[x] || to_still) && !cut ? h->src[x] : 0;
                 VideoHd r = s ? (VideoHd){s, h->pal[x], (uint8_t)weight, added, found > 1 ? col[1] : backdrop} : (VideoHd){0};
                 if (to_still) hd_still[FROW(e, y) + x] = r, hd[x] = (VideoHd){0};
                 else hd[x] = r;
@@ -1294,8 +1339,14 @@ void video_render_line(int line) {
     for (int i = 0; i < 2; i++) {
         Engine *e = &engines[i];
         if (line == 0) engine_frame_start(e);
-        for (int y = line ? line : -e->rows; y <= line + (line == SCREEN_H - 1 ? e->rows : 0); y++) {
+        int y0 = line ? line : -e->rows, y1 = line + (line == SCREEN_H - 1 ? e->rows : 0);
+        for (int y = y0; y <= y1; y++) {
+            /* A row drawn as another line (effect_rows): with what the game's HDMA writes for that line. */
+            int as = row_line(e, y);
+            static WsHdmaSaved saved;
+            if (as != line) ws_hdma_line(as, &saved);
             render_engine_line(e, y, &frame[i][FROW(e, y)]);
+            if (as != line) ws_hdma_restore(&saved);
         }
     }
 }

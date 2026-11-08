@@ -142,6 +142,10 @@ original bytes, and caches the result per region until the region is written.
     columns the frame before, on top or blended under the top, text box lines left out): at location 0x71 (Marle
     back, beside the gate) BG0 holds bubbles drifting at priority 3 under the opaque room, seen only through the
     time gate's hole mid-screen, and they had filled the sides.
+    BGs that are not the room's (its rings are 512x256 text maps) go on as drawn beyond the room, with Fill screen
+    sides on or off: a battle effect on a 512x512 map (an enemy's "Rainbow Storm: Poison Cloud" over the starry
+    one-screen room: BG0's black bubbles, scrolled line by line, over the stars of BG3 coloured line by line through
+    palette entries 0xc1-0xc3) had stopped at the 4:3 picture's sides.
   - Rooms whose bounds hold more than the room (`narrow_rooms`, by location id, the halfword at 0x020720a0: 0x1d0
     the End of Time, 0x1d9 the parked Epoch, 0x1b0 the Epoch in flight): the parked Epoch's bounds are metatiles
     0-31, but its map's right half holds a second Epoch (its wing showed in the right margin), so the room ends at
@@ -209,6 +213,16 @@ original bytes, and caches the result per region until the region is written.
       sprites without rotation do not use: `WS_OAM_ABOVE`. That entry also picks a priority from Y against a threshold
       (0x020fd618, when 0x020fd614 is set), in DS rows, so the threshold is moved for the call. World map sprites
       are not marked: Y from `SCREEN_H + rows` up counts as above.
+    - Battle effects drawn line by line (windows from the game's software HDMA, `ws_window_lines`): the game blanks
+      them on the lines under the menu and the text box, so the rows above and below, drawn as lines 0 and 191,
+      showed none of them (Rainbow Storm's clouds stopped at the 4:3 picture's top and bottom). An effect is made for
+      its lines alone (per-line scroll, palette entries and windows; its map's other rows empty), and repeated beyond
+      them it looked wrong, so the band of lines it is on is stretched over the whole picture, the screen's rows and
+      those under the menu and the text box included (`effect_rows`, at least 48 lines; a few at its start streaked):
+      each row is drawn as the band's line at the same height, its windows and the rows of the BGs that are not the
+      room's (the effect's 512x512 map), with what the HDMA writes for that line put in place for the row and then
+      put back (`ws_hdma_line`); sprites and the room's BGs keep their own rows (the stars, stretched with the rest,
+      had streaked; their colours come with the line's palette entries).
     - UI: the text box and sprites in screen coordinates zoom out with the rest, on the screen's own rows in the
       middle of the picture, but are not slid by camera smoothing: `ui_frame`, 192 rows, composed in a third pass
       (`draw_ui`). Kept at the original scale over the whole picture, as they first were, their pixels fell between

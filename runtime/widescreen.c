@@ -772,3 +772,30 @@ int ws_window_lines(uint32_t h[SCREEN_H]) {
     }
     return 0;
 }
+
+void ws_hdma_line(int line, WsHdmaSaved *saved) {
+    saved->n = 0;
+    uint32_t end = rt_r32(HDMA_END);
+    if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * WS_HDMA_MAX) return;
+    for (uint32_t c = HDMA_CHANNELS; c < end; c += 0x28) {
+        uint32_t flags = rt_r32(c), src = rt_r32(c + 4), dst = rt_r32(c + 8), first = rt_r32(c + 0x20);
+        uint32_t halves = rt_r32(c + 0x1c) * (flags & 2 ? 2 : 1);
+        if (!(flags & 1) || !ram_ptr(src) || dst >> 24 < 4 || dst >> 24 > 5 || !halves ||
+            halves > WS_HDMA_UNITS || (uint32_t)line < first || (uint32_t)line > rt_r32(c + 0x24))
+            continue;
+        WsHdmaWrite *w = &saved->w[saved->n++];
+        w->dst = dst, w->halves = (int)halves;
+        uint32_t from = flags & 8 ? src : src + rt_r32(c + 0x14) * ((uint32_t)line - first);
+        for (uint32_t i = 0; i < halves; i++) {
+            w->old[i] = (uint16_t)rt_r16(dst + 2 * i);
+            rt_w16(dst + 2 * i, rt_r16(from + 2 * i));
+        }
+    }
+}
+
+void ws_hdma_restore(const WsHdmaSaved *saved) {
+    for (int k = saved->n - 1; k >= 0; k--) {
+        const WsHdmaWrite *w = &saved->w[k];
+        for (int i = 0; i < w->halves; i++) rt_w16(w->dst + 2 * (uint32_t)i, w->old[i]);
+    }
+}
