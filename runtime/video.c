@@ -114,6 +114,9 @@ typedef struct Engine {
     float ring_width;        /* the ring's width when both its circles last showed (0: none yet) */
     int ring_keep;           /* the frames its centre still counts for, the ring having shown */
     uint8_t ring_fits;       /* by frame, the last first: the windows fit a ring */
+    uint8_t ring_wins;       /* the windows the ring stands for (bit per window): both, or WIN0 alone where WIN1 shows
+                              * other layers (Magus's portal: WIN0 the disc, WIN1 a frame with rounded corners) */
+    uint8_t hdma_bgs;        /* widescreen, this frame: BGs scrolled line by line by the HDMA (ws_hdma_bgs) */
     int obj_rows;   /* sprite Y counts from this many rows above the screen (the widened view, widescreen.c) */
     int room_y0, room_y1; /* with room_clip: its rows */
     int obj_origin; /* sprite X counts from this many columns left of the screen (widescreen.c) */
@@ -1052,6 +1055,7 @@ static int ring_matches(const Engine *e, int top, int bottom) {
     for (int y = top; y <= bottom; y++) {
         uint8_t row[SCREEN_W] = {0};
         for (int w = 0; w < 2; w++) {
+            if (!(e->ring_wins >> w & 1)) continue;
             int k = win_span(y, w, &x[0], &x[1]);
             if (k < 0) return 0;
             for (int c = SDL_max(x[0], 0); k && c < x[1]; c++) row[c] |= 1;
@@ -1099,7 +1103,7 @@ static int fit_ring(Engine *e, int top, int bottom) {
     int n = 0, x[2];
     for (int y = top; y <= bottom; y++) {
         for (int w = 0; w < 2; w++) {
-            if (win_span(y, w, &x[0], &x[1]) <= 0) continue;
+            if (!(e->ring_wins >> w & 1) || win_span(y, w, &x[0], &x[1]) <= 0) continue;
             for (int s = 0; s < 2; s++) if (x[s] > 0 && x[s] < SCREEN_W) px[n] = (float)x[s], py[n] = (float)y, right[n] = !s, n++;
         }
     }
@@ -1167,7 +1171,11 @@ static void effect_rows(Engine *e) {
 #undef WIN_EMPTY
     if (top > bottom) return;
     /* A ring fits two frames running: Rainbow Storm's clouds' oval fits one now and then. */
-    if ((reg16(e, 0x48) & 0x3F) == (reg16(e, 0x48) >> 8 & 0x3F) && fit_ring(e, top, bottom) && (e->ring_fits |= 1, e->ring_fits & 2 || (e->ring = 0))) {
+    /* The ring is both windows where they show the same layers (an enemy's Rainbow Beam), else WIN0 alone. */
+    uint8_t wins = (reg16(e, 0x48) & 0x3F) == (reg16(e, 0x48) >> 8 & 0x3F) ? 3 : 1;
+    if (wins != e->ring_wins) e->ring_keep = 0, e->ring_width = 0;
+    e->ring_wins = wins;
+    if (fit_ring(e, top, bottom) && (e->ring_fits |= 1, e->ring_fits & 2 || (e->ring = 0))) {
         e->band_top = top, e->band_rows = bottom - top + 1;
         e->band_period = ws_hdma_period(top, bottom);
         return;
@@ -1253,6 +1261,7 @@ static void engine_frame_start(Engine *e) {
             win_ext_on = e->margin && ws_window_lines(win_lines);
             if (win_ext_on) window_margins();
             if (win_ext_on && e->rows) effect_rows(e);
+            e->hdma_bgs = e->margin ? (uint8_t)ws_hdma_bgs() : 0;
             e->mirror_bg = 0;
             for (int bg = 0; bg < 4 && win_ext_on; bg++) e->mirror_bg |= (uint8_t)(picture_256(e, bg, dispcnt) << bg);
             if (e->margin) e->mirror_bg |= (uint8_t)ws_picture_bgs();
@@ -1348,14 +1357,15 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         int enabled[4] = {0};
         /* Widescreen, beyond the room (room_clip): BGs that are not the room's (its rings are 512x256 text maps, a
          * box's 256 wide), such as a battle effect on a 512x512 map (BG0's bubbles in an enemy's Rainbow Storm over
-         * the starry one-screen room), go on as drawn. */
+         * the starry one-screen room), or one the HDMA scrolls line by line (hdma_bgs: the rippling BG0 in Magus's
+         * portal), go on as drawn. */
         int own_bgs = 0;
         for (int bg = 0; bg < 4; bg++) {
             if (!(dispcnt & (0x100u << bg))) continue;
             if (bg == 0 && e->id == 0 && (dispcnt & 8)) continue; /* 3D layer: not rendered yet */
             enabled[bg] = 1;
             int affine = (bg == 3 && mode >= 1 && mode <= 5) || (bg == 2 && (mode == 2 || mode == 4 || mode == 5));
-            if (affine || (reg16(e, 0x08 + 2 * bg) & 0xC000) == 0xC000) own_bgs |= 1 << bg;
+            if (affine || (reg16(e, 0x08 + 2 * bg) & 0xC000) == 0xC000 || (e->hdma_bgs >> bg & 1)) own_bgs |= 1 << bg;
             e->solid_bgs = (uint8_t)(e->solid_bgs & ~(1u << bg));
             if (m && !affine && solid_256(e, bg, dispcnt)) own_bgs |= 1 << bg, e->solid_bgs |= (uint8_t)(1u << bg);
             if (mode == 6 && e->id == 0) {
@@ -1450,7 +1460,10 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             if (e->ring && (ring_row || x - m != wx)) {
                 int in = 0;
                 for (int k = 0; k < ring_n; k++) in |= x - m >= ring_sp[k][0] && x - m < ring_sp[k][1];
-                ctl = in ? winin & 0x3F : winobj && o->win[x] ? (winout >> 8) & 0x3F : winout & 0x3F;
+                ctl = in ? winin & 0x3F
+                         : e->ring_wins == 1 && in_w1y && in_window(x - m, wx, w1h, ext1) ? (winin >> 8) & 0x3F
+                         : winobj && o->win[x] ? (winout >> 8) & 0x3F
+                                               : winout & 0x3F;
             } else if (win0 || win1 || winobj) {
                 if (in_w0y && in_window(x - m, wx, w0h, ext0)) ctl = winin & 0x3F;
                 else if (in_w1y && in_window(x - m, wx, w1h, ext1)) ctl = (winin >> 8) & 0x3F;

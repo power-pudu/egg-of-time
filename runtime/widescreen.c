@@ -775,22 +775,44 @@ void ws_sprite_lag(int *x, int *y) {
  * *(0x02057944): +0 flags (bit 0 on, bit 1 words, bit 3 no source step per line), +4 source, +8 destination,
  * +0x14 source step per line, +0x1c units, +0x20 / +0x24 first / last line. Before each line it copies the line's
  * entry to the destination. Battle effects drawn with the windows (the rays of Lightning II...) use one with
- * WIN0H/WIN1H as one word a line. */
+ * WIN0H/WIN1H as one word a line; the portal Magus opens in his castle one halfword channel each (WIN0H: the
+ * growing disc, WIN1H: a frame with rounded corners), with BG0's scroll set line by line (the disc's ripples). */
 #define HDMA_CHANNELS 0x027e0068u
 #define HDMA_END GAME_ADDR(0x02057944u, 0x02057974u)
 
 int ws_window_lines(uint32_t h[SCREEN_H]) {
     uint32_t end = rt_r32(HDMA_END);
     if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * 32) return 0;
+    int found = 0; /* bit per window set by a halfword channel */
     for (uint32_t c = HDMA_CHANNELS; c < end; c += 0x28) {
-        uint32_t flags = rt_r32(c), src = rt_r32(c + 4);
-        if ((flags & 0xB) != 3 || rt_r32(c + 8) != 0x04000040u || rt_r32(c + 0x14) != 4 || rt_r32(c + 0x1c) != 1 ||
-            rt_r32(c + 0x20) != 0 || rt_r32(c + 0x24) < SCREEN_H - 1 || !ram_ptr(src))
+        uint32_t flags = rt_r32(c), src = rt_r32(c + 4), dst = rt_r32(c + 8);
+        if (!(flags & 1) || (flags & 8) || rt_r32(c + 0x1c) != 1 || rt_r32(c + 0x20) != 0 || rt_r32(c + 0x24) < SCREEN_H - 1 ||
+            !ram_ptr(src))
             continue;
-        for (int y = 0; y < SCREEN_H; y++) h[y] = rt_r32(src + 4u * (uint32_t)y);
-        return 1;
+        if ((flags & 2) && dst == 0x04000040u && rt_r32(c + 0x14) == 4) {
+            for (int y = 0; y < SCREEN_H; y++) h[y] = rt_r32(src + 4u * (uint32_t)y);
+            return 1;
+        }
+        if (!(flags & 2) && (dst == 0x04000040u || dst == 0x04000042u) && rt_r32(c + 0x14) == 2) {
+            int w = dst == 0x04000042u;
+            if (!found) for (int y = 0; y < SCREEN_H; y++) h[y] = io_get16(0x40) | (uint32_t)io_get16(0x42) << 16;
+            for (int y = 0; y < SCREEN_H; y++) h[y] = (h[y] & (0xFFFF0000u >> 16 * w)) | rt_r16(src + 2u * (uint32_t)y) << 16 * w;
+            found |= 1 << w;
+        }
     }
-    return 0;
+    return found != 0;
+}
+
+/* The BGs (bit per BG) whose scroll the HDMA sets line by line: an effect's picture, not a room layer. */
+int ws_hdma_bgs(void) {
+    uint32_t end = rt_r32(HDMA_END);
+    if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * 32) return 0;
+    int bgs = 0;
+    for (uint32_t c = HDMA_CHANNELS; c < end; c += 0x28) {
+        uint32_t flags = rt_r32(c), dst = rt_r32(c + 8);
+        if ((flags & 9) == 1 && rt_r32(c + 0x14) && dst >= 0x04000010u && dst < 0x04000020u) bgs |= 1 << ((dst - 0x04000010u) >> 2);
+    }
+    return bgs;
 }
 
 /* Channel c's entry for line `line`, when it writes one (halves: its halfwords): its address, else 0. */
@@ -810,7 +832,7 @@ int ws_hdma_period(int top, int bottom) {
         int ok = 1;
         for (uint32_t c = HDMA_CHANNELS; c < end && ok; c += 0x28) {
             uint32_t halves, halves2;
-            if (rt_r32(c + 8) == 0x04000040u || !hdma_entry(c, top, &halves) || !hdma_entry(c, bottom, &halves2)) continue;
+            if ((rt_r32(c + 8) & ~2u) == 0x04000040u || !hdma_entry(c, top, &halves) || !hdma_entry(c, bottom, &halves2)) continue;
             for (int y = top; ok && y + p <= bottom; y++) {
                 uint32_t a = hdma_entry(c, y, &halves), b = hdma_entry(c, y + p, &halves);
                 for (uint32_t i = 0; ok && i < halves; i++) ok = rt_r16(a + 2 * i) == rt_r16(b + 2 * i);

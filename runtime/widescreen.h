@@ -35,8 +35,10 @@ int ws_picture_bgs(void);
 /* The field camera's position in the room (pixels); 0 outside the field. */
 int ws_camera(int *x, int *y);
 /* The window positions of each line of the coming frame (WIN0H | WIN1H << 16), when the game's software HDMA
- * sets them line by line (battle effects); else 0. */
+ * sets them line by line (battle effects, Magus's portal; a window it leaves alone keeps its register); else 0. */
 int ws_window_lines(uint32_t h[192]);
+/* The BGs (bit per BG) whose scroll the game's software HDMA sets line by line: an effect's own picture. */
+int ws_hdma_bgs(void);
 /* Writes what the game's software HDMA writes before line `line` (registers, palette entries), keeping what was
  * there in *saved for ws_hdma_restore: to draw rows beyond the screen as that line. */
 enum { WS_HDMA_MAX = 32, WS_HDMA_UNITS = 8 };

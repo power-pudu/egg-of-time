@@ -239,6 +239,12 @@ original bytes, and caches the result per region until the region is written.
       centre, its radii alone fitted from however few edges show (a corner as it leaves). A fit counts only when
       the circles give the game's windows on the band's lines (not some edges of another shape), are centred on
       the screen and fit two frames running: the clouds' oval passed for one now and then.
+      The portal Magus opens in his castle sets the windows with one halfword channel each (`ws_window_lines` takes
+      those too): WIN0 a disc growing from (128, 112) with BG0 in it, its scroll set line by line (the ripples),
+      WIN1 a frame with rounded corners showing the room. Where the two windows show different layers the ring is
+      WIN0 alone (`ring_wins`), WIN1 drawn as the game has it around it; without that the disc's bottom, past
+      line 191, went on as a straight bar. A BG the HDMA scrolls line by line (`ws_hdma_bgs`) is the effect's, not
+      the room's, so it goes on beyond the room's ends.
     - UI: the text box and sprites in screen coordinates zoom out with the rest, on the screen's own rows in the
       middle of the picture, but are not slid by camera smoothing: `ui_frame`, 192 rows, composed in a third pass
       (`draw_ui`). Kept at the original scale over the whole picture, as they first were, their pixels fell between
