@@ -143,6 +143,9 @@ typedef struct Engine {
     uint16_t frame_bg[4][3]; /* widescreen: BGxCNT, HOFS, VOFS as the frame started, and its blending: */
     uint16_t frame_bld[2];   /* BLDCNT, BLDALPHA (see margin_bg) */
     uint8_t mirror_bg;       /* widescreen: text BGs whose margins show the screen reflected (see picture_256) */
+    uint8_t solid_bgs;       /* widescreen, this line: text BGs one opaque tile throughout (see solid_256) */
+    uint64_t solid_key[4];   /* solid_256's last answer by BG this frame, and the registers it was for */
+    uint8_t solid_val[4];
 } Engine;
 
 static Engine engines[2];
@@ -355,6 +358,34 @@ static int picture_256(const Engine *e, int bg, uint32_t dispcnt) {
     return drawn;
 }
 
+/* Widescreen: a 256x256 map showing one tile, fully opaque, all over the screen: a flash of colour over the picture
+ * (the field's red flash when the party takes damage: BG0 on such a map, blended over the rest). Like the screen,
+ * the margins and the rows beyond it show that tile throughout. Kept by frame for the registers it was found with. */
+static int solid_256(Engine *e, int bg, uint32_t dispcnt) {
+    uint16_t cnt = reg16(e, 0x08 + 2 * bg), hofs = reg16(e, 0x10 + 4 * bg) & 0x1FF, vofs = reg16(e, 0x12 + 4 * bg) & 0x1FF;
+    if (cnt & 0xC000) return 0;
+    uint64_t key = (uint64_t)cnt << 32 | (uint32_t)hofs << 16 | vofs;
+    if (e->solid_key[bg] == key) return e->solid_val[bg];
+    e->solid_key[bg] = key, e->solid_val[bg] = 0;
+    uint32_t chr = ((cnt >> 2) & 0xF) * 0x4000u, scr = ((cnt >> 8) & 0x1F) * 0x800u;
+    if (e->id == 0) {
+        chr += ((dispcnt >> 24) & 7) * 0x10000u;
+        scr += ((dispcnt >> 27) & 7) * 0x10000u;
+    }
+    uint16_t ent = vr16(e->bg, e->bg_mask, scr + ((vofs & 255) >> 3) * 64);
+    for (int y = 0; y < SCREEN_H + 8; y += 8) { /* the map rows the screen shows (one more when scrolled by part of one) */
+        uint32_t row = scr + (((uint32_t)SDL_min(y, SCREEN_H - 1) + vofs) & 255) / 8 * 64;
+        for (uint32_t c = 0; c < 64; c += 2) if (vr16(e->bg, e->bg_mask, row + c) != ent) return 0;
+    }
+    int bytes = (cnt & 0x80) ? 64 : 32;
+    uint32_t tile = chr + (ent & 0x3FF) * (uint32_t)bytes;
+    for (int i = 0; i < bytes; i++) {
+        uint8_t b = vr8(e->bg, e->bg_mask, tile + (uint32_t)i);
+        if ((cnt & 0x80) ? !b : !(b & 0xF) || !(b >> 4)) return 0;
+    }
+    return e->solid_val[bg] = 1;
+}
+
 /* Column `from` of a line copied to column `to`, with its source. */
 static inline void copy_col(uint16_t *out, HdLine *hd, int to, int from) {
     out[to] = out[from];
@@ -369,7 +400,9 @@ static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *
     uint16_t cnt = reg16(e, 0x08 + 2 * bg), hofs = reg16(e, 0x10 + 4 * bg), vofs = reg16(e, 0x12 + 4 * bg);
     /* A picture reflected at the screen's sides is at its top and bottom too. */
     if (m && (e->mirror_bg >> bg & 1)) y = y < 0 ? -1 - y : y >= SCREEN_H ? 2 * SCREEN_H - 1 - y : y;
-    if (!m || (cnt & 0x4000) || e->repeat_256) {
+    int solid = m && (e->solid_bgs >> bg & 1);
+    if (solid && (y < 0 || y >= SCREEN_H)) y &= 7; /* a screen line with the same row of the tile */
+    if (!m || (cnt & 0x4000) || e->repeat_256 || solid) {
         bg_text_cols(e, bg, y, dispcnt, cnt, hofs, vofs, -m, SCREEN_W + m, out, hd);
         if (m && (e->mirror_bg >> bg & 1) && !(hofs & 0x1F8)) {
             /* Reflected at the picture's own sides, which a shaking screen moves by a few columns (hofs). */
@@ -1207,6 +1240,7 @@ static void engine_frame_start(Engine *e) {
             e->frame_bg[bg][2] = reg16(e, 0x12 + 4 * bg);
         }
         e->frame_bld[0] = reg16(e, 0x50), e->frame_bld[1] = reg16(e, 0x52);
+        memset(e->solid_key, 0xFF, sizeof e->solid_key);
         if (e->id == !a_top) {
             /* The view stops at the room's ends, as far as it is shown (not the guard columns and rows); with Fill screen
              * sides, at those with nothing to fill beyond them. */
@@ -1322,6 +1356,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             enabled[bg] = 1;
             int affine = (bg == 3 && mode >= 1 && mode <= 5) || (bg == 2 && (mode == 2 || mode == 4 || mode == 5));
             if (affine || (reg16(e, 0x08 + 2 * bg) & 0xC000) == 0xC000) own_bgs |= 1 << bg;
+            e->solid_bgs = (uint8_t)(e->solid_bgs & ~(1u << bg));
+            if (m && !affine && solid_256(e, bg, dispcnt)) own_bgs |= 1 << bg, e->solid_bgs |= (uint8_t)(1u << bg);
             if (mode == 6 && e->id == 0) {
                 if (bg == 2) bg_affine(e, 2, dispcnt, 1, bgline[2]);
                 else if (bg != 0) enabled[bg] = 0;
