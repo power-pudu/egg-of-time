@@ -198,6 +198,18 @@ static void glide_step(Glide *g, int step, uint64_t t, uint64_t period) {
     *g = (Glide){lag, t, (frames >= 1 && frames <= VIDEO_GLIDE_FRAMES ? frames : 1) * period, t};
 }
 
+/* An even beat from ticks that come about every `period` but each a little early or late (the threads' wakeups: game
+ * frames 15.7-17.5 ms apart, presents 7-9.5 ms apart against a screen refreshing every 8.3 ms). The glide is timed
+ * from the beats: timed from the ticks, the view landed up to a sixth of a step off its even spacing, which a camera
+ * walking at 144 fps showed as a judder. A tick far from the beat (a pause, a skipped frame) starts it over. */
+typedef struct Beat { uint64_t t; } Beat;
+
+static uint64_t beat(Beat *b, uint64_t t, uint64_t period) {
+    int64_t off = (int64_t)(t - (b->t + period));
+    b->t = b->t && off > -(int64_t)period / 4 && off < (int64_t)period / 4 ? b->t + period + off / 8 : t;
+    return b->t;
+}
+
 static void save_shot(const char *dir, int n) {
     SDL_Surface *s = SDL_CreateSurface(main_w, SCREEN_H * 2 + main_h, SDL_PIXELFORMAT_ABGR8888);
     if (!s) return;
@@ -267,6 +279,8 @@ int main(int argc, char **argv) {
     Glide glide_x = {0}, glide_y = {0};
     int running = 1;
     uint64_t next_present = SDL_GetTicksNS();
+    Beat frame_beat = {0}, present_beat = {0};
+    uint64_t present_period = SDL_NS_PER_SECOND / 60, presented_t = 0;
     /* EGG_LOG_FPS=1: log window frames and game frames (VBlanks) per second. */
     int log_fps = getenv("EGG_LOG_FPS") != NULL, presented = 0;
     Uint64 fps_at = SDL_GetTicks() + 1000, game_frames = rt_frame_count;
@@ -387,6 +401,7 @@ int main(int argc, char **argv) {
             }
             shown_serial = serial;
             shown_t = frame_t;
+            frame_t = beat(&frame_beat, frame_t, game_period);
             main_w = video_copy_frame(top_px, bottom_px, main_px, &main_h, party_px, &party_on, still_px, &still_on, ui_px, &ui_on,
                                       gfxmod_hd_scale() ? &hd : NULL);
             if (cam_cut || !display_camera_smoothing()) {
@@ -396,9 +411,14 @@ int main(int argc, char **argv) {
                 glide_step(&glide_y, cam_dy, frame_t, game_period);
             }
         }
-        /* Camera smoothing: the view glides between the camera's steps, timed from the frames' arrival (so every
-         * window frame lands at its own position, whatever the refresh rate). */
+        /* Camera smoothing: the view glides between the camera's steps, timed from the beats of the frames' arrival and of
+         * the presents (so every window frame lands at its own position, whatever the refresh rate). */
         uint64_t now_ns = SDL_GetTicksNS();
+        if (presented_t && now_ns > presented_t) { /* measured present period */
+            present_period = (present_period * 15 + SDL_clamp(now_ns - presented_t, 2000000u, 34000000u)) / 16;
+        }
+        presented_t = now_ns;
+        now_ns = beat(&present_beat, now_ns, present_period);
         float lag_x = display_camera_smoothing() ? glide_lag(&glide_x, now_ns) : 0;
         float lag_y = display_camera_smoothing() ? glide_lag(&glide_y, now_ns) : 0;
         if (sysmenu_is_open()) {

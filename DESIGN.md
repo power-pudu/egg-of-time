@@ -372,7 +372,12 @@ original bytes, and caches the result per region until the region is written.
     pixel then forward. The host keeps the view's lag behind the shown frame's camera per axis (main.c `Glide`): a camera step
     leaves the view where it was (the lag grows by the step), then the lag glides linearly to 0 over the time the
     camera took for its previous step, in whole game frames (measured period) up to `VIDEO_GLIDE_FRAMES` (8;
-    longer: the camera was at rest, one frame), timed from the frames' arrival; a cut drops the lag. So the view
+    longer: the camera was at rest, one frame), timed from the frames' arrival; a cut drops the lag. Both the frames'
+    arrival and the presents are taken on an even beat (main.c `beat`: each tick pulls it an eighth of the way to
+    itself, a tick off by a quarter period or more restarts it): the game thread's frames come 15.7-17.5 ms apart and
+    the presents are composed 7-9.5 ms apart while the screen refreshes every 8.3 ms, and timed from the raw ticks the
+    view's steps while walking at 144 fps (120 Hz screen) ranged 0.85-1.14 px a refresh instead of 1, a judder; on the
+    beats, 0.98-1.02. So the view
     moves on every window frame at even pace whatever the refresh rate, in sub-pixel steps of the internal
     resolution: walking (2 px every frame) glides each step over one frame (one game frame of extra delay), and
     slow scripted pans glide over their own cadence (the trial's pan down moves 1 px every fourth frame: gliding
