@@ -222,7 +222,9 @@ original bytes, and caches the result per region until the region is written.
       each row is drawn as the band's line at the same height, its windows and the rows of the BGs that are not the
       room's (the effect's 512x512 map), with what the HDMA writes for that line put in place for the row and then
       put back (`ws_hdma_line`); sprites and the room's BGs keep their own rows (the stars, stretched with the rest,
-      had streaked; their colours come with the line's palette entries).
+      had streaked; their colours come with the line's palette entries). Between the battle menu and the text box
+      the stretch is from those lines (46-165) whatever the effect fills of them: from the effect's own lines, the
+      clouds slid as their oval opened from the middle and jumped when the text box closed.
       A ring is not stretched (its circle would turn into an ellipse), nor are its edges carried on beyond the
       screen's sides (its arcs became straight bars): an enemy's "Rainbow Beam: Blind" grows a ring made of WIN0
       (the left arc) and WIN1 (the right arc), coloured line by line through the backdrop. When the window edges
@@ -231,7 +233,9 @@ original bytes, and caches the result per region until the region is written.
       (`ring_spans`), and those rows take the HDMA's line one period of its tables away (`ws_hdma_period`), so its
       colours go on. As it grows past the screen's sides only its hole's edge shows: which side of the edge the
       window is on tells a hole from a disc, and the ring keeps the width it last had. A ring just shown keeps its
-      centre, its radii alone fitted from however few edges show (a corner as it leaves).
+      centre, its radii alone fitted from however few edges show (a corner as it leaves). A fit counts only when
+      the circles give the game's windows on the band's lines (not some edges of another shape), are centred on
+      the screen and fit two frames running: the clouds' oval passed for one now and then.
     - UI: the text box and sprites in screen coordinates zoom out with the rest, on the screen's own rows in the
       middle of the picture, but are not slid by camera smoothing: `ui_frame`, 192 rows, composed in a third pass
       (`draw_ui`). Kept at the original scale over the whole picture, as they first were, their pixels fell between

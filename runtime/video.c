@@ -113,6 +113,7 @@ typedef struct Engine {
     float ring_cx, ring_cy, ring_outer, ring_inner; /* the ring's circles (ring_inner 0: a disc) */
     float ring_width;        /* the ring's width when both its circles last showed (0: none yet) */
     int ring_keep;           /* the frames its centre still counts for, the ring having shown */
+    uint8_t ring_fits;       /* by frame, the last first: the windows fit a ring */
     int obj_rows;   /* sprite Y counts from this many rows above the screen (the widened view, widescreen.c) */
     int room_y0, room_y1; /* with room_clip: its rows */
     int obj_origin; /* sprite X counts from this many columns left of the screen (widescreen.c) */
@@ -995,6 +996,42 @@ static int ring_circle(const float *px, const float *py, const uint8_t *taken, i
     return best;
 }
 
+/* The ring's spans on row y (effect_rows), in screen columns from x0 to before x1: their count, 0-2. */
+static int ring_spans(const Engine *e, int y, int sp[2][2]) {
+    float dy = (float)y - e->ring_cy, ro = e->ring_outer, ri = e->ring_inner;
+    if (SDL_fabsf(dy) >= ro) return 0;
+    float h = SDL_sqrtf(ro * ro - dy * dy);
+    int a = (int)SDL_lroundf(e->ring_cx - h), b = (int)SDL_lroundf(e->ring_cx + h);
+    if (SDL_fabsf(dy) >= ri) {
+        sp[0][0] = a, sp[0][1] = b;
+        return 1;
+    }
+    float hi = SDL_sqrtf(ri * ri - dy * dy);
+    sp[0][0] = a, sp[0][1] = (int)SDL_lroundf(e->ring_cx - hi);
+    sp[1][0] = (int)SDL_lroundf(e->ring_cx + hi), sp[1][1] = b;
+    return 2;
+}
+
+/* The ring's windows as the game draws them on the band's lines: 1 if they are the circles' on nearly all of them,
+ * but for a pixel or two at an edge (not a shape that only has some of its edges on them). */
+static int ring_matches(const Engine *e, int top, int bottom) {
+    int bad = 0, x[2], sp[2][2];
+    for (int y = top; y <= bottom; y++) {
+        uint8_t row[SCREEN_W] = {0};
+        for (int w = 0; w < 2; w++) {
+            int k = win_span(y, w, &x[0], &x[1]);
+            if (k < 0) return 0;
+            for (int c = SDL_max(x[0], 0); k && c < x[1]; c++) row[c] |= 1;
+        }
+        int n = ring_spans(e, y, sp);
+        for (int k = 0; k < n; k++) for (int c = SDL_max(sp[k][0], 0); c < SDL_min(sp[k][1], SCREEN_W); c++) row[c] |= 2;
+        int miss = 0;
+        for (int c = 0; c < SCREEN_W; c++) miss += row[c] == 1 || row[c] == 2;
+        bad += miss > 8;
+    }
+    return bad * 20 <= bottom - top + 1;
+}
+
 /* The radius most of the points not yet marked lie at from (cx, cy): their count (at least 2), marking them k. */
 enum { RING_KEEP = 4 };
 static int ring_radius(const float *px, const float *py, int n, float cx, float cy, uint8_t k, uint8_t *mark, float *r) {
@@ -1057,10 +1094,16 @@ static int fit_ring(Engine *e, int top, int bottom) {
         b = ring_circle(px, py, taken, n, taken, &cx2, &cy2, &r2); /* taken: marks circle 1's as 1 too */
         if (b && SDL_fabsf(cx2 - cx) + SDL_fabsf(cy2 - cy) > 4) b = 0; /* not concentric: no ring */
         if ((a + b) * 100 < n * 90) return 0; /* the edges are not all on them */
+        /* Centred off the screen: a shape's flat edge (Rainbow Storm's clouds' oval past the screen's sides). */
+        if (cx < 0 || cx >= SCREEN_W || cy < 0 || cy >= SCREEN_H) return 0;
     }
-    e->ring = 1, e->ring_keep = RING_KEEP, e->ring_cx = cx, e->ring_cy = cy;
+    Engine ring = *e; /* the fit, checked before it is taken */
+    ring.ring_cx = cx, ring.ring_cy = cy;
     if (b) {
-        e->ring_outer = SDL_max(r, r2), e->ring_inner = SDL_min(r, r2);
+        ring.ring_outer = SDL_max(r, r2), ring.ring_inner = SDL_min(r, r2);
+        if (!ring_matches(&ring, top, bottom)) return 0;
+        e->ring = 1, e->ring_keep = RING_KEEP, e->ring_cx = cx, e->ring_cy = cy;
+        e->ring_outer = ring.ring_outer, e->ring_inner = ring.ring_inner;
         e->ring_width = e->ring_outer - e->ring_inner;
         return 1;
     }
@@ -1068,28 +1111,15 @@ static int fit_ring(Engine *e, int top, int bottom) {
      * sides), its window outside it: the ring then as wide as it last showed. */
     int out = 0;
     for (int i = 0; i < n; i++) if (mark[i] == 1) out += right[i] == (px[i] > cx) ? 1 : -1; /* a span going away from the centre */
-    if (out <= 0) e->ring_outer = r, e->ring_inner = 0;
-    else e->ring_inner = r, e->ring_outer = e->ring_width ? r + e->ring_width : 4 * RING_RADIUS_MAX;
+    if (out <= 0) ring.ring_outer = r, ring.ring_inner = 0;
+    else ring.ring_inner = r, ring.ring_outer = e->ring_width ? r + e->ring_width : 4 * RING_RADIUS_MAX;
+    if (!ring_matches(&ring, top, bottom)) return 0;
+    e->ring = 1, e->ring_keep = RING_KEEP, e->ring_cx = cx, e->ring_cy = cy;
+    e->ring_outer = ring.ring_outer, e->ring_inner = ring.ring_inner;
     return 1;
 }
 
-/* The ring's spans on row y (effect_rows), in screen columns from x0 to before x1: their count, 0-2. */
-static int ring_spans(const Engine *e, int y, int sp[2][2]) {
-    float dy = (float)y - e->ring_cy, ro = e->ring_outer, ri = e->ring_inner;
-    if (SDL_fabsf(dy) >= ro) return 0;
-    float h = SDL_sqrtf(ro * ro - dy * dy);
-    int a = (int)SDL_lroundf(e->ring_cx - h), b = (int)SDL_lroundf(e->ring_cx + h);
-    if (SDL_fabsf(dy) >= ri) {
-        sp[0][0] = a, sp[0][1] = b;
-        return 1;
-    }
-    float hi = SDL_sqrtf(ri * ri - dy * dy);
-    sp[0][0] = a, sp[0][1] = (int)SDL_lroundf(e->ring_cx - hi);
-    sp[1][0] = (int)SDL_lroundf(e->ring_cx + hi), sp[1][1] = b;
-    return 2;
-}
-
-enum { BAND_MIN = 48 };
+enum { BAND_MIN = 48, BATTLE_TOP = 46, BATTLE_BOTTOM = 166 }; /* the lines between the battle menu and the text box */
 static void effect_rows(Engine *e) {
     int x[2], top = win_top, bottom = SCREEN_H - 1;
 #define WIN_EMPTY(y) (!win_span(y, 0, &x[0], &x[1]) && !win_span(y, 1, &x[0], &x[1]))
@@ -1103,9 +1133,17 @@ static void effect_rows(Engine *e) {
     while (bottom >= top && WIN_EMPTY(bottom)) bottom--;
 #undef WIN_EMPTY
     if (top > bottom) return;
-    if ((reg16(e, 0x48) & 0x3F) == (reg16(e, 0x48) >> 8 & 0x3F) && fit_ring(e, top, bottom)) {
+    /* A ring fits two frames running: Rainbow Storm's clouds' oval fits one now and then. */
+    if ((reg16(e, 0x48) & 0x3F) == (reg16(e, 0x48) >> 8 & 0x3F) && fit_ring(e, top, bottom) && (e->ring_fits |= 1, e->ring_fits & 2 || (e->ring = 0))) {
         e->band_top = top, e->band_rows = bottom - top + 1;
         e->band_period = ws_hdma_period(top, bottom);
+        return;
+    }
+    /* An effect between the battle menu and the text box is stretched from those lines, whatever it fills of them:
+     * stretched from its own, it slid as it grew (Rainbow Storm's clouds open as an oval from the middle) and
+     * jumped when the text box closed (its lines then taken too, those under the box left out). */
+    if (top >= BATTLE_TOP) {
+        e->band_top = BATTLE_TOP, e->band_rows = BATTLE_BOTTOM - BATTLE_TOP;
         return;
     }
     /* A band of a few lines (as the effect starts) stretched would streak the rows: the picture stays as it is. */
@@ -1156,6 +1194,7 @@ static void engine_frame_start(Engine *e) {
         if (e->rows) memset(ui_frame, 0, sizeof ui_frame);
         e->band_rows = e->ring = 0;
         if (e->ring_keep) e->ring_keep--;
+        e->ring_fits <<= 1;
         e->party = e->sliding = e->still_bgs = 0;
         e->view_x = e->view_y = e->view_bgs = e->obj_dx = e->obj_dy = 0;
         e->box_top = SCREEN_H;
