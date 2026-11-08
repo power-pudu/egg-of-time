@@ -646,6 +646,9 @@ static void fill_field_margins(int margin, int rows) {
     if (!ram_ptr(scroll) || !ram_ptr(room) || !ram_ptr(tilesets)) return;
     /* A BG on its layer's ring origin, or a tile off it for a frame at each step, shows the room. */
     view_bgs = bg_near(2, scroll, 0) << 2 | bg_near(3, scroll, 1) << 3 | bg_near(0, scroll, 2) | bg_near(1, scroll, 0) << 1;
+    /* So does a battle effect on a 512x512 map (the room's are 512x256 rings), drawn where the game's screen has its
+     * target: Frog's Water at a room's end fell beside the enemy, on the party. */
+    for (int bg = 0; bg < 4; bg++) view_bgs |= ((io_get16(0x08 + 2 * bg) >> 14) == 3) << bg;
     int x0, x1;
     int one_screen = ws_room_span(&x0, &x1) && x0 == 0 && x1 == SCREEN_W;
     if (one_screen) {
@@ -803,14 +806,23 @@ int ws_window_lines(uint32_t h[SCREEN_H]) {
     return found != 0;
 }
 
-/* The BGs (bit per BG) whose scroll the HDMA sets line by line: an effect's picture, not a room layer. */
+/* The BGs (bit per BG) whose scroll the HDMA changes line by line: an effect's picture (the ripples in Magus's
+ * portal), not a room layer. Battles set BG1-BG3's scroll through the HDMA too, the same on every line: taken for an
+ * effect's, the room's layers were stretched with its band and the battle seemed to zoom in (Frog's Water). */
 int ws_hdma_bgs(void) {
     uint32_t end = rt_r32(HDMA_END);
     if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * 32) return 0;
     int bgs = 0;
     for (uint32_t c = HDMA_CHANNELS; c < end; c += 0x28) {
-        uint32_t flags = rt_r32(c), dst = rt_r32(c + 8);
-        if ((flags & 9) == 1 && rt_r32(c + 0x14) && dst >= 0x04000010u && dst < 0x04000020u) bgs |= 1 << ((dst - 0x04000010u) >> 2);
+        uint32_t flags = rt_r32(c), dst = rt_r32(c + 8), src = rt_r32(c + 4), step = rt_r32(c + 0x14);
+        if ((flags & 9) != 1 || !step || dst < 0x04000010u || dst >= 0x04000020u || !ram_ptr(src)) continue;
+        uint32_t first = rt_r32(c + 0x20), last = rt_r32(c + 0x24), v = rt_r32(src);
+        for (uint32_t y = first + 1; y <= last && y < SCREEN_H; y++) {
+            if (rt_r32(src + step * (y - first)) != v) {
+                bgs |= 1 << ((dst - 0x04000010u) >> 2);
+                break;
+            }
+        }
     }
     return bgs;
 }

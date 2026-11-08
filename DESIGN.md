@@ -243,8 +243,9 @@ original bytes, and caches the result per region until the region is written.
       those too): WIN0 a disc growing from (128, 112) with BG0 in it, its scroll set line by line (the ripples),
       WIN1 a frame with rounded corners showing the room. Where the two windows show different layers the ring is
       WIN0 alone (`ring_wins`), WIN1 drawn as the game has it around it; without that the disc's bottom, past
-      line 191, went on as a straight bar. A BG the HDMA scrolls line by line (`ws_hdma_bgs`) is the effect's, not
-      the room's, so it goes on beyond the room's ends.
+      line 191, went on as a straight bar. A BG whose scroll the HDMA changes line by line (`ws_hdma_bgs`) is the
+      effect's, not the room's, so it goes on beyond the room's ends; battles write BG1-BG3's scroll through the HDMA
+      too, the same on every line, and taken for the effect's, the room was stretched with its band (a zoom in).
     - UI: the text box and sprites in screen coordinates zoom out with the rest, on the screen's own rows in the
       middle of the picture, but are not slid by camera smoothing: `ui_frame`, 192 rows, composed in a third pass
       (`draw_ui`). Kept at the original scale over the whole picture, as they first were, their pixels fell between
@@ -281,8 +282,11 @@ original bytes, and caches the result per region until the region is written.
       a frame's sprites have the view of two frames' starts ago, its BGs that of the last one, so the renderer moves the
       sprites by the difference while the shift changes (`ws_sprite_lag`, `Engine.obj_dx`, also in `find_party`), or
       they shake as the view reaches an end. Camera smoothing follows the shifted view, so the party walks on a still
-      picture at the ends. Screen coordinates stay: the text box, the UI and the battle effects' windows; the battle
-      HUD, in the G2D view, has the shift taken out as it enters OAM (`rt_ws_enter_oam`).
+      picture at the ends. A battle effect on a 512x512 map (the room's BGs are 512x256 rings) moves with it too, and
+      the windows are tested at the game's screen column the shifted picture shows: Frog's Water (BG0, blended, shown
+      in WIN0 only) is placed on its target in the game's screen, and at a forest's east end, with the shift left out,
+      it fell 85 px left of the enemy, on Marle. Screen coordinates stay: the text box and the UI; the battle HUD, in
+      the G2D view, has the shift taken out as it enters OAM (`rt_ws_enter_oam`).
     - Rooms: with Fill screen sides off, the rows beyond the room are black (`ws_room_rows`: bounds +0x18 top, +0x19
       bottom). Bounds can hold several rooms one above the other (the prison towers, location 0x1d: metatile rows
       0-32 with others stacked), which the camera never shows on the DS; the rows also end at the void between them:

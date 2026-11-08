@@ -1457,16 +1457,19 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             const int *pr = prio[side];
             uint16_t bldcnt = bld[side][0], bldalpha = bld[side][1];
             int eva = SDL_min(bldalpha & 31, 16), evb = SDL_min((bldalpha >> 8) & 31, 16), effect = (bldcnt >> 6) & 3;
-            if (e->ring && (ring_row || x - m != wx)) {
+            /* The game's screen column the windows are tested at: the view's shift at a room's end moves the picture,
+             * and the windows the game placed on it with it (Frog's Water falls in WIN0, on the enemy). */
+            int vx = x - m + e->view_x, vwx = SDL_clamp(vx, 0, SCREEN_W - 1);
+            if (e->ring && (ring_row || vx != vwx)) {
                 int in = 0;
-                for (int k = 0; k < ring_n; k++) in |= x - m >= ring_sp[k][0] && x - m < ring_sp[k][1];
+                for (int k = 0; k < ring_n; k++) in |= vx >= ring_sp[k][0] && vx < ring_sp[k][1];
                 ctl = in ? winin & 0x3F
-                         : e->ring_wins == 1 && in_w1y && in_window(x - m, wx, w1h, ext1) ? (winin >> 8) & 0x3F
+                         : e->ring_wins == 1 && in_w1y && in_window(vx, vwx, w1h, ext1) ? (winin >> 8) & 0x3F
                          : winobj && o->win[x] ? (winout >> 8) & 0x3F
                                                : winout & 0x3F;
             } else if (win0 || win1 || winobj) {
-                if (in_w0y && in_window(x - m, wx, w0h, ext0)) ctl = winin & 0x3F;
-                else if (in_w1y && in_window(x - m, wx, w1h, ext1)) ctl = (winin >> 8) & 0x3F;
+                if (in_w0y && in_window(vx, vwx, w0h, ext0)) ctl = winin & 0x3F;
+                else if (in_w1y && in_window(vx, vwx, w1h, ext1)) ctl = (winin >> 8) & 0x3F;
                 else if (winobj && o->win[x]) ctl = (winout >> 8) & 0x3F;
                 else ctl = winout & 0x3F;
             }
