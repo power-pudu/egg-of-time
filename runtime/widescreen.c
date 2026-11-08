@@ -109,11 +109,14 @@ void ws_state(RtStateIO *s) {
     if (rt_state_loading(s)) view_loaded = 1;
 }
 
-/* Layer L's camera: its top-left tile column and row in the room map. Layer 1 has its own (+0xc, +0x10), apart
- * from layer 0's (+4, +8) where it scrolls slower: the moonlit sky of Magus's castle at about half the speed. Layer 2
- * goes with layer 0. */
-static int layer_col(uint32_t scroll, int L) { return rt_r16(scroll + (L == 1 ? 0xc : 4)); }
-static int layer_row(uint32_t scroll, int L) { return rt_r16(scroll + (L == 1 ? 0x10 : 8)); }
+/* Layer L's camera: its top-left tile column and row in the room map, layer 0's (+4, +8). Layer 1 has its own
+ * (+0xc, +0x10) where it scrolls slower: the moonlit sky beside the castle stairs, at about half the speed. Elsewhere
+ * those read 0 (a castle hall whose layer 1 goes with layer 0), so layer 1 takes its own only while layer 0's does not
+ * give what the game drew and its own does (own_l1, decided each frame in fill_field_margins). Layer 2 goes with
+ * layer 0. */
+static int own_l1;
+static int layer_col(uint32_t scroll, int L) { return rt_r16(scroll + (L == 1 && own_l1 ? 0xc : 4)); }
+static int layer_row(uint32_t scroll, int L) { return rt_r16(scroll + (L == 1 && own_l1 ? 0x10 : 8)); }
 
 /* Packed tile (b0 | b1 << 8 | b2 << 16) of layer L at world tile (c, r). */
 static uint32_t room_tile(uint32_t scroll, uint32_t tilesets, int L, int c, int r) {
@@ -668,7 +671,14 @@ static void fill_field_margins(int margin, int rows) {
     if (!ok0 && !ok1 && !ok2) return;
     copy_room_rows(scroll, room);
     ok0 = ok0 && bg_holds_layer(2, scroll, tilesets, 0);
-    int pic1 = ok1 && !bg_holds_layer(3, scroll, tilesets, 1), pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
+    own_l1 = 0;
+    int held1 = ok1 && bg_holds_layer(3, scroll, tilesets, 1);
+    if (ok1 && !held1 && (rt_r16(scroll + 0xc) != rt_r16(scroll + 4) || rt_r16(scroll + 0x10) != rt_r16(scroll + 8))) {
+        own_l1 = 1;
+        held1 = bg_holds_layer(3, scroll, tilesets, 1);
+        own_l1 = held1;
+    }
+    int pic1 = ok1 && !held1, pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
     /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge). */
     picture_bgs = (pic1 && !(io_get16(0x1c) & 0x1F8)) << 3 | (pic2 && !(io_get16(0x10) & 0x1F8));
