@@ -123,6 +123,7 @@ typedef struct Engine {
     int obj_stretch; /* the sprites' screen columns are stretched across the margins (the warp, single_screen.c) */
     int repeat_256; /* 256-wide text BGs repeat into the margins (the race's sky, single_screen.c) */
     int view_x, view_y, view_bgs; /* the view's shift from the camera at the room's ends, the BGs it moves (ws_view_shift) */
+    int bg_dx[4], bg_dy[4];       /* each of those BGs' share of it (ws_bg_shift) */
     int obj_dx, obj_dy;           /* the world's sprites are that much off it (ws_sprite_lag) */
     int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
     int repeat_bgs; /* BGs whose screen columns repeat into the margins, the others empty beyond the room
@@ -310,7 +311,7 @@ static int margin_bg(const Engine *e, int bg) { return e->margin && box_bg(e, bg
 static void bg_text_cols(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t cnt, uint32_t hofs, uint32_t vofs,
                          int x0, int x1, uint16_t *out, HdLine *hd) {
     int m = e->margin;
-    if ((cnt & 0x4000) && (e->view_bgs >> bg & 1)) hofs += (uint32_t)e->view_x, vofs += (uint32_t)e->view_y; /* not a box's map */
+    if ((cnt & 0x4000) && (e->view_bgs >> bg & 1)) hofs += (uint32_t)e->bg_dx[bg], vofs += (uint32_t)e->bg_dy[bg]; /* not a box's map */
     hofs &= 0x1FF, vofs &= 0x1FF;
     uint32_t w = (cnt & 0x4000) ? 512 : 256, h = (cnt & 0x8000) ? 512 : 256;
     uint32_t chr = ((cnt >> 2) & 0xF) * 0x4000u, scr = ((cnt >> 8) & 0x1F) * 0x800u;
@@ -1243,6 +1244,7 @@ static void engine_frame_start(Engine *e) {
         e->ring_fits <<= 1;
         e->party = e->sliding = e->still_bgs = 0;
         e->view_x = e->view_y = e->view_bgs = e->obj_dx = e->obj_dy = 0;
+        SDL_memset(e->bg_dx, 0, sizeof e->bg_dx), SDL_memset(e->bg_dy, 0, sizeof e->bg_dy);
         e->box_top = SCREEN_H;
         e->track_top = e->id == a_top && SDL_GetAtomicInt(&track_bottom);
         e->panel_ui = e->track_top && panel_has_ui(e);
@@ -1262,6 +1264,7 @@ static void engine_frame_start(Engine *e) {
             int fill = SDL_GetAtomicInt(&fill_sides);
             ws_fill_margins(e->margin, e->rows, SDL_max(shown_margin, 0), shown_rows, fill);
             ws_view_shift(&e->view_x, &e->view_y, &e->view_bgs);
+            for (int bg = 0; bg < 4; bg++) ws_bg_shift(bg, &e->bg_dx[bg], &e->bg_dy[bg]);
             ws_sprite_lag(&e->obj_dx, &e->obj_dy);
             win_ext_on = e->margin && ws_window_lines(win_lines);
             if (win_ext_on) window_margins();

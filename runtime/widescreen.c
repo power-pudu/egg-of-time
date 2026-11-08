@@ -49,6 +49,7 @@
  * the view stays centred in it. The room's BGs (their scroll), the sprite view and the room's clip all move by that
  * shift; the text box, the UI and the battle effects' windows are in screen coordinates and stay. */
 #include <stdlib.h>
+#include <string.h>
 
 #include "dispatch.h"
 #include "rt.h"
@@ -674,6 +675,57 @@ static void fill_world_margins(int margin, int rows) {
     }
 }
 
+/* The view's shift at a room's end moves each BG by its own share of it: a layer on its own camera scrolls at its
+ * rate to the room's (the sky behind Azala's tower at half), so it moves as the camera would have moved it. Moved by
+ * the whole shift, the sky crept the wrong way while the view held still at the room's bottom end, then turned. The
+ * rate is measured by axis, in 1/256: how far each BG's scroll moved while BG2's (the room) did, since the room was
+ * entered, the frames where a BG holds another map (a text box) or jumps left out. Before the room has moved much,
+ * layer 1 on its own camera starts from its place against the room's (its tile row and column over layer 0's). */
+#define RATE_PRIOR 16 /* the pixels of the room's motion that start is worth */
+static struct {
+    uint32_t room;           /* the room measured (room map, bounds) */
+    uint16_t last[4][2];     /* scroll by BG, axis, the frame before */
+    uint16_t cnt[4];         /* BGxCNT the frame before */
+    int32_t moved[4][2];     /* each BG's motion along the room's */
+    int32_t size[4][2];      /* and the room's over the same frames */
+    int rate[4][2];
+} rates;
+
+static void measure_rates(uint32_t scroll, uint32_t room) {
+    uint32_t here = room ^ rt_r32(scroll + 0x16);
+    int fresh = here != rates.room;
+    if (fresh) memset(&rates, 0, sizeof rates), rates.room = here;
+    for (int a = 0; a < 2; a++) {
+        int d[4], ok[4];
+        for (int bg = 0; bg < 4; bg++) {
+            uint16_t cur = io_get16(0x10 + 4 * bg + 2 * a) & 511, cnt = io_get16(0x08 + 2 * bg);
+            d[bg] = ((cur - rates.last[bg][a] + 256) & 511) - 256;
+            ok[bg] = !fresh && cnt == rates.cnt[bg] && (cnt & 0x4000) && abs(d[bg]) <= 16;
+            rates.last[bg][a] = cur;
+        }
+        if (ok[2] && d[2]) {
+            for (int bg = 0; bg < 4; bg++) if (ok[bg]) rates.moved[bg][a] += d[2] > 0 ? d[bg] : -d[bg], rates.size[bg][a] += abs(d[2]);
+        }
+        int pos0 = a ? layer_row(scroll, 0) : layer_col(scroll, 0), pos1 = a ? layer_row(scroll, 1) : layer_col(scroll, 1);
+        for (int bg = 0; bg < 4; bg++) {
+            int prior = 256;
+            if (bg == 3 && own_l1 && pos0 >= 8 && pos1 >= 0 && pos1 <= 2 * pos0) prior = pos1 * 256 / pos0;
+            rates.rate[bg][a] = bg == 2 ? 256 : (prior * RATE_PRIOR + rates.moved[bg][a] * 256) / (RATE_PRIOR + rates.size[bg][a]);
+        }
+    }
+    for (int bg = 0; bg < 4; bg++) rates.cnt[bg] = io_get16(0x08 + 2 * bg);
+}
+
+/* The share of the view's shift v that BG bg moves by along axis a. */
+static int bg_shift(int bg, int a, int v) {
+    int r = rates.room ? rates.rate[bg][a] : 256, p = v * r;
+    return (p + (p >= 0 ? 128 : -128)) / 256;
+}
+
+void ws_bg_shift(int bg, int *x, int *y) {
+    *x = bg_shift(bg, 0, view_x), *y = bg_shift(bg, 1, view_y);
+}
+
 static void fill_field_margins(int margin, int rows) {
     int seen = repeat_bgs;
     repeat_bgs = picture_bgs = view_bgs = 0;
@@ -717,6 +769,7 @@ static void fill_field_margins(int margin, int rows) {
         held1 = bg_holds_layer(3, scroll, tilesets, 1);
         own_l1 = held1;
     }
+    measure_rates(scroll, room); /* layer 1's own camera known */
     int pic1 = ok1 && !held1, pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
     /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge). */
@@ -734,8 +787,9 @@ static void fill_field_margins(int margin, int rows) {
         int fine = hofs & 7, vfine = vofs & 7;
         int c0 = camc + ((((hofs >> 3) - rt_r8(scroll + 0x8e + 2 * L) + 1) & 63) - 1); /* the column and row it starts at */
         int r0 = camr + ((((vofs >> 3) - rt_r8(scroll + 0x8f + 2 * L) + 1) & 31) - 1);
-        int l = c0 + ((fine - margin + view_x) >> 3), r = c0 + ((fine + SCREEN_W - 1 + margin + view_x) >> 3);
-        int t = r0 + ((vfine - rows + view_y) >> 3), b = r0 + ((vfine + SCREEN_H - 1 + rows + view_y) >> 3);
+        int vx = bg_shift(bg, 0, view_x), vy = bg_shift(bg, 1, view_y);
+        int l = c0 + ((fine - margin + vx) >> 3), r = c0 + ((fine + SCREEN_W - 1 + margin + vx) >> 3);
+        int t = r0 + ((vfine - rows + vy) >> 3), b = r0 + ((vfine + SCREEN_H - 1 + rows + vy) >> 3);
         left = l < left ? l : left, right = r > right ? r : right, bottom = b > bottom ? b : bottom, top = t < top ? t : top;
     }
     for (int c = left; c <= right; c++) {

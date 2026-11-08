@@ -285,7 +285,10 @@ original bytes, and caches the result per region until the region is written.
       wraps round, showed black there. The game clamps
       its camera for 256 x 192 and is left alone (`ws_fill_margins`, `view_shift`, `ws_view_shift`): the picture is
       shown shifted from the camera, by the BG scroll of the BGs on their ring origin (`Engine.view_bgs`; not a
-      picture layer such as the prison bridge's sky, not a box's 256-wide map), the G2D view's top-left (OAM X and Y
+      picture layer such as the prison bridge's sky, not a box's 256-wide map; each by its share of the shift, its
+      scroll's rate to the room's, measured by axis since the room was entered (`measure_rates`, `ws_bg_shift`,
+      `Engine.bg_dx`): the sky behind Azala's tower scrolls at half, and moved by the whole shift it crept the wrong way
+      while the view held still at the room's bottom end), the G2D view's top-left (OAM X and Y
       already count from it, so `ws_sprite_origin` and `ws_sprite_rows` now read its size), the fills and the room's
       clip. The camera in RAM is a frame ahead of the BG scroll, and the game moves it after the sprite view is set:
       a frame's sprites have the view of two frames' starts ago, its BGs that of the last one, so the renderer moves the
