@@ -347,10 +347,12 @@ static void bg_text_cols(const Engine *e, int bg, int y, uint32_t dispcnt, uint1
 /* Widescreen: a 512-wide map holding a picture in its left 256 columns only, the rest one entry throughout, shown
  * unscrolled: a SNES screen drawn by the game (the lightning bolts of Lightning II, drawn into tiles). Its margins
  * would be empty, so they show the screen reflected at its sides, and what reaches a side goes on. Checked while a
- * battle effect sets the windows line by line (ws_window_lines), so menus and other layers are left alone. */
+ * battle effect sets the windows line by line (ws_window_lines), so menus and other layers are left alone.
+ * Unscrolled both ways: the ice of Ice II is one picture on such a map that the scroll slides onto the enemy, and
+ * landed (scroll 0, 464) it was reflected, standing beside itself on both sides. */
 static int picture_256(const Engine *e, int bg, uint32_t dispcnt) {
     uint16_t cnt = reg16(e, 0x08 + 2 * bg);
-    if ((cnt & 0x4000) == 0 || (reg16(e, 0x10 + 4 * bg) & 0x1FF)) return 0;
+    if ((cnt & 0x4000) == 0 || (reg16(e, 0x10 + 4 * bg) & 0x1FF) || (reg16(e, 0x12 + 4 * bg) & 0x1FF)) return 0;
     uint32_t scr = ((cnt >> 8) & 0x1F) * 0x800u + (e->id ? 0 : ((dispcnt >> 27) & 7) * 0x10000u);
     int blocks = (cnt & 0x8000) ? 2 : 1, drawn = 0;
     uint16_t blank = vr16(e->bg, e->bg_mask, scr + 0x800);

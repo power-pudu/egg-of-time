@@ -91,7 +91,8 @@ original bytes, and caches the result per region until the region is written.
   sprites (X wraps at 512: beyond the left margin is the right one) and windows (their edge columns extended;
   edges the game sets line by line through its software HDMA, such as the rays of Lightning II, carried on along
   their slope, or drawn from the two straight edges fitted to the window where it is a ray shape; their bolts, a
-  256-wide SNES picture, reflected at the screen sides) across them. Single screen mode uses the wide picture in
+  256-wide SNES picture, reflected at the screen sides; only unscrolled: the ice of Ice II, one picture on such a
+  map slid onto the enemy by the scroll, landed at scroll 0, 464 and was reflected beside itself) across them. Single screen mode uses the wide picture in
   the field (current scene: ov000 vtable 0x02115558), the warp (ov010), the world map (ov002) and the race (ov011);
   other scenes stay 4:3, centred.
   - A 256x256 text BG whose on-screen map is one fully opaque tile throughout (`solid_256`) is a flash of colour:
