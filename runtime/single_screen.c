@@ -661,12 +661,89 @@ static void blit_light_text(uint32_t *dst, int dx, int dy, const uint32_t *src, 
     }
 }
 
+/* The number an item or tech that heals shows on the top screen, over the member's sprite on its panel (rows py ..
+ * py + 55, x 0-53): green (0x00ff7b) with a black shadow right of and under each pixel. */
+static int heal_px(uint32_t p) {
+    int r = p & 0xFF, g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF;
+    return r < 0x20 && g > 0xe0 && b > 0x60 && b < 0x98;
+}
+
+/* The columns of the member's HP or MP (the value before the slash) on the top screen, its line at row: lit text
+ * between x 165 and the slash. 0 when there is none. */
+static int value_span(const uint32_t *top, int row, int *left, int *right) {
+    *left = SCREEN_W, *right = -1;
+    for (int x = 165; x < 207; x++) {
+        for (int y = row + 2; y < row + 8; y++) {
+            uint32_t p = top[y * SCREEN_W + x];
+            if (text_px(p) && (p & 0xFF) >= 150) *left = SDL_min(*left, x), *right = x;
+        }
+    }
+    return *right >= 0;
+}
+
+/* What the number stands for: the stat that rose last, HP or MP, of any character (it rises some frames before the
+ * number shows; Elixirs raise both: HP). The characters' stats, 0x60 bytes each (Crono, Marle, Lucca, Robo, Frog,
+ * Ayla, Magus): +2 HP, +6 MP. */
+#define STATS GAME_ADDR(0x0207291cu, 0x0207293cu)
+static uint16_t stats_seen[7][2];
+static int stats_known, heal_mp;
+
+static void watch_heals(void) {
+    int hp_up = 0, mp_up = 0;
+    for (int c = 0; c < 7; c++) {
+        uint16_t hp = (uint16_t)rt_r16(STATS + 0x60u * (uint32_t)c + 2), mp = (uint16_t)rt_r16(STATS + 0x60u * (uint32_t)c + 6);
+        hp_up |= stats_known && hp > stats_seen[c][0], mp_up |= stats_known && mp > stats_seen[c][1];
+        stats_seen[c][0] = hp, stats_seen[c][1] = mp;
+    }
+    stats_known = 1;
+    if (hp_up) heal_mp = 0;
+    else if (mp_up) heal_mp = 1;
+}
+
+/* That number, with its shadow, over the member's HP or MP on its line of the main screen (the line's text at row
+ * line, columns from at top screen column 150; the top screen's at row value), moving as it does over the sprite,
+ * by half as much (the lines are 11 rows apart, the panels 56): for HP it rises from 7 rows below where it rests
+ * (panel rows 50-55) to 16 above, falls back and stays a while, the HP it brings, its rest on the HP; for MP it
+ * starts 15 rows below that rest and rises 32 until it goes, from the MP. Taken over unhalved, it passed over the
+ * others' lines, the MP's never over the MP. The text under it (the lines above as it passes, the value, all of it,
+ * where it is on the value's line) is taken out, back to the backdrop (bottom rows 23-39, as compose_targets lays it). */
+#define HEAL_REST 52    /* HP: the panel row of the number's middle at rest */
+#define HEAL_MP_FROM 67 /* MP: the panel row of its middle where it starts */
+static void heal_number(uint32_t *main, const uint32_t *top, const uint32_t *bottom, int py, int value, int line, int from, int rest) {
+    int x0 = 54, x1 = -1, y0 = py + 56, y1 = -1;
+    for (int y = py; y < py + 56 && y < SCREEN_H; y++) {
+        for (int x = 0; x < 54; x++) {
+            if (!heal_px(top[y * SCREEN_W + x])) continue;
+            x0 = SDL_min(x0, x), x1 = SDL_max(x1, x), y0 = SDL_min(y0, y), y1 = SDL_max(y1, y);
+        }
+    }
+    if (x1 < 0) return;
+    int left, right;
+    if (!value_span(top, value, &left, &right)) left = right = 204;
+    left += from - 150, right += from - 150;
+    int mid = (y0 + y1) / 2, dx = right - x1, dy = line + 4 + (mid - (py + rest)) / 2 - mid; /* the motion halved */
+    for (int y = SDL_max(y0 + dy, 0); y <= y1 + 1 + dy && y < SCREEN_H; y++) { /* the text under it, with its shadow */
+        int hp = y >= line && y < line + 10, xa = hp ? SDL_min(left, x0 + dx) : x0 + dx, xb = hp ? SDL_max(right, x1 + dx) : x1 + dx;
+        for (int x = SDL_max(xa, 0); x <= xb + 1 && x < SCREEN_W; x++) main[y * SCREEN_W + x] = bottom[(23 + y % 17) * SCREEN_W + x];
+    }
+    for (int y = y0; y <= y1 + 1 && y < SCREEN_H; y++) {
+        for (int x = x0; x <= x1 + 1; x++) {
+            uint32_t p = top[y * SCREEN_W + x];
+            int shadow = p == BLACK && x > 0 && y > 0 && (heal_px(top[y * SCREEN_W + x - 1]) || heal_px(top[(y - 1) * SCREEN_W + x]) ||
+                                        heal_px(top[(y - 1) * SCREEN_W + x - 1]));
+            int ty = y + dy, tx = x + dx;
+            if ((heal_px(p) || shadow) && ty >= 0 && ty < SCREEN_H && tx >= 0 && tx < SCREEN_W) main[ty * SCREEN_W + tx] = p;
+        }
+    }
+}
+
 /* Choosing who uses an item or tech (Inventory and Techs alike): the item's or tech's bar moved to the top, a
  * line per member under it, the cards as they are. Returns 0 when not choosing. The page's state (8-9 in the
  * Inventory) starts a frame before the cards and ends a frame before they go, so this goes by the bar itself:
  * stone across the middle (x 128) where the lists have backdrop. The Techs list's buttons pass there while it
  * scrolls, under its categories, which leave a black gap at (128, 40) the bar covers. */
 static int compose_targets(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    watch_heals();
     if (text_px(bottom[50 * SCREEN_W + 128]) || bottom[40 * SCREEN_W + 128] == BLACK) return 0;
     for (int y = 0; y < 72; y += 17) memcpy(&main[y * SCREEN_W], &bottom[23 * SCREEN_W], (size_t)SDL_min(17, 72 - y) * SCREEN_W * 4);
     memcpy(main, &bottom[38 * SCREEN_W], 26 * SCREEN_W * 4); /* the bar */
@@ -675,6 +752,8 @@ static int compose_targets(uint32_t *main, const uint32_t *top, const uint32_t *
         blit_light_text(main, 8, y, top, 54, sy + 32, 44, 10);   /* name */
         blit_light_text(main, 70, y, top, 150, sy + 32, 84, 10); /* HP n/ n */
         blit_light_text(main, 162, y, top, 150, sy + 46, 84, 10); /* MP n/ n */
+        if (heal_mp) heal_number(main, top, bottom, sy, sy + 46, y, 162, HEAL_MP_FROM);
+        else heal_number(main, top, bottom, sy, sy + 32, y, 70, HEAL_REST);
     }
     return 1;
 }
