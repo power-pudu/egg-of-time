@@ -225,6 +225,13 @@ original bytes, and caches the result per region until the region is written.
       sprites without rotation do not use: `WS_OAM_ABOVE`. That entry also picks a priority from Y against a threshold
       (0x020fd618, when 0x020fd614 is set), in DS rows, so the threshold is moved for the call. World map sprites
       are not marked: Y from `SCREEN_H + rows` up counts as above.
+    - Actors parked off the DS screen: the game leaves an actor it is done with just past the screen's edge (the
+      dactyls flying off with the party, 16 rows above it until the fade), hidden on the DS but in the extra rows
+      here, where they hung at the view's top. `rt_ws_draw_cell` follows each actor's sprite instance (its r1, when
+      the call returns to 0x020482d4; `drift_by`): one that was on the DS screen, moved off it and stopped there
+      (6 frames without a move) is drawn going on at its speed over its last 8 moves until it leaves the view, the
+      drawing only. One pacing beyond the screen without having been on it stays put; moved again, it is drawn where
+      the game has it.
     - Battle effects drawn line by line (windows from the game's software HDMA, `ws_window_lines`): the game blanks
       them on the lines under the menu and the text box, so the rows above and below, drawn as lines 0 and 191,
       showed none of them (Rainbow Storm's clouds stopped at the 4:3 picture's top and bottom). An effect is made for

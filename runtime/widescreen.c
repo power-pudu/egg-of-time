@@ -532,6 +532,71 @@ static int battle_hud_cell(const CPU *cpu, uint32_t cell, int row) {
            (row < SCREEN_H - BATTLE_HUD_TOP || row >= BATTLE_HUD_TOP) && called_from(cpu, BATTLE_HUD_LIST);
 }
 
+/* Actors that leave the DS screen and stop there: the game parks an actor just past its edge when it is done with it
+ * (the dactyls flying off with the party, 16 rows above the screen until the fade), out of sight on the DS but in the
+ * margins or the zoom out's rows here, where they hung at the view's edge. Such an actor is drawn going on at the
+ * speed it had, until it is out of the view too: the drawing only, the game's place for it stays. Told by its sprite
+ * instance (main 0x02019fd4's r1, the same every frame) when drawn as an actor (the call returning to 0x020482d4).
+ * Its speed is that over its last DRIFT_SPAN moves (actors move and are drawn every other frame or so); not moved for
+ * DRIFT_STILL frames it has stopped, and goes on from its last place while all its sprites are off the DS screen
+ * there, having left it in those moves (one pacing beyond the screen stays put). Moved again, it is drawn where it is. */
+#define ACTOR_CELL GAME_ADDR(0x020482d4u, 0x02048304u)
+#define DRIFT_SLOTS 32
+#define DRIFT_SPAN 8
+#define DRIFT_STILL 6
+#define DRIFT_GAP 4 /* frames an instance may go undrawn and still be the same */
+typedef struct Drift {
+    uint32_t cell, seen;           /* the sprite instance, the frame it was last drawn */
+    int32_t x[DRIFT_SPAN + 1], y[DRIFT_SPAN + 1]; /* its places (fixed point), the last first */
+    uint32_t at[DRIFT_SPAN + 1];   /* the frames it moved to them */
+    int moves;                     /* places kept (up to DRIFT_SPAN + 1) */
+    int off, l, t, r, b;           /* its sprites were all off the DS screen; their extent there this frame */
+    int on;                        /* it was on the DS screen since these moves began */
+} Drift;
+static Drift drifts[DRIFT_SLOTS], *drawn_drift;
+static int drift_dx, drift_dy; /* the drawn instance's drift (pixels) */
+static uint32_t ws_frame; /* counts ws_fill_margins calls: the game's frames */
+
+static Drift *drift_of(uint32_t cell) {
+    Drift *free = NULL;
+    for (int i = 0; i < DRIFT_SLOTS; i++) {
+        Drift *d = &drifts[i];
+        if (d->cell == cell && ws_frame - d->seen <= DRIFT_GAP) return d;
+        if (!free || ws_frame - d->seen > ws_frame - free->seen) free = d;
+    }
+    memset(free, 0, sizeof *free);
+    free->cell = cell, free->seen = ws_frame - DRIFT_GAP - 1; /* new */
+    return free;
+}
+
+/* How far to draw the actor's instance from its place (fixed point): its drift this frame. */
+static void drift_by(uint32_t cell, int32_t x, int32_t y, int32_t *dx, int32_t *dy) {
+    Drift *d = drift_of(cell);
+    drawn_drift = d;
+    if (d->seen != ws_frame) { /* its first draw this frame */
+        int fresh = ws_frame - d->seen > DRIFT_GAP;
+        int drawn = d->r > d->l;
+        if (drawn) d->off = d->r <= 0 || d->l >= SCREEN_W || d->b <= 0 || d->t >= SCREEN_H; /* last frame's (none: culled, gone on) */
+        d->l = d->t = INT32_MAX, d->r = d->b = INT32_MIN;
+        d->seen = ws_frame;
+        if (fresh || x != d->x[0] || y != d->y[0]) { /* new, or moving (again after a stop: its speed anew) */
+            if (fresh || ws_frame - d->at[0] >= DRIFT_STILL) d->moves = 0, d->on = 0;
+            memmove(d->x + 1, d->x, DRIFT_SPAN * sizeof *d->x), memmove(d->y + 1, d->y, DRIFT_SPAN * sizeof *d->y);
+            memmove(d->at + 1, d->at, DRIFT_SPAN * sizeof *d->at);
+            d->x[0] = x, d->y[0] = y, d->at[0] = ws_frame;
+            if (d->moves <= DRIFT_SPAN) d->moves++;
+        }
+        if (drawn && !d->off) d->on = 1; /* not one pacing beyond the screen */
+    }
+    *dx = *dy = 0;
+    uint32_t still = ws_frame - d->at[0], span = d->at[0] - d->at[DRIFT_SPAN];
+    if (d->moves > DRIFT_SPAN && still >= DRIFT_STILL && d->off && d->on && span) {
+        int64_t t = still < 1024 ? still : 1024; /* 1024 frames: far beyond any view */
+        *dx = (int32_t)((int64_t)(d->x[0] - d->x[DRIFT_SPAN]) * t / span);
+        *dy = (int32_t)((int64_t)(d->y[0] - d->y[DRIFT_SPAN]) * t / span);
+    }
+}
+
 static void game_draw_cell(CPU *cpu) { rt_call_wrapped(cpu, "main", 0x02019fd4u); } /* the original */
 void rt_ws_draw_cell(CPU *cpu) {
     if ((!field_rows && !next_x && !next_y) || cpu->resume_pc) {
@@ -560,14 +625,39 @@ void rt_ws_draw_cell(CPU *cpu) {
         }
         if (best != x) rt_w32(matrix + 0x10, (uint32_t)(int32_t)best);
     }
+    uint32_t height = rt_r32(matrix + 0x14);
+    drawn_drift = NULL;
+    if (!cell_ui && cell_known && called_from(cpu, ACTOR_CELL)) {
+        int32_t dx, dy;
+        drift_by(R[1], (int32_t)place, (int32_t)height, &dx, &dy);
+        if (dx || dy) {
+            rt_w32(matrix + 0x10, rt_r32(matrix + 0x10) + (uint32_t)dx), rt_w32(matrix + 0x14, height + (uint32_t)dy);
+            cell_y += dy / 4096;
+        }
+        drift_dy = dy / 4096, drift_dx = dx / 4096;
+    }
     game_draw_cell(cpu);
     rt_w32(matrix + 0x10, place);
+    rt_w32(matrix + 0x14, height);
+    drawn_drift = NULL;
     cell_known = cell_world = 0;
 }
 
 static void game_enter_oam(CPU *cpu) { rt_call_wrapped(cpu, "main", GAME_ADDR(0x02048098u, 0x020480c8u)); } /* the original */
 void rt_ws_enter_oam(CPU *cpu) {
-    if ((!field_rows && !cell_hud && !cell_world) || !cell_known || cpu->resume_pc) {
+    uint32_t e0 = rt_r16(R[0]), e1 = rt_r16(R[0] + 2);
+    if (drawn_drift && !cpu->resume_pc && !(e0 & 0x100)) { /* its place on the DS screen, without the drift */
+        static const uint8_t w[3][4] = {{8, 16, 32, 64}, {16, 32, 32, 64}, {8, 8, 16, 32}};
+        static const uint8_t h[3][4] = {{8, 16, 32, 64}, {8, 8, 16, 32}, {16, 32, 32, 64}};
+        int shape = (e0 >> 14) % 3, size = e1 >> 14, y = e0 & 0xFF, x = e1 & 0x1FF;
+        int row = cell_y + (int8_t)(y - cell_y) - field_rows + next_y - drift_dy;
+        int col = (x >= 384 ? x - 512 : x) - field_margin + next_x - drift_dx;
+        Drift *d = drawn_drift;
+        if (col < d->l) d->l = col;
+        if (col + w[shape][size] > d->r) d->r = col + w[shape][size];
+        if (row < d->t) d->t = row;
+        if (row + h[shape][size] > d->b) d->b = row + h[shape][size];
+    }    if ((!field_rows && !cell_hud && !cell_world) || !cell_known || cpu->resume_pc) {
         game_enter_oam(cpu);
         return;
     }
@@ -823,6 +913,7 @@ static int view_shift(int lo, int hi, int size, int pad, int at_lo, int at_hi) {
 }
 
 void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) {
+    ws_frame++;
     world_margin = margin > 0 && ss_in_overworld() ? margin : 0;
     world_rows = world_margin ? rows : 0;
     if (world_margin) fill_world_margins(margin, rows);
