@@ -169,8 +169,10 @@ static uint32_t shifted_frame[VIDEO_LINE_MAX * SCREEN_H], present_shifted[VIDEO_
 static uint8_t shifted_sprite[VIDEO_LINE_MAX * SCREEN_H], present_shifted_sprite[VIDEO_LINE_MAX * SCREEN_H]; /* its sprite pixels */
 static int present_shifted_on;
 static int present_main_w, present_main_h;
-static uint32_t ui_frame[VIDEO_LINE_MAX * SCREEN_H], present_ui[VIDEO_LINE_MAX * SCREEN_H]; /* see Engine.rows */
-static int present_ui_on;
+static uint32_t ui_frame[VIDEO_LINE_MAX * SCREEN_H], present_ui[VIDEO_LINE_MAX * VIDEO_ROWS_MAX]; /* see Engine.rows */
+static uint8_t ui_stays[VIDEO_LINE_MAX * SCREEN_H]; /* the UI pixel is a number placed at an actor (WS_OAM_PLACED) */
+static int present_ui_on, present_ui_h;
+static SDL_AtomicInt ui_edges; /* video_set_ui_edges */
 static SDL_Mutex *present_lock;
 static uint64_t present_serial, present_time;
 static int present_dx, present_dy, present_cut; /* camera motion into the published frame; a cut (no motion known) */
@@ -488,7 +490,7 @@ typedef struct ObjLine { /* from column -margin, like the layer buffers */
     uint8_t alpha[VIDEO_LINE_MAX];  /* 0xFF: normal; 0xFE: semi-transparent; 0..16: bitmap alpha */
     uint8_t win[VIDEO_LINE_MAX];    /* OBJ window mask */
     uint8_t party[VIDEO_LINE_MAX];  /* the pixel's sprite moves with the camera */
-    uint8_t ui[VIDEO_LINE_MAX];     /* the pixel's sprite is in screen coordinates (ws_tag_oam) */
+    uint8_t ui[VIDEO_LINE_MAX];     /* the pixel's sprite is in screen coordinates (ws_tag_oam); 2: placed at an actor */
     HdLine hd;                      /* while hd_on */
 } ObjLine;
 
@@ -557,7 +559,7 @@ static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, i
         int w = obj_w[shape][size], h = obj_h[shape][size];
         int bw = w, bh = h;
         if (affine && (a0 & 0x200)) { bw *= 2; bh *= 2; }
-        int ui = e->rows && !affine && (a1 & WS_OAM_UI);
+        int ui = e->rows && !affine && (a1 & WS_OAM_UI) ? (a1 & WS_OAM_PLACED ? 2 : 1) : 0;
         if (ui && skip_ui) continue;
         int ly = (y - (a0 & 0xFF)) & 0xFF;
         if (e->rows && !ui) { /* Y 8 bits: from the view's top; the rows left over are above it, or tagged so */
@@ -710,6 +712,7 @@ static void find_party(Engine *e, int dx, int dy, int gliding) {
 }
 
 void video_set_camera_smoothing(int on) { SDL_SetAtomicInt(&party_wanted, on); }
+void video_set_ui_edges(int on) { SDL_SetAtomicInt(&ui_edges, on); }
 
 /* ---- composition ---- */
 
@@ -1232,7 +1235,7 @@ static void engine_frame_start(Engine *e) {
             e->ref_x[i] -= e->rows * (int16_t)reg16(e, 0x22 + 0x10 * i);
             e->ref_y[i] -= e->rows * (int16_t)reg16(e, 0x26 + 0x10 * i);
         }
-        if (e->rows) memset(ui_frame, 0, sizeof ui_frame);
+        if (e->rows) memset(ui_frame, 0, sizeof ui_frame), memset(ui_stays, 0, sizeof ui_stays);
         e->band_rows = e->ring = 0;
         if (e->ring_keep) e->ring_keep--;
         e->ring_fits <<= 1;
@@ -1410,7 +1413,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         if (e->rows && on_screen) {
             memset(&ol_ui, 0, sizeof ol_ui);
             if (objs || (dispcnt & 0x8000)) render_objs(e, y, dispcnt, &ol_ui, 0, 0, 0);
-            ui_line = box || memchr(ol_ui.ui, 1, (size_t)width);
+            ui_line = box || memchr(ol_ui.ui, 1, (size_t)width) || memchr(ol_ui.ui, 2, (size_t)width);
         }
 
         /* [0]: the screen's columns, [1]: the margins (as the frame started for layers margin_bg keeps). */
@@ -1530,6 +1533,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 }
             }
             dst[x] = pass && !e->sel_shift && !(sprite_shows && (pass == 2 ? o->ui[x] : o->party[x])) && !still ? 0 : to_rgba(c);
+            if (pass == 2) ui_stays[y * VIDEO_LINE_MAX + x] = dst[x] && !still && o->ui[x] == 2;
             if (!pass && !side && !margin_kept && (wx < SIDE_COLS || wx >= SCREEN_W - SIDE_COLS)) { /* what the screen shows of each BG (repeat_bgs) */
                 if (layer[0] < 4) e->shown_now |= (uint8_t)(1 << layer[0]);
                 if (layer[1] < 4 && blended) e->shown_now |= (uint8_t)(1 << layer[1]);
@@ -1630,6 +1634,33 @@ void video_set_zoom(int rows, int margin) {
     SDL_SetAtomicInt(&zoom_rows, SDL_clamp(rows, 0, (VIDEO_ROWS_MAX - SCREEN_H) / 2));
 }
 
+/* Zoomed out with the smaller text, the UI layer as tall as the picture: the DS screen's 192 rows in its middle, but
+ * a box in the screen's upper half (its rows together with the sprites on them, such as the battle's panels and the
+ * hand of a box's choices) at the top of the view and one in the lower half at its bottom, where the DS screen has
+ * them; a box across the middle stays. Left in the middle, the boxes covered the room around the party, the view's
+ * edges empty. The numbers placed at an actor ("Miss!", damage) stay over it. shown: the view's rows above and below
+ * the screen (rows less the guard rows of camera smoothing). */
+static void ui_to_edges(int w, int rows, int shown) {
+    static uint8_t moves[SCREEN_H];
+    for (int y = 0; y < SCREEN_H; y++) {
+        moves[y] = 0;
+        for (int x = 0; x < w && !moves[y]; x++) moves[y] = ui_frame[y * VIDEO_LINE_MAX + x] && !ui_stays[y * VIDEO_LINE_MAX + x];
+    }
+    memset(present_ui, 0, (size_t)w * (SCREEN_H + 2 * rows) * 4);
+    for (int y0 = 0, y1; y0 < SCREEN_H; y0 = y1) {
+        for (y1 = y0 + 1; y1 < SCREEN_H && moves[y1] == moves[y0]; y1++) {}
+        int dy = !moves[y0] ? 0 : y1 <= SCREEN_H / 2 ? -shown : y0 >= SCREEN_H / 2 ? shown : 0; /* the band y0..y1-1 */
+        for (int y = y0; y < y1; y++) {
+            const uint32_t *src = &ui_frame[y * VIDEO_LINE_MAX];
+            const uint8_t *stays = &ui_stays[y * VIDEO_LINE_MAX];
+            uint32_t *to = &present_ui[(y + rows + dy) * w], *at = &present_ui[(y + rows) * w];
+            for (int x = 0; x < w; x++) {
+                if (src[x]) (stays[x] ? at : to)[x] = src[x];
+            }
+        }
+    }
+}
+
 void video_end_frame(void) {
     /* POWCNT1 bit 15: engine A on the top screen. */
     int a_top = (io_get16(0x304) >> 15) & 1;
@@ -1662,8 +1693,13 @@ void video_end_frame(void) {
         memcpy(&present_still[y * w], &still_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);
     }
     present_ui_on = rows && present_main_h == h;
-    for (int y = 0; present_ui_on && y < SCREEN_H; y++) {
-        memcpy(&present_ui[y * w], &ui_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);
+    present_ui_h = present_ui_on && SDL_GetAtomicInt(&ui_edges) ? h : SCREEN_H;
+    if (present_ui_h == SCREEN_H) {
+        for (int y = 0; present_ui_on && y < SCREEN_H; y++) {
+            memcpy(&present_ui[y * w], &ui_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);
+        }
+    } else {
+        ui_to_edges(w, rows, SDL_max(rows - (SDL_GetAtomicInt(&party_wanted) ? VIDEO_SLIDE_ROWS : 0), 0));
     }
     present_hd_on = hd_on;
     if (hd_on) {
@@ -1714,7 +1750,7 @@ int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, int *main_
     int w = present_main_w, h = *main_h = present_main_h;
     memcpy(main, present_main, (size_t)w * h * 4);
     *ui_on = present_ui_on;
-    if (present_ui_on) memcpy(ui, present_ui, (size_t)w * SCREEN_H * 4);
+    if (present_ui_on) memcpy(ui, present_ui, (size_t)w * present_ui_h * 4);
     if (present_bottom_top_on) shown_bottom_top = present_bottom_top;
     *party_on = present_party_on;
     if (present_party_on) memcpy(party, present_party, (size_t)w * h * 4);

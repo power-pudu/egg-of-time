@@ -166,7 +166,7 @@ static const uint32_t *const screens[3] = {top_px, bottom_px, main_px};
 static int main_w = SCREEN_W, main_h = SCREEN_H; /* main_px: rows of this width (widescreen), this many (zoom out) */
 static uint32_t party_px[VIDEO_LINE_MAX * VIDEO_ROWS_MAX]; /* main screen's party layer (camera smoothing) */
 static uint32_t still_px[VIDEO_LINE_MAX * VIDEO_ROWS_MAX]; /* main screen's still layer (camera smoothing) */
-static uint32_t ui_px[VIDEO_LINE_MAX * SCREEN_H];          /* main screen's UI layer (zoom out) */
+static uint32_t ui_px[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];     /* main screen's UI layer (zoom out) */
 /* The screens' sources for HD graphics mods (gfx_mod.c). */
 static VideoHd hd_top[SCREEN_W * SCREEN_H], hd_bottom[SCREEN_W * SCREEN_H], hd_main[VIDEO_LINE_MAX * VIDEO_ROWS_MAX],
     hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];

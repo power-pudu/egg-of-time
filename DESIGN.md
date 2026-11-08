@@ -250,7 +250,7 @@ original bytes, and caches the result per region until the region is written.
       middle of the picture, but are not slid by camera smoothing: `ui_frame`, 192 rows, composed in a third pass
       (`draw_ui`). Kept at the original scale over the whole picture, as they first were, their pixels fell between
       the picture's and the text was scaled unevenly (worse at 77%), and the boxes did not shrink with the world; that
-      stays a choice (Zoomed out text: Original size), for screens where the smaller text is too small. Sprites drawn with the surface's own view are marked `WS_OAM_UI`, as is the battle HUD, which uses
+      stays a choice (Zoomed out text: Original size), for screens where the smaller text is too small. With the smaller text the layer is as tall as the picture (`ui_to_edges`): a band of UI rows in the DS screen's upper half goes to the view's top, one in its lower half to its bottom, where the DS screen has them (the battle's message and panels, the field's text box with the hand of its choices); a band across the middle stays. Left on the screen's own rows in the middle, the boxes covered the room around the party with the view's edges empty. The numbers placed at an actor (`WS_OAM_PLACED`, from `cell_world`) stay over it. Sprites drawn with the surface's own view are marked `WS_OAM_UI`, as is the battle HUD, which uses
       the G2D view: in a battle, one-sprite cells on the rows of the panel, at the top (above 60) or the bottom (from
       132), of the list the scene's draw calls returning to 0x02041a34 (gauges, HP / MP, the menu's hand; found by
       logging cells while fighting). That list's target bracket (4 sprites) and the hand over a target (the next cell

@@ -497,7 +497,8 @@ static void scale2x(const uint32_t *src, int w, int h, uint32_t *dst) {
 }
 
 static int screen_width(int tex) { return tex >= 2 ? main_w : SCREEN_W; }
-static int screen_height(int tex) { return tex >= 2 && tex < 5 ? main_h : SCREEN_H; }
+static int ui_tall(void) { return !SETTING(SET_ZOOM_UI); } /* the UI layer as tall as the picture (video_set_ui_edges) */
+static int screen_height(int tex) { return tex >= 2 && (tex < 5 || ui_tall()) ? main_h : SCREEN_H; }
 
 /* px with the Color setting applied (px itself for Original). */
 static const uint32_t *color_corrected(const uint32_t *px, int w, int h) {
@@ -809,6 +810,11 @@ static void draw_ui(const View *v, int x, int y, int n, int cw, int ch) {
                           &(SDL_FRect){(float)x * n, (float)y * n, (float)cw * n, (float)ch * n});
         return;
     }
+    if (ui_tall()) { /* the picture's rows, its boxes at the view's top and bottom (video.c ui_to_edges) */
+        SDL_RenderTexture(v->ren, t, &(SDL_FRect){(float)main_guard * k, (float)main_guard_rows * k, (float)cw * k, (float)ch * k},
+                          &(SDL_FRect){(float)x * n, (float)y * n, (float)cw * n, (float)ch * n});
+        return;
+    }
     float top = (float)(ch - SCREEN_H) / 2;
     SDL_RenderTexture(v->ren, t, &(SDL_FRect){(float)main_guard * k, 0, (float)cw * k, (float)SCREEN_H * k},
                       &(SDL_FRect){(float)x * n, ((float)y + top) * n, (float)cw * n, (float)SCREEN_H * n});
@@ -1057,6 +1063,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
     video_set_fill_sides(SETTING(SET_FILL));
     video_set_track_bottom(SETTING(SET_MINIMAP) && minimap_allowed(&primary));
     video_set_camera_smoothing(asked_guard != 0);
+    video_set_ui_edges(ui_tall());
     main_w = width;
     main_h = height;
     ui_on = ui != NULL;

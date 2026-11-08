@@ -75,6 +75,9 @@ const VideoBottomTop *video_bottom_top(void);
 /* hd (NULL: not wanted): the pixels' sources for HD graphics mods, when the frame has them (hd->on). */
 int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, int *main_h, uint32_t *party, int *party_on, uint32_t *still,
                      int *still_on, uint32_t *ui, int *ui_on, VideoHdFrame *hd);
+/* Zoomed out text Smaller: the UI layer is the zoomed picture's height, its boxes at its top and bottom (else the
+ * DS screen's 192 rows; any thread). */
+void video_set_ui_edges(int on);
 /* Camera smoothing on: the field's camera-following sprites get the party layer (any thread). */
 void video_set_camera_smoothing(int on);
 /* Serial of the latest frame; also how far the field camera moved since the previous frame (pixels; 0 outside

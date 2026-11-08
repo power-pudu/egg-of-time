@@ -21,6 +21,8 @@ int ws_world_sprite_limit(int rows);
  * view); it is in screen coordinates (the UI, not shifted by the rows). */
 #define WS_OAM_ABOVE 0x200u
 #define WS_OAM_UI 0x400u
+/* With WS_OAM_UI: a UI object placed at an actor's place (the battle's "Miss!", damage), not part of a box. */
+#define WS_OAM_PLACED 0x800u
 /* In the field: the top screen's columns the room covers, x0..x1-1 (beyond them, other rooms or its map
  * repeated); 0 elsewhere. */
 int ws_room_span(int *x0, int *x1);

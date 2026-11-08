@@ -535,7 +535,7 @@ void rt_ws_enter_oam(CPU *cpu) {
         return;
     }
     uint32_t a = R[0];
-    uint32_t a0 = rt_r16(a), a1 = rt_r16(a + 2) & ~(WS_OAM_UI | WS_OAM_ABOVE);
+    uint32_t a0 = rt_r16(a), a1 = rt_r16(a + 2) & ~(WS_OAM_UI | WS_OAM_ABOVE | WS_OAM_PLACED);
     int y = a0 & 0xFF, real = cell_y + (int8_t)(y - cell_y); /* in the view, from its top */
     int affine = a0 & 0x100, shown = cell_ui ? y : real - field_rows + next_y; /* its row on the DS screen */
     if (!affine) {
@@ -548,7 +548,7 @@ void rt_ws_enter_oam(CPU *cpu) {
             a0 = (a0 & ~0xFFu) | ((uint32_t)shown & 0xFF);
             a1 = (a1 & ~0x1FFu) | ((a1 - (uint32_t)next_x) & 0x1FF);
         }
-        if (cell_ui || cell_hud) a1 |= WS_OAM_UI;
+        if (cell_ui || cell_hud) a1 |= WS_OAM_UI | (cell_world ? WS_OAM_PLACED : 0);
         else if (real < 0) a1 |= WS_OAM_ABOVE;
         else if (real >= SCREEN_H + 2 * field_rows) a0 |= 0x200; /* beyond the view: hidden */
         rt_w16(a, (uint16_t)a0);
