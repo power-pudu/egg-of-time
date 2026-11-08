@@ -184,7 +184,16 @@ static int bg_follows(int bg, uint32_t scroll, int L) {
 /* The field camera's top-left in the room, in pixels (0x020760f8: x, y; BG scroll moves with it). */
 #define CAMERA GAME_ADDR(0x020760f8u, 0x02076118u)
 
+#define CURRENT_SCENE GAME_ADDR(0x0207088cu, 0x020708acu)
+
 int ws_camera(int *x, int *y) {
+    if (ss_in_overworld()) { /* the world map: the view's place in the world, layer 1's (x wraps at 0x600, y at 0x400) */
+        uint32_t base = rt_r32(CURRENT_SCENE);
+        if (!ram_ptr(base)) return 0;
+        *x = rt_r16(base + 0xddc0u + 0x22a4 + 2); /* the world object (WORLD) */
+        *y = rt_r16(base + 0xddc0u + 0x22ac + 2);
+        return *x < 0x600 && *y < 0x400;
+    }
     if (!ss_in_field()) return 0;
     *x = (int16_t)rt_r16(CAMERA);
     *y = (int16_t)rt_r16(CAMERA + 2);
@@ -352,7 +361,6 @@ static void set_sprite_view(int margin, int rows, int dx, int dy) {
  * the G2D view above for world sprites (characters, gauges, damage numbers) and puts it back for the UI drawn in
  * screen coordinates (battle menus and their text, the command cursor). In the field that view starts at the
  * left margin, so the UI keeps its 4:3 place, centred. */
-#define CURRENT_SCENE GAME_ADDR(0x0207088cu, 0x020708acu)
 #define SCENE_SURFACE 0xd748u
 
 static void set_screen_view(int margin) {

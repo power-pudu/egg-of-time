@@ -34,7 +34,7 @@ int ws_repeat_bgs(void);
 /* In the field: the BGs (bit per BG: BG0, BG3) at scroll 0 that hold a picture of their own, not the room map's
  * layer (the prison bridge's sky); their margins show the screen reflected. 0 otherwise. */
 int ws_picture_bgs(void);
-/* The field camera's position in the room (pixels); 0 outside the field. */
+/* The field camera's position in the room, or the world map's view in the world (pixels); 0 elsewhere. */
 int ws_camera(int *x, int *y);
 /* The window positions of each line of the coming frame (WIN0H | WIN1H << 16), when the game's software HDMA
  * sets them line by line (battle effects, Magus's portal; a window it leaves alone keeps its register); else 0. */

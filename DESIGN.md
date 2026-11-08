@@ -365,8 +365,10 @@ original bytes, and caches the result per region until the region is written.
     repeated and skipped frames each time, seen as a camera stutter. A state load moves the next burst to about 1.6 s
     after it. Fast forward and the menu keep the timer.
   - Camera smoothing (framerates above 60): each published frame carries how far the field camera moved
-    (`video_frame_serial`; camera at 0x020760f8, steps over 8 pixels, and frames outside the field, count as
-    cuts). The game moves that camera a frame before the BG scroll and OAM that show it (written at the next
+    (`video_frame_serial`; camera at 0x020760f8, steps over 8 pixels, and frames outside the field and the world
+    map, count as cuts). In the world map the camera is the view's place in the world, layer 1's (world object
+    +0x22a4 / +0x22ac + 2, x wrapping at 0x600, y at 0x400; read a frame early like the field's): without it the
+    world map moved a whole step on every other refresh and none between (walking 2 px a frame). The game moves that camera a frame before the BG scroll and OAM that show it (written at the next
     VBlank: in the trial's pan, camera y 23 to 24 one frame, VOFS 7 to 8 the next), so a frame's camera is the one
     read a frame earlier; taken from the same frame, every step slid a picture that had not moved yet, back a
     pixel then forward. The host keeps the view's lag behind the shown frame's camera per axis (main.c `Glide`): a camera step
