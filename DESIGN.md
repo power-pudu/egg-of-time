@@ -215,7 +215,10 @@ original bytes, and caches the result per region until the region is written.
       (`mirror_bg`) reflects at the top and bottom too.
     - Maps: `ws_fill_margins` writes every ring cell outside the game's own (its 32 columns, the 4:3 view's rows and the
       25th), so the ring holds the taller view; the world map fills by tile row, since a metatile row can show at both
-      ring edges. The object cull is widened in rows too.
+      ring edges. The object cull is widened in rows too. Rows beyond a layer's map top or bottom, which the camera
+      never reaches, repeat its first or last row instead of wrapping round (`map_row`: the sky behind Azala's tower,
+      layer 1 on its own camera near its map's top, had the canyon's rocks above it); a layer whose own 4:3 rows
+      cross its map's end wraps as before.
     - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
       bottom from one above the view, as the DS's 64 unused rows did. `rt_ws_draw_cell` (main 0x02019fd4) knows the cell's
       place, and `rt_ws_enter_oam` (main 0x02048098) marks each sprite while it is entered, in attribute 1 bits that

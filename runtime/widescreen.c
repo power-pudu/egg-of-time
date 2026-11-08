@@ -127,6 +127,16 @@ static uint32_t room_tile(uint32_t scroll, uint32_t tilesets, int L, int c, int 
     return rt_r8(t) | rt_r8(t + 1) << 8 | rt_r8(t + 2) << 16;
 }
 
+/* Layer L's tile row r, kept on its map when the game's own rows (from own, the view's 24) are: the zoomed-out view
+ * shows rows beyond the map's top or bottom that the camera never reaches, and there the map would wrap round (the
+ * canyon and sky behind Azala's tower, layer 1 on its own camera 16 rows from its map's top: the rocks at its bottom
+ * stood above the sky). Its first or last row goes on instead. A layer whose own rows cross its map's end wraps. */
+static int map_row(uint32_t scroll, int L, int r, int own) {
+    int n = (rt_r8(scroll + 0x1b + 2 * L) + 1) * 2;
+    if (own < 0 || own + SCREEN_H / 8 >= n) return r;
+    return r < 0 ? 0 : r >= n ? n - 1 : r;
+}
+
 static uint16_t map_entry(int L, uint32_t t) {
     uint32_t b0 = t & 0xFF, b1 = (t >> 8) & 0xFF, pal = b1 >> 4;
     if (L == 2) pal = rt_r8(PAL_REMAP + pal);
@@ -735,14 +745,15 @@ static void fill_field_margins(int margin, int rows) {
              * (0, 16 after the Lab 32 race), and the view's shift to the room's ends then takes the range around the
              * ring, onto the game's own cells. */
             if (((c - camc) & 63) < 32 && ((r - camr) & 31) <= SCREEN_H / 8) continue;
-            uint32_t t0 = room_tile(scroll, tilesets, 0, c, r), t1 = room_tile(scroll, tilesets, 1, c + dc1, r + dr1);
+            uint32_t t0 = room_tile(scroll, tilesets, 0, c, map_row(scroll, 0, r, camr));
+            uint32_t t1 = room_tile(scroll, tilesets, 1, c + dc1, map_row(scroll, 1, r + dr1, camr + dr1));
             int pri0 = (t0 >> 16) & 0xFF, pri1 = (t1 >> 16) & 0xFF;
             for (int L = 0; L < 3; L++) {
                 static const int bg_of[3] = {2, 3, 0};
                 int ok = L == 0 ? ok0 : L == 1 ? ok1 : ok2;
                 if (!ok) continue;
                 int slot = (rt_r8(scroll + 0x8e + 2 * L) + c - camc) & 63, row = (rt_r8(scroll + 0x8f + 2 * L) + r - camr) & 31;
-                uint32_t t = L == 0 ? t0 : L == 1 ? t1 : room_tile(scroll, tilesets, 2, c, r);
+                uint32_t t = L == 0 ? t0 : L == 1 ? t1 : room_tile(scroll, tilesets, 2, c, map_row(scroll, 2, r, camr));
                 put(bg_of[L], slot, row, L == 0 && pri0 ? 0 : L == 1 && pri1 ? 0 : map_entry(L, t));
                 if (L == 0 && okhi) put(1, slot, row, ok1 && pri1 ? map_entry(1, t1) : pri0 ? map_entry(0, t0) : 0);
             }
