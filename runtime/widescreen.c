@@ -109,6 +109,12 @@ void ws_state(RtStateIO *s) {
     if (rt_state_loading(s)) view_loaded = 1;
 }
 
+/* Layer L's camera: its top-left tile column and row in the room map. Layer 1 has its own (+0xc, +0x10), apart
+ * from layer 0's (+4, +8) where it scrolls slower: the moonlit sky of Magus's castle at about half the speed. Layer 2
+ * goes with layer 0. */
+static int layer_col(uint32_t scroll, int L) { return rt_r16(scroll + (L == 1 ? 0xc : 4)); }
+static int layer_row(uint32_t scroll, int L) { return rt_r16(scroll + (L == 1 ? 0x10 : 8)); }
+
 /* Packed tile (b0 | b1 << 8 | b2 << 16) of layer L at world tile (c, r). */
 static uint32_t room_tile(uint32_t scroll, uint32_t tilesets, int L, int c, int r) {
     uint32_t i = ((uint32_t)(c >> 1) & rt_r8(scroll + 0x1a + 2 * L)) + (((uint32_t)(r >> 1) & rt_r8(scroll + 0x1b + 2 * L)) << 8);
@@ -139,7 +145,7 @@ static void put(int bg, int slot, int row, uint16_t v) {
  * so on their (unmoving) ring origins; filled from the room map, the margins showed that map scrolling with the
  * camera beside a still sky. */
 static int bg_holds_layer(int bg, uint32_t scroll, uint32_t tilesets, int L) {
-    int camc = rt_r16(scroll + 4), camr = rt_r16(scroll + 8), oc = rt_r8(scroll + 0x8e + 2 * L), orow = rt_r8(scroll + 0x8f + 2 * L);
+    int camc = layer_col(scroll, L), camr = layer_row(scroll, L), oc = rt_r8(scroll + 0x8e + 2 * L), orow = rt_r8(scroll + 0x8f + 2 * L);
     uint32_t dispcnt = io_get32(0), cnt = io_get16(0x08 + 2 * bg);
     uint32_t base = 0x06000000u + ((dispcnt >> 27) & 7) * 0x10000u + ((cnt >> 8) & 0x1F) * 0x800u;
     int cells = 0, same = 0;
@@ -668,7 +674,8 @@ static void fill_field_margins(int margin, int rows) {
     picture_bgs = (pic1 && !(io_get16(0x1c) & 0x1F8)) << 3 | (pic2 && !(io_get16(0x10) & 0x1F8));
     view_bgs &= ~(pic1 << 3 | pic2);
     int okhi = ok0 && bg_on_layer(1, scroll, 0); /* BG1: the priority tiles of the filled layers 0 and 1 */
-    int camc = rt_r16(scroll + 4), camr = rt_r16(scroll + 8);
+    int camc = layer_col(scroll, 0), camr = layer_row(scroll, 0);
+    int dc1 = layer_col(scroll, 1) - camc, dr1 = layer_row(scroll, 1) - camr; /* layer 1's tiles, from its own camera */
     /* The tiles the filled layers show: they agree on the tile, not always on the pixel (Zenan Bridge: BG0 still
      * at 0, 0, BG2 and BG3 6 rows down, so they show a 25th row). */
     int left = camc + 1, right = camc - 1, top = camr, bottom = camr;
@@ -689,7 +696,7 @@ static void fill_field_margins(int margin, int rows) {
              * (0, 16 after the Lab 32 race), and the view's shift to the room's ends then takes the range around the
              * ring, onto the game's own cells. */
             if (((c - camc) & 63) < 32 && ((r - camr) & 31) <= SCREEN_H / 8) continue;
-            uint32_t t0 = room_tile(scroll, tilesets, 0, c, r), t1 = room_tile(scroll, tilesets, 1, c, r);
+            uint32_t t0 = room_tile(scroll, tilesets, 0, c, r), t1 = room_tile(scroll, tilesets, 1, c + dc1, r + dr1);
             int pri0 = (t0 >> 16) & 0xFF, pri1 = (t1 >> 16) & 0xFF;
             for (int L = 0; L < 3; L++) {
                 static const int bg_of[3] = {2, 3, 0};
