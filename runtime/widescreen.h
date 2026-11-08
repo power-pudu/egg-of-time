@@ -43,6 +43,10 @@ enum { WS_HDMA_MAX = 32, WS_HDMA_UNITS = 8 };
 typedef struct WsHdmaWrite { uint32_t dst; int halves; uint16_t old[WS_HDMA_UNITS]; } WsHdmaWrite;
 typedef struct WsHdmaSaved { int n; WsHdmaWrite w[WS_HDMA_MAX]; } WsHdmaSaved;
 void ws_hdma_line(int line, WsHdmaSaved *saved);
+/* The shortest period, in lines, of what the HDMA writes on lines top..bottom (the windows' channel left out),
+ * checked over at least WS_PERIOD_LINES lines; 0 when there is none. */
+enum { WS_PERIOD_LINES = 16 };
+int ws_hdma_period(int top, int bottom);
 void ws_hdma_restore(const WsHdmaSaved *saved);
 /* Save states: the copy of the room map battles use (an optional block). */
 typedef struct RtStateIO RtStateIO;

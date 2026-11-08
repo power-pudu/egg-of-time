@@ -107,7 +107,12 @@ typedef struct Engine {
                      * registers, those below with line 191's (but see effect_rows). Rows are numbered from the screen's
                      * top (-rows..), and the buffers hold them from their first (FROW). The text box and the sprites
                      * drawn in screen coordinates go to ui_frame (192 rows) to be shown at the original scale. */
-    int band_top, band_rows; /* effect_rows: the lines a battle effect is on, stretched over the picture's rows */
+    int band_top, band_rows; /* effect_rows: the lines a battle effect is on, stretched over the picture's rows, */
+    int ring;                /* or (a ring) drawn from its circles beyond them, its tables repeating every */
+    int band_period;         /* band_period lines (0: the nearest line's) */
+    float ring_cx, ring_cy, ring_outer, ring_inner; /* the ring's circles (ring_inner 0: a disc) */
+    float ring_width;        /* the ring's width when both its circles last showed (0: none yet) */
+    int ring_keep;           /* the frames its centre still counts for, the ring having shown */
     int obj_rows;   /* sprite Y counts from this many rows above the screen (the widened view, widescreen.c) */
     int room_y0, room_y1; /* with room_clip: its rows */
     int obj_origin; /* sprite X counts from this many columns left of the screen (widescreen.c) */
@@ -932,6 +937,158 @@ static void window_margins(void) {
  * the screen's included: each row is drawn as the band's line at the same height (its windows, the rows of the BGs
  * not the room's, render_engine_line) with what the game's software HDMA writes for that line (ws_hdma_line,
  * video_render_line); sprites and the room's BGs (the stars too, coloured by the line's palette) keep their rows. */
+/* A circle through points (Kasa's least squares): 1 with its centre and radius, else 0. */
+static int fit_circle(const float *px, const float *py, const uint8_t *use, int n, float *cx, float *cy, float *r) {
+    double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0, sz = 0, k = 0;
+    for (int i = 0; i < n; i++) {
+        if (use && !use[i]) continue;
+        double x = px[i], y = py[i], z = x * x + y * y;
+        sx += x, sy += y, sxx += x * x, syy += y * y, sxy += x * y, sxz += x * z, syz += y * z, sz += z, k++;
+    }
+    /* [sxx sxy sx; sxy syy sy; sx sy k] (D E F) = -(sxz syz sz), the circle x^2 + y^2 + Dx + Ey + F = 0 */
+    double a[3][4] = {{sxx, sxy, sx, -sxz}, {sxy, syy, sy, -syz}, {sx, sy, k, -sz}};
+    for (int c = 0; c < 3; c++) {
+        int piv = c;
+        for (int r2 = c + 1; r2 < 3; r2++) if (SDL_fabs(a[r2][c]) > SDL_fabs(a[piv][c])) piv = r2;
+        if (SDL_fabs(a[piv][c]) < 1e-9) return 0;
+        for (int j = 0; j < 4; j++) { double t = a[c][j]; a[c][j] = a[piv][j], a[piv][j] = t; }
+        for (int r2 = 0; r2 < 3; r2++) {
+            if (r2 == c) continue;
+            double f = a[r2][c] / a[c][c];
+            for (int j = c; j < 4; j++) a[r2][j] -= f * a[c][j];
+        }
+    }
+    double d = a[0][3] / a[0][0], ee = a[1][3] / a[1][1], f = a[2][3] / a[2][2];
+    double x0 = -d / 2, y0 = -ee / 2, r2 = x0 * x0 + y0 * y0 - f;
+    if (r2 <= 0) return 0;
+    *cx = (float)x0, *cy = (float)y0, *r = (float)SDL_sqrt(r2);
+    return 1;
+}
+
+/* The circle most of the points not yet taken lie on (RANSAC over triples, then refined): their count, marking
+ * them in mark. */
+enum { RING_POINTS_MAX = 4 * SCREEN_H, RING_MIN = 12, RING_RADIUS_MAX = 320 };
+#define RING_TOLERANCE 1.5f
+static int on_circle(float x, float y, float cx, float cy, float r) {
+    return SDL_fabsf(SDL_sqrtf((x - cx) * (x - cx) + (y - cy) * (y - cy)) - r) <= RING_TOLERANCE;
+}
+static int ring_circle(const float *px, const float *py, const uint8_t *taken, int n, uint8_t *mark, float *cx, float *cy, float *r) {
+    uint32_t seed = 0x2545F491u;
+    int best = 0;
+    float bx = 0, by = 0, br = 0;
+    for (int it = 0; it < 400; it++) {
+        int t[3];
+        for (int k = 0; k < 3; k++) {
+            seed = seed * 1664525u + 1013904223u;
+            t[k] = (int)((seed >> 8) % (uint32_t)n);
+        }
+        if (taken[t[0]] || taken[t[1]] || taken[t[2]] || t[0] == t[1] || t[1] == t[2] || t[0] == t[2]) continue;
+        float qx[3] = {px[t[0]], px[t[1]], px[t[2]]}, qy[3] = {py[t[0]], py[t[1]], py[t[2]]}, x0, y0, r0;
+        if (!fit_circle(qx, qy, NULL, 3, &x0, &y0, &r0) || r0 > RING_RADIUS_MAX) continue;
+        int c = 0;
+        for (int i = 0; i < n; i++) c += !taken[i] && on_circle(px[i], py[i], x0, y0, r0);
+        if (c > best) best = c, bx = x0, by = y0, br = r0;
+    }
+    if (best < RING_MIN) return 0;
+    for (int i = 0; i < n; i++) mark[i] = !taken[i] && on_circle(px[i], py[i], bx, by, br);
+    if (!fit_circle(px, py, mark, n, cx, cy, r) || *r > RING_RADIUS_MAX) return 0;
+    return best;
+}
+
+/* The radius most of the points not yet marked lie at from (cx, cy): their count (at least 2), marking them k. */
+enum { RING_KEEP = 4 };
+static int ring_radius(const float *px, const float *py, int n, float cx, float cy, uint8_t k, uint8_t *mark, float *r) {
+    static float d[RING_POINTS_MAX];
+    if (k == 1) memset(mark, 0, (size_t)n);
+    for (int i = 0; i < n; i++) d[i] = SDL_sqrtf((px[i] - cx) * (px[i] - cx) + (py[i] - cy) * (py[i] - cy));
+    int best = 0;
+    float at = 0;
+    for (int i = 0; i < n; i++) {
+        if (mark[i]) continue;
+        int c = 0;
+        for (int j = 0; j < n; j++) c += !mark[j] && SDL_fabsf(d[j] - d[i]) <= RING_TOLERANCE;
+        if (c > best) best = c, at = d[i];
+    }
+    if (best < 2) return 0;
+    double sum = 0;
+    int c = 0;
+    for (int i = 0; i < n; i++) if (!mark[i] && SDL_fabsf(d[i] - at) <= RING_TOLERANCE) sum += d[i], c++;
+    *r = (float)(sum / c);
+    best = 0;
+    for (int i = 0; i < n; i++) if (!mark[i] && SDL_fabsf(d[i] - *r) <= RING_TOLERANCE) mark[i] = k, best++;
+    return best;
+}
+
+/* A ring (the Rainbow Beam of an enemy: an expanding circle, its arcs left and right of the hole in WIN0 and WIN1)
+ * or a disc: the window edges on the band's lines that do not stop at a screen side lie on one circle or two
+ * concentric ones. Its spans beyond the screen's columns and on the lines the game blanks are then drawn from the
+ * circles, as a wider and taller screen would show it, instead of carrying its edges on (straight up and down). */
+static int fit_ring(Engine *e, int top, int bottom) {
+    static float px[RING_POINTS_MAX], py[RING_POINTS_MAX];
+    static uint8_t taken[RING_POINTS_MAX], mark[RING_POINTS_MAX], right[RING_POINTS_MAX];
+    int n = 0, x[2];
+    for (int y = top; y <= bottom; y++) {
+        for (int w = 0; w < 2; w++) {
+            if (win_span(y, w, &x[0], &x[1]) <= 0) continue;
+            for (int s = 0; s < 2; s++) if (x[s] > 0 && x[s] < SCREEN_W) px[n] = (float)x[s], py[n] = (float)y, right[n] = !s, n++;
+        }
+    }
+    float cx = e->ring_cx, cy = e->ring_cy, r = 0, r2 = 0;
+    int a = 0, b = 0;
+    if (e->ring_keep) {
+        /* A ring just shown keeps its centre as it grows: only its radii from its edges, however few show (as it
+         * leaves the screen, a few lines in a corner), or none (its arcs past both sides): it stays as it was. */
+        if (!n) {
+            e->ring = 1, e->ring_keep = RING_KEEP;
+            return 1;
+        }
+        a = ring_radius(px, py, n, cx, cy, 1, mark, &r);
+        if (a) b = ring_radius(px, py, n, cx, cy, 2, mark, &r2);
+        if (b < 3) b = 0;
+        if ((a + b) * 100 < n * 90) a = b = 0;
+    }
+    if (!a) {
+        if (n < RING_MIN) return 0;
+        float cx2, cy2;
+        memset(taken, 0, (size_t)n);
+        a = ring_circle(px, py, taken, n, mark, &cx, &cy, &r);
+        if (!a) return 0;
+        for (int i = 0; i < n; i++) taken[i] |= mark[i];
+        b = ring_circle(px, py, taken, n, taken, &cx2, &cy2, &r2); /* taken: marks circle 1's as 1 too */
+        if (b && SDL_fabsf(cx2 - cx) + SDL_fabsf(cy2 - cy) > 4) b = 0; /* not concentric: no ring */
+        if ((a + b) * 100 < n * 90) return 0; /* the edges are not all on them */
+    }
+    e->ring = 1, e->ring_keep = RING_KEEP, e->ring_cx = cx, e->ring_cy = cy;
+    if (b) {
+        e->ring_outer = SDL_max(r, r2), e->ring_inner = SDL_min(r, r2);
+        e->ring_width = e->ring_outer - e->ring_inner;
+        return 1;
+    }
+    /* One circle: a disc's edge, its window inside it, or a ring's hole's (as the ring grows past the screen's
+     * sides), its window outside it: the ring then as wide as it last showed. */
+    int out = 0;
+    for (int i = 0; i < n; i++) if (mark[i] == 1) out += right[i] == (px[i] > cx) ? 1 : -1; /* a span going away from the centre */
+    if (out <= 0) e->ring_outer = r, e->ring_inner = 0;
+    else e->ring_inner = r, e->ring_outer = e->ring_width ? r + e->ring_width : 4 * RING_RADIUS_MAX;
+    return 1;
+}
+
+/* The ring's spans on row y (effect_rows), in screen columns from x0 to before x1: their count, 0-2. */
+static int ring_spans(const Engine *e, int y, int sp[2][2]) {
+    float dy = (float)y - e->ring_cy, ro = e->ring_outer, ri = e->ring_inner;
+    if (SDL_fabsf(dy) >= ro) return 0;
+    float h = SDL_sqrtf(ro * ro - dy * dy);
+    int a = (int)SDL_lroundf(e->ring_cx - h), b = (int)SDL_lroundf(e->ring_cx + h);
+    if (SDL_fabsf(dy) >= ri) {
+        sp[0][0] = a, sp[0][1] = b;
+        return 1;
+    }
+    float hi = SDL_sqrtf(ri * ri - dy * dy);
+    sp[0][0] = a, sp[0][1] = (int)SDL_lroundf(e->ring_cx - hi);
+    sp[1][0] = (int)SDL_lroundf(e->ring_cx + hi), sp[1][1] = b;
+    return 2;
+}
+
 enum { BAND_MIN = 48 };
 static void effect_rows(Engine *e) {
     int x[2], top = win_top, bottom = SCREEN_H - 1;
@@ -945,6 +1102,12 @@ static void effect_rows(Engine *e) {
     while (top < SCREEN_H && WIN_EMPTY(top)) top++;
     while (bottom >= top && WIN_EMPTY(bottom)) bottom--;
 #undef WIN_EMPTY
+    if (top > bottom) return;
+    if ((reg16(e, 0x48) & 0x3F) == (reg16(e, 0x48) >> 8 & 0x3F) && fit_ring(e, top, bottom)) {
+        e->band_top = top, e->band_rows = bottom - top + 1;
+        e->band_period = ws_hdma_period(top, bottom);
+        return;
+    }
     /* A band of a few lines (as the effect starts) stretched would streak the rows: the picture stays as it is. */
     if (bottom - top + 1 < BAND_MIN) return;
     e->band_top = top, e->band_rows = bottom - top + 1;
@@ -954,7 +1117,9 @@ static void effect_rows(Engine *e) {
  * itself, or the screen's nearest line beyond it. */
 static int row_line(const Engine *e, int y) {
     if (!e->band_rows) return SDL_clamp(y, 0, SCREEN_H - 1);
-    return e->band_top + (y + e->rows) * e->band_rows / (SCREEN_H + 2 * e->rows);
+    int top = e->band_top, n = e->band_rows, p = e->band_period;
+    if (e->ring) return y >= top && y < top + n ? y : p ? top + ((y - top) % p + p) % p : SDL_clamp(y, top, top + n - 1);
+    return top + (y + e->rows) * n / (SCREEN_H + 2 * e->rows);
 }
 
 /* Screen column sx (wx: it clamped to the screen) in a window with positions h (ext: its span carried into the
@@ -989,7 +1154,8 @@ static void engine_frame_start(Engine *e) {
             e->ref_y[i] -= e->rows * (int16_t)reg16(e, 0x26 + 0x10 * i);
         }
         if (e->rows) memset(ui_frame, 0, sizeof ui_frame);
-        e->band_rows = 0;
+        e->band_rows = e->ring = 0;
+        if (e->ring_keep) e->ring_keep--;
         e->party = e->sliding = e->still_bgs = 0;
         e->view_x = e->view_y = e->view_bgs = e->obj_dx = e->obj_dy = 0;
         e->box_top = SCREEN_H;
@@ -1062,7 +1228,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
     int m = e->margin, width = SCREEN_W + 2 * m;
     int on_screen = y >= 0 && y < SCREEN_H, wy = row_line(e, y); /* the line whose windows it has */
-    int by = e->band_rows ? wy : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
+    int by = e->band_rows && !e->ring ? wy : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
     if (e->track_top && y == SS_MAP_Y) {
         /* The marker as it last was belongs to its map: entering a house, the world map's pins and marker are gone
          * from the room's map, which the game shows a few frames without sprites. Read at the panel's first line,
@@ -1179,6 +1345,9 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         int in_w0y = win0 && in_range(wy, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(wy, w1v >> 8, w1v & 0xFF);
         int ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h); /* the line as the table has it */
         const int16_t *ext0 = ext ? win_ext[wy][0] : NULL, *ext1 = ext ? win_ext[wy][1] : NULL;
+        /* A ring (effect_rows): its windows from its circles in the margins and on the rows beyond its band. */
+        int ring_sp[2][2], ring_n = e->ring ? ring_spans(e, y, ring_sp) : 0;
+        int ring_row = e->ring && (y < e->band_top || y >= e->band_top + e->band_rows);
 
         /* Pass 0: the picture (without the party when it has its own layer); pass 1: the shifted picture of the
          * age selector (sel_shift), or the party layer, the party's
@@ -1203,7 +1372,11 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             const int *pr = prio[side];
             uint16_t bldcnt = bld[side][0], bldalpha = bld[side][1];
             int eva = SDL_min(bldalpha & 31, 16), evb = SDL_min((bldalpha >> 8) & 31, 16), effect = (bldcnt >> 6) & 3;
-            if (win0 || win1 || winobj) {
+            if (e->ring && (ring_row || x - m != wx)) {
+                int in = 0;
+                for (int k = 0; k < ring_n; k++) in |= x - m >= ring_sp[k][0] && x - m < ring_sp[k][1];
+                ctl = in ? winin & 0x3F : winobj && o->win[x] ? (winout >> 8) & 0x3F : winout & 0x3F;
+            } else if (win0 || win1 || winobj) {
                 if (in_w0y && in_window(x - m, wx, w0h, ext0)) ctl = winin & 0x3F;
                 else if (in_w1y && in_window(x - m, wx, w1h, ext1)) ctl = (winin >> 8) & 0x3F;
                 else if (winobj && o->win[x]) ctl = (winout >> 8) & 0x3F;

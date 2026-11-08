@@ -776,19 +776,43 @@ int ws_window_lines(uint32_t h[SCREEN_H]) {
     return 0;
 }
 
+/* Channel c's entry for line `line`, when it writes one (halves: its halfwords): its address, else 0. */
+static uint32_t hdma_entry(uint32_t c, int line, uint32_t *halves) {
+    uint32_t flags = rt_r32(c), src = rt_r32(c + 4), dst = rt_r32(c + 8), first = rt_r32(c + 0x20);
+    *halves = rt_r32(c + 0x1c) * (flags & 2 ? 2 : 1);
+    if (!(flags & 1) || !ram_ptr(src) || dst >> 24 < 4 || dst >> 24 > 5 || !*halves || *halves > WS_HDMA_UNITS ||
+        (uint32_t)line < first || (uint32_t)line > rt_r32(c + 0x24))
+        return 0;
+    return flags & 8 ? src : src + rt_r32(c + 0x14) * ((uint32_t)line - first);
+}
+
+int ws_hdma_period(int top, int bottom) {
+    uint32_t end = rt_r32(HDMA_END);
+    if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * WS_HDMA_MAX) return 0;
+    for (int p = 1; bottom - top + 1 - p >= WS_PERIOD_LINES; p++) {
+        int ok = 1;
+        for (uint32_t c = HDMA_CHANNELS; c < end && ok; c += 0x28) {
+            uint32_t halves, halves2;
+            if (rt_r32(c + 8) == 0x04000040u || !hdma_entry(c, top, &halves) || !hdma_entry(c, bottom, &halves2)) continue;
+            for (int y = top; ok && y + p <= bottom; y++) {
+                uint32_t a = hdma_entry(c, y, &halves), b = hdma_entry(c, y + p, &halves);
+                for (uint32_t i = 0; ok && i < halves; i++) ok = rt_r16(a + 2 * i) == rt_r16(b + 2 * i);
+            }
+        }
+        if (ok) return p;
+    }
+    return 0;
+}
+
 void ws_hdma_line(int line, WsHdmaSaved *saved) {
     saved->n = 0;
     uint32_t end = rt_r32(HDMA_END);
     if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * WS_HDMA_MAX) return;
     for (uint32_t c = HDMA_CHANNELS; c < end; c += 0x28) {
-        uint32_t flags = rt_r32(c), src = rt_r32(c + 4), dst = rt_r32(c + 8), first = rt_r32(c + 0x20);
-        uint32_t halves = rt_r32(c + 0x1c) * (flags & 2 ? 2 : 1);
-        if (!(flags & 1) || !ram_ptr(src) || dst >> 24 < 4 || dst >> 24 > 5 || !halves ||
-            halves > WS_HDMA_UNITS || (uint32_t)line < first || (uint32_t)line > rt_r32(c + 0x24))
-            continue;
+        uint32_t halves, from = hdma_entry(c, line, &halves), dst = rt_r32(c + 8);
+        if (!from) continue;
         WsHdmaWrite *w = &saved->w[saved->n++];
         w->dst = dst, w->halves = (int)halves;
-        uint32_t from = flags & 8 ? src : src + rt_r32(c + 0x14) * ((uint32_t)line - first);
         for (uint32_t i = 0; i < halves; i++) {
             w->old[i] = (uint16_t)rt_r16(dst + 2 * i);
             rt_w16(dst + 2 * i, rt_r16(from + 2 * i));
