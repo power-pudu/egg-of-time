@@ -653,6 +653,9 @@ static void fill_field_margins(int margin, int rows) {
         uint16_t bld = io_get16(0x50);
         if (((bld >> 6) & 3) == 1 && (bld >> 8 & repeat_bgs)) repeat_bgs |= bld & 9; /* BG0, BG3 blended onto them */
     }
+    /* A layer scrolling on its own is no room layer, even while its scroll passes its ring origin (the stars of a
+     * one-screen battle room, every 256 frames for 12): moved by the view's shift then, it jumped up and back. */
+    view_bgs &= ~repeat_bgs;
     /* Walking, the origins in RAM are a tile ahead of the frame's scroll for one frame at each tile: that frame shows
      * a column or row the fill must have written too, so a BG a tile off is filled, by its own scroll. */
     int ok0 = bg_on_layer(2, scroll, 0), ok1 = bg_on_layer(3, scroll, 1), ok2 = bg_on_layer(0, scroll, 2);
