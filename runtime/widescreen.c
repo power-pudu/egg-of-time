@@ -413,25 +413,28 @@ static int field_margin; /* this frame's margin columns in the field, 0 elsewher
 
 /* Field object visibility (ov004 0x02130dbc, r0 = object): true while the object's tile lies within the view
  * columns *(SCROLL)+4 - 4 .. *(SCROLL)+6 + 4 (clamped to the room) and the matching rows. Those two fields are
- * the camera's own (map streaming uses them too), so they are widened by the margins only for the call. */
+ * the camera's own (map streaming uses them too), so they are widened to the shown view only for the call: the
+ * margins, moved by the view's shift at a room's end (the sprite view's, set_sprite_view). Widened by the shift on
+ * both sides, the objects passed spanned more than the 512 px rt_ws_draw_cell tells apart. */
 static void game_object_visible(CPU *cpu) { rt_call_wrapped(cpu, "ov004", 0x02130dbcu); } /* the original */
 void rt_ws_object_visible(CPU *cpu) {
     uint32_t scroll = rt_r32(SCROLL);
-    int extra = (field_margin + abs(next_x) + 7) >> 3, extra_rows = (field_rows + abs(next_y) + 7) >> 3; /* tiles */
-    if (!extra || !ram_ptr(scroll) || cpu->resume_pc) {
+    int dl = (next_x - field_margin) >> 3, dr = (next_x + field_margin + 7) >> 3; /* tiles, floor and ceiling */
+    int dt = (next_y - field_rows) >> 3, db = (next_y + field_rows + 7) >> 3;
+    if ((!field_margin && !field_rows && !next_x && !next_y) || !ram_ptr(scroll) || cpu->resume_pc) {
         game_object_visible(cpu);
         return;
     }
-    uint32_t left = rt_r16(scroll + 4), right = rt_r16(scroll + 6), top = rt_r16(scroll + 8), bottom = rt_r16(scroll + 0xa);
-    rt_w16(scroll + 4, left > (uint32_t)extra ? left - (uint32_t)extra : 0);
-    rt_w16(scroll + 6, right + (uint32_t)extra);
-    rt_w16(scroll + 8, top > (uint32_t)extra_rows ? top - (uint32_t)extra_rows : 0);
-    rt_w16(scroll + 0xa, bottom + (uint32_t)extra_rows);
+    int left = rt_r16(scroll + 4), right = rt_r16(scroll + 6), top = rt_r16(scroll + 8), bottom = rt_r16(scroll + 0xa);
+    rt_w16(scroll + 4, (uint16_t)(left + dl > 0 ? left + dl : 0));
+    rt_w16(scroll + 6, (uint16_t)(right + dr > 0 ? right + dr : 0));
+    rt_w16(scroll + 8, (uint16_t)(top + dt > 0 ? top + dt : 0));
+    rt_w16(scroll + 0xa, (uint16_t)(bottom + db > 0 ? bottom + db : 0));
     game_object_visible(cpu);
-    rt_w16(scroll + 4, left);
-    rt_w16(scroll + 6, right);
-    rt_w16(scroll + 8, top);
-    rt_w16(scroll + 0xa, bottom);
+    rt_w16(scroll + 4, (uint16_t)left);
+    rt_w16(scroll + 6, (uint16_t)right);
+    rt_w16(scroll + 8, (uint16_t)top);
+    rt_w16(scroll + 0xa, (uint16_t)bottom);
 }
 
 /* Zoom out: a sprite's Y in OAM has 8 bits, which told the DS's 192 rows and the sprites above them apart but not
@@ -532,7 +535,22 @@ void rt_ws_draw_cell(CPU *cpu) {
     cell_known = cell_ui || (rt_r32(surface) == rt_r32(G2D_VIEW) && rt_r32(surface + 8) == rt_r32(G2D_VIEW + 8));
     cell_hud = !cell_ui && (battle_hud_cell(cpu, R[1], cell_y - field_rows + next_y) || called_from(cpu, FIELD_UI_LIST));
     cell_world = cell_ui && drawing_world;
+    /* The game places an object's cell at its X from the camera in 9 bits, -128..383 (the DS screen's middle +-256):
+     * at a room's left end the view's shift and the right margin reach past 383 (85 + 93 px beyond the 256), and the
+     * creatures there showed at the left, culled, until the camera came closer. Of X and X +- 512, the one nearest
+     * the view's middle (the objects drawn lie within 512 px around it, rt_ws_object_visible). */
+    uint32_t place = rt_r32(matrix + 0x10);
+    if (!cell_ui && cell_known && field_margin) {
+        int64_t x = (int32_t)place, middle = (int64_t)(int32_t)rt_r32(surface) + (int32_t)rt_r32(surface + 8) / 2;
+        int64_t best = x;
+        for (int k = -1; k <= 1; k += 2) {
+            int64_t c = x + (int64_t)k * FX(512);
+            if (llabs(c - middle) < llabs(best - middle)) best = c;
+        }
+        if (best != x) rt_w32(matrix + 0x10, (uint32_t)(int32_t)best);
+    }
     game_draw_cell(cpu);
+    rt_w32(matrix + 0x10, place);
     cell_known = cell_world = 0;
 }
 

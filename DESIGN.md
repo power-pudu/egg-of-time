@@ -162,6 +162,11 @@ original bytes, and caches the result per region until the region is written.
     0, -1, 256, 192) and places them relative to its top-left; in the field it is set to -margin, 256 + 2 *
     margin, so sprite X counts from the left margin (the renderer reads the view back, `ws_sprite_origin`), and
     put back elsewhere (also after loading a state saved with it widened).
+    Both go with the view's shift at a room's ends: the object cull is widened to the shown view (the margins moved
+    by the shift), and the game places an object's cell at its X from the camera in 9 bits (-128..383, the DS
+    screen's middle +-256), so `rt_ws_draw_cell` takes, of X and X +- 512, the one nearest the view's middle. At a
+    room's left end the shift (85 px) and the right margin reached past 383: creatures there wrapped to the left,
+    culled, until the camera came closer.
   - Battle UI: battles run in the field scene, and their menus are sprites in screen coordinates (boxes with
     their text, the command cursor), while gauges, damage numbers and characters are world sprites. The scene's
     draw (main 0x02041940) uses one renderer surface (scene secondary base `*(0x0207088c)` + 0xd748): it saves
