@@ -198,11 +198,14 @@ static int bg_follows(int bg, uint32_t scroll, int L) {
 #define CURRENT_SCENE GAME_ADDR(0x0207088cu, 0x020708acu)
 
 int ws_camera(int *x, int *y) {
-    if (ss_in_overworld()) { /* the world map: the view's place in the world, layer 1's (x wraps at 0x600, y at 0x400) */
+    /* The world map: the view's place in the world, layer 3's (x wraps at 0x600, y at 0x400). Layers 1-3 share it,
+     * but where a layer scrolls on its own its place does too: Zeal's layers 1 and 2 are clouds drifting a pixel every
+     * few frames over its still land on layer 3, and the smoothing glided the picture after them and back. */
+    if (ss_in_overworld()) {
         uint32_t base = rt_r32(CURRENT_SCENE);
         if (!ram_ptr(base)) return 0;
-        *x = rt_r16(base + 0xddc0u + 0x22a4 + 2); /* the world object (WORLD) */
-        *y = rt_r16(base + 0xddc0u + 0x22ac + 2);
+        *x = rt_r16(base + 0xddc0u + 0x22a4 + 2 * 3); /* the world object (WORLD) */
+        *y = rt_r16(base + 0xddc0u + 0x22ac + 2 * 3);
         return *x < 0x600 && *y < 0x400;
     }
     if (!ss_in_field()) return 0;
