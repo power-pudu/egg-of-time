@@ -543,8 +543,12 @@ static int battle_hud_cell(const CPU *cpu, uint32_t cell, int row) {
  * instance (main 0x02019fd4's r1, the same every frame) when drawn as an actor (the call returning to 0x020482d4).
  * Its speed is that over its last DRIFT_SPAN moves (actors move and are drawn every other frame or so); not moved for
  * DRIFT_STILL frames it has stopped, and goes on from its last place while all its sprites are off the DS screen
- * there, having left it in those moves (one pacing beyond the screen stays put). Moved again, it is drawn where it is. */
+ * there, having left it in those moves (one pacing beyond the screen stays put). Moved again, it is drawn where it is.
+ * Its moves are in the room (its place from the camera, plus the camera), so the camera scrolling is none of them. Only
+ * in DRIFT_LOCATION, the dactyls' scene: elsewhere actors stopped off the DS screen stay where the game has them (a
+ * woman in the castle, left beyond the screen as the camera stopped at the room's left end, flew off to the right). */
 #define ACTOR_CELL GAME_ADDR(0x020482d4u, 0x02048304u)
+#define DRIFT_LOCATION 0x127
 #define DRIFT_SLOTS 32
 #define DRIFT_SPAN 8
 #define DRIFT_STILL 6
@@ -631,9 +635,9 @@ void rt_ws_draw_cell(CPU *cpu) {
     }
     uint32_t height = rt_r32(matrix + 0x14);
     drawn_drift = NULL;
-    if (!cell_ui && cell_known && called_from(cpu, ACTOR_CELL)) {
-        int32_t dx, dy;
-        drift_by(R[1], (int32_t)place, (int32_t)height, &dx, &dy);
+    if (!cell_ui && cell_known && rt_r16(LOCATION) == DRIFT_LOCATION && called_from(cpu, ACTOR_CELL)) {
+        int32_t dx, dy, room_x = (int32_t)rt_r32(matrix + 0x10) + FX((int16_t)rt_r16(CAMERA));
+        drift_by(R[1], room_x, (int32_t)height + FX((int16_t)rt_r16(CAMERA + 2)), &dx, &dy);
         if (dx || dy) {
             rt_w32(matrix + 0x10, rt_r32(matrix + 0x10) + (uint32_t)dx), rt_w32(matrix + 0x14, height + (uint32_t)dy);
             cell_y += dy / 4096;

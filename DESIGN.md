@@ -231,7 +231,9 @@ original bytes, and caches the result per region until the region is written.
       the call returns to 0x020482d4; `drift_by`): one that was on the DS screen, moved off it and stopped there
       (6 frames without a move) is drawn going on at its speed over its last 8 moves until it leaves the view, the
       drawing only. One pacing beyond the screen without having been on it stays put; moved again, it is drawn where
-      the game has it.
+      the game has it. Its moves are counted in the room (its place from the camera plus the camera), and only in the
+      dactyls' scene (location 0x127, `DRIFT_LOCATION`): elsewhere, a woman in a castle room (0x191) left beyond
+      the screen as the camera stopped at the room's left end had moved with the scroll, and flew off to the right.
     - Battle effects drawn line by line (windows from the game's software HDMA, `ws_window_lines`): the game blanks
       them on the lines under the menu and the text box, so the rows above and below, drawn as lines 0 and 191,
       showed none of them (Rainbow Storm's clouds stopped at the 4:3 picture's top and bottom). An effect is made for
