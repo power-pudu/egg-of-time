@@ -350,8 +350,11 @@ static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
     *y1 = (to + 1) * 16 - view;
     if (*y0 > 0 && from > top) *y0 = 0;
     if (*y1 < SCREEN_H && to < bottom) *y1 = SCREEN_H;
-    if (top_void) *top_void = from > top || void_row(scroll, tilesets, left, right, top - 1, 1);
-    if (bottom_void) *bottom_void = to < bottom || void_row(scroll, tilesets, left, right, bottom + 1, 1);
+    /* The bounds at the map's own top or bottom: nothing of the map lies beyond (row -1 is the wrapped last one, and
+     * the fill repeats the edge row there), so the view stops (a Zeal building whose roof is the map's first row). */
+    int last = rt_r8(scroll + 0x1b); /* layer 0's map rows - 1 (metatiles) */
+    if (top_void) *top_void = from > top || top == 0 || void_row(scroll, tilesets, left, right, top - 1, 1);
+    if (bottom_void) *bottom_void = to < bottom || bottom >= last || void_row(scroll, tilesets, left, right, bottom + 1, 1);
     return 1;
 }
 
