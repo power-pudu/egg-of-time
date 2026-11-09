@@ -10,9 +10,10 @@
  *   4. kit/llvm/bin/clang.exe, one process per core -> game/build/obj, then linked against kit/lib/libeggoftime.a
  *      (the executable's import library) into game/eggoftime_game.dll.
  *   5. game/build.id records what it was built from (kit/kit.id and the ROM's SHA-1); game/build/ is deleted.
- * The Linux release bundles only dsd (kit/dsd/dsd): Python and the C compiler are the system's (python3, and cc,
- * clang or gcc, found in PATH), and the library links against nothing, its runtime symbols resolved from the
- * executable (-rdynamic) when it is loaded.
+ * The Linux release bundles dsd (kit/dsd/dsd) and Zig (kit/zig/zig, run as "zig cc"), a compiler with its own
+ * libc headers: SteamOS has no compiler and no /usr/include. Python is the system's (python3, found in PATH); without
+ * kit/zig (an older kit, or one trimmed by hand) so is the C compiler (cc, clang or gcc). The library links against
+ * nothing, its runtime symbols resolved from the executable (-rdynamic) when it is loaded.
  * A later start loads the library when game/build.id still matches, else builds it again (a new release whose
  * recompiler or runtime interface changed). The tools' output goes to game/build.log.
  * Developer builds have no kit/: CMake builds the library, and this only loads it. */
@@ -229,7 +230,18 @@ static struct {
     SDL_AtomicInt next, compiled, failed, cancel, done;
     char rom[1024];
     char python[1024], cc[1024]; /* the tools that translate and compile the game's code */
+    int zig;                      /* cc is the kit's Zig: "zig cc", for glibc on x86-64 */
 } b;
+
+/* The compiler's command line up to its own arguments, in args; returns how many. */
+static int cc_command(const char **args) {
+    int k = 0;
+    args[k++] = b.cc;
+    if (b.zig) { /* -g0: zig adds debug info otherwise */
+        args[k++] = "cc", args[k++] = "-target", args[k++] = "x86_64-linux-gnu", args[k++] = "-g0";
+    }
+    return k;
+}
 
 /* Finds the tools: the kit's on Windows, the system's on Linux; 0 (and tells the player) if one is missing. */
 static int find_tools(void) {
@@ -238,11 +250,21 @@ static int find_tools(void) {
     kit_path(b.cc, sizeof b.cc, "kit/llvm/bin/clang.exe");
     return 1;
 #else
+    kit_path(b.cc, sizeof b.cc, "kit/zig/zig");
+    b.zig = access(b.cc, X_OK) == 0;
+    if (b.zig) {
+        /* Its caches in the build folder, deleted with it (the kit can be read-only: the AppImage). */
+        char cache[1024];
+        data_path(cache, sizeof cache, "game/build/zig-cache");
+        SDL_Environment *env = SDL_GetEnvironment();
+        SDL_SetEnvironmentVariable(env, "ZIG_GLOBAL_CACHE_DIR", cache, true);
+        SDL_SetEnvironmentVariable(env, "ZIG_LOCAL_CACHE_DIR", cache, true);
+    }
     static const char *const pythons[] = {"python3", NULL}, *const compilers[] = {"cc", "clang", "gcc", NULL};
     const char *const *want[2] = {pythons, compilers};
     char *found[2] = {b.python, b.cc};
     const char *dirs = getenv("PATH");
-    for (int t = 0; t < 2; t++) {
+    for (int t = 0; t < 2 - b.zig; t++) {
         found[t][0] = 0;
         for (int i = 0; want[t][i] && !found[t][0]; i++) {
             for (const char *d = dirs ? dirs : "/usr/bin"; *d && !found[t][0]; d += strcspn(d, ":"), d += *d == ':') {
@@ -258,8 +280,11 @@ static int find_tools(void) {
                                           "Debian/Ubuntu: sudo apt install python3 build-essential",
                                           "Fedora: sudo dnf install python3 gcc", "Arch: sudo pacman -S python gcc",
                                           "Press a key to quit."};
+    static const char *const no_python[] = {"Python 3 is needed", "The first start builds the game with it.",
+                                            "Debian/Ubuntu: sudo apt install python3", "Fedora: sudo dnf install python3",
+                                            "Arch: sudo pacman -S python", "Press a key to quit."};
     rt_log("build: %s not found in PATH", b.python[0] ? "cc, clang or gcc" : "python3");
-    wait_key(missing, 6);
+    wait_key(b.zig ? no_python : missing, 6);
     return 0;
 #endif
 }
@@ -325,12 +350,19 @@ static int SDLCALL compile_worker(void *slot_ptr) {
         data_path(obj, sizeof obj, "game/build/obj/");
         snprintf(obj + strlen(obj), sizeof obj - strlen(obj), "%.*s.o", (int)strlen(b.sources[i]) - 2, b.sources[i]);
         /* The flags of the developer build's game library (CMakeLists.txt), without debug info. */
-        const char *args[] = {b.cc, "-std=c11", "-O1", "-w", "-fwrapv", "-DNDEBUG", "-DEGG_SINGLE_SCREEN=1",
-                              "-DRT_GAME_LIB", "-I", inc, "-I", gen, "-c", src, "-o", obj,
+        const char *args[32];
+        int k = cc_command(args);
+        static const char *const flags[] = {"-std=c11", "-O1", "-w", "-fwrapv", "-DNDEBUG", "-DEGG_SINGLE_SCREEN=1",
+                                            "-DRT_GAME_LIB",
 #ifndef _WIN32
-                              "-fPIC",
+                                            "-fPIC",
 #endif
-                              NULL};
+                                            NULL};
+        for (int f = 0; flags[f]; f++) args[k++] = flags[f];
+        /* zig cc makes any -O clang's -O2, which took 757 s here against 152 s for -O1 (8 threads) */
+        if (b.zig) args[k++] = "-Xclang", args[k++] = "-O1";
+        args[k++] = "-I", args[k++] = inc, args[k++] = "-I", args[k++] = gen;
+        args[k++] = "-c", args[k++] = src, args[k++] = "-o", args[k++] = obj, args[k] = NULL;
         if (run(args, slot)) SDL_SetAtomicInt(&b.failed, 1);
         else SDL_AddAtomicInt(&b.compiled, 1);
     }
@@ -388,10 +420,11 @@ static int SDLCALL build_thread(void *unused) {
     set_step("Linking the game");
     char lib[1024];
     data_path(lib, sizeof lib, GAME_LIBRARY);
-    const char **link = SDL_calloc((size_t)b.source_count + 8, sizeof *link);
+    const char **link = SDL_calloc((size_t)b.source_count + 16, sizeof *link);
     char (*objs)[1024] = SDL_calloc((size_t)b.source_count, sizeof *objs);
-    int k = 0;
-    link[k++] = b.cc, link[k++] = "-shared", link[k++] = "-o", link[k++] = lib;
+    int k = cc_command(link);
+    link[k++] = "-shared", link[k++] = "-o", link[k++] = lib;
+    if (b.zig) link[k++] = "-nostdlib"; /* no glibc stubs to build: the executable has it all */
     for (int i = 0; i < b.source_count; i++) {
         snprintf(objs[i], sizeof objs[i], "%s/%.*s.o", obj, (int)strlen(b.sources[i]) - 2, b.sources[i]);
         link[k++] = objs[i];

@@ -734,11 +734,18 @@ original bytes, and caches the result per region until the region is written.
   for the headers and lld for the libraries it reads: 50 files), third-party licenses; it refuses generated code,
   extracts, ROMs and saves.
   `.github/workflows/release.yml` builds and publishes it for a `v*` tag. The Linux release (built on Ubuntu 22.04
-  for glibc 2.35) bundles only dsd in the kit and uses the system's `python3` and `cc`/`clang`/`gcc` from `PATH`
-  (a screen names the packages when one is missing): bundling clang would still need the distro's libc headers
-  and crt files. The game library is compiled with `-fPIC` and linked without an import library, its runtime
-  symbols resolved from the executable (`ENABLE_EXPORTS`, i.e. `-rdynamic`). SDL3 is linked statically and
-  BtbN's FFmpeg shared libraries sit next to the executable (RPATH `$ORIGIN` only); the package is a `.tar.gz`
+  for glibc 2.35) bundles dsd and Zig 0.17.1 in the kit and uses the system's `python3` from `PATH` (a screen names
+  the package when it is missing). Zig (`kit/zig/zig cc -target x86_64-linux-gnu`) brings its own glibc headers, so
+  no system compiler or `/usr/include` is needed: SteamOS has neither, and a Steam Deck's gcc, once installed,
+  failed on `setjmp.h`. The kit keeps the executable, `lib/std/std.zig` (by which zig finds its lib folder) and the
+  headers a probe compile reads (`zig_subset`), and the packager builds a probe library with that subset alone. The
+  glibc headers matter, not musl's: `RtCpu.unwind` holds `jmp_buf`s the runtime and the game library share. The
+  link is `-nostdlib` (no glibc stubs to build). `zig cc` makes any `-O` clang's `-O2` and adds debug info, so the
+  compile also passes `-Xclang -O1` and `-g0`: 152 s for the game on 8 threads instead of 757 s (gcc: 73 s). The
+  subset is 178 MB, 60 MB of the `.tar.gz`, nearly all the zig executable. Zig's caches go in
+  `game/build/zig-cache`, as the kit can be read-only. Without `kit/zig` the system's `cc`/`clang`/`gcc` compile.
+  The game library is compiled with `-fPIC` and linked without an import library, its runtime symbols resolved
+  from the executable (`ENABLE_EXPORTS`, i.e. `-rdynamic`). SDL3 is linked statically and BtbN's FFmpeg shared libraries sit next to the executable (RPATH `$ORIGIN` only); the package is a `.tar.gz`
   so the executable bits survive. The same files also go out as an AppImage (`--appimage`: AppRun, a `.desktop`
   file and `res/icon.png` added, packed by appimagetool 1.9.1 with the static type 2 runtime, so players need no
   FUSE 2). An AppImage is mounted read-only, so when the executable runs under `$APPDIR` the runtime splits its

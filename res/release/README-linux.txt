@@ -11,18 +11,18 @@ Nintendo DS, one of:
 
 Getting started (Linux x86-64)
 ------------------------------
-1. Install Python 3 and a C compiler, if you do not have them:
-     Debian/Ubuntu: sudo apt install python3 build-essential
-     Fedora:        sudo dnf install python3 gcc
-     Arch:          sudo pacman -S python gcc
+1. Install Python 3, if you do not have it (SteamOS and most distros do):
+     Debian/Ubuntu: sudo apt install python3
+     Fedora:        sudo dnf install python3
+     Arch:          sudo pacman -S python
 2. Extract this folder anywhere you can write to:  tar xzf EggOfTime-*-linux-x64.tar.gz
 3. Start "Egg of Time" (cd "Egg of Time" && "./Egg of Time") and choose your ROM file (.nds).
    It is copied to rom/CT.nds. You can also pass the ROM:  "./Egg of Time" path/to/rom.nds
 4. The first start builds the game from your ROM: a few minutes, with a progress bar. Later starts
    begin at once. A new version of Egg of Time builds it again when it needs to.
 
-The build uses kit/dsd and your system's python3 and cc (or clang or gcc); nothing is installed and
-nothing is downloaded. What it makes stays in game/. If it fails, game/build.log has the details.
+The build uses kit/dsd, kit/zig (its C compiler) and your system's python3; nothing is installed
+and nothing is downloaded. What it makes stays in game/. If it fails, game/build.log has the details.
 The file dialog needs xdg-desktop-portal or zenity; without one, pass the ROM on the command line.
 
 Your saves (rom/CT.sav), save states (rom/CT.state, F5 / F7) and settings (eggoftime.ini) stay in

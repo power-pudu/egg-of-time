@@ -17,8 +17,9 @@ the tools in kit/ (see DESIGN.md, "Release builds"). This script copies
 and writes kit/kit.id, a hash of what decides the generated code, so a release with other code rebuilds it.
 
 The Linux release (made on Linux) holds "Egg of Time" (SDL3 linked in statically), the FFmpeg shared libraries it
-finds next to itself (RPATH $ORIGIN; libcurl is the system's), kit/include, kit/recomp, kit/config and kit/dsd: the player's python3 and C
-compiler do the rest, and the game library needs no import library. It is a .tar.gz, which keeps the executable bits,
+finds next to itself (RPATH $ORIGIN; libcurl is the system's), kit/include, kit/recomp, kit/config, kit/dsd and kit/zig
+(the Zig executable and the headers it reads for the game library, so no system compiler or /usr/include is needed:
+SteamOS has neither): the player's python3 does the rest, and the game library needs no import library. It is a .tar.gz, which keeps the executable bits,
 and (--appimage) the same files as an AppImage: AppRun, a .desktop file and the icon added, packed by appimagetool
 with the given type 2 runtime. The AppImage is read-only, so there the runtime keeps its data in
 ~/.local/share/EggOfTime/ (rt_data_dir, runtime/main.c).
@@ -27,7 +28,7 @@ Usage: python -I scripts/package.py --build <dir> --llvm <llvm-mingw dir> --pyth
            --dsd <dsd.exe> --dsd-license <file> --sdl <SDL3 dir> --ffmpeg <FFmpeg dir> --curl <curl dir>
            --rcheevos <rcheevos source dir> --out <dir> [--zip <file>]
            [--xdelta <xdelta3.exe> --xdelta-license <file>] [--librashader <dll> --librashader-license <file>]
-       python3 -I scripts/package.py --build <dir> --dsd <dsd> --dsd-license <file> --sdl <SDL3 source dir>
+       python3 -I scripts/package.py --build <dir> --dsd <dsd> --dsd-license <file> --zig <Zig dir> --sdl <SDL3 source dir>
            --ffmpeg <FFmpeg shared build dir> --rcheevos <rcheevos source dir> --out <dir> [--tar <file.tar.gz>] [--xdelta <xdelta3> --xdelta-license <file>]
            [--appimage <file.AppImage> --appimagetool <appimagetool> --appimage-runtime <runtime-x86_64>]
            [--librashader <librashader.so> --librashader-license <file>]
@@ -96,9 +97,46 @@ def llvm_subset(llvm, kit_include, implib):
     return sorted(files)
 
 
+ZIG_FLAGS = ["cc", "-target", "x86_64-linux-gnu", "-g0"]  # runtime/game_build.c, cc_command
+
+
+def zig_probe(zig, kit_include, tmp, deps=False):
+    """Compiles and links a probe game library with zig as runtime/game_build.c does; its header list with deps."""
+    flags = [*ZIG_FLAGS, "-std=c11", "-O1", "-w", "-fwrapv", "-DNDEBUG", "-DEGG_SINGLE_SCREEN=1", "-DRT_GAME_LIB",
+             "-fPIC", "-Xclang", "-O1", "-I", kit_include]
+    probe = os.path.join(tmp, "probe.c")
+    with open(probe, "w") as f:
+        f.write('#include "dispatch.h"\nint probe(void) { return 0; }\n')
+    env = dict(os.environ, ZIG_GLOBAL_CACHE_DIR=os.path.join(tmp, "cache"), ZIG_LOCAL_CACHE_DIR=os.path.join(tmp, "cache"))
+    headers = ""
+    if deps:
+        headers = subprocess.run([zig, *flags, "-M", probe], check=True, capture_output=True, text=True, env=env).stdout
+    obj = os.path.join(tmp, "probe.o")
+    subprocess.run([zig, *flags, "-c", probe, "-o", obj], check=True, env=env)
+    subprocess.run([zig, *ZIG_FLAGS, "-shared", "-o", os.path.join(tmp, "probe.so"), "-nostdlib", obj], check=True,
+                   env=env)
+    return headers
+
+
+def zig_subset(zig_dir, kit_include):
+    """Files of Zig (relative paths) needed to compile and link the game library: the executable, the headers the
+    probe reads, and lib/std/std.zig, by which zig finds its lib folder."""
+    zig_dir = os.path.abspath(zig_dir)
+    files = {"zig", "LICENSE", os.path.join("lib", "std", "std.zig")}
+    with tempfile.TemporaryDirectory() as tmp:
+        deps = zig_probe(os.path.join(zig_dir, "zig"), kit_include, tmp, deps=True)
+    for p in re.split(r"(?<!\\)\s+", deps.replace("\\\n", " ")):
+        p = os.path.normpath(p.replace("\\ ", " "))
+        if p.startswith(zig_dir + os.sep):
+            files.add(os.path.relpath(p, zig_dir))
+    if not any(os.path.basename(f) == "setjmp.h" for f in files):
+        sys.exit(f"Zig subset lacks setjmp.h: zig did not report it under {zig_dir}")
+    return sorted(files)
+
+
 def mode(name, isdir):
     """Executable only where it runs (copies from a Windows drive are all 0777)."""
-    return 0o755 if isdir or name in ("Egg of Time", "dsd", "xdelta3", "AppRun") or ".so." in name else 0o644
+    return 0o755 if isdir or name in ("Egg of Time", "dsd", "xdelta3", "zig", "AppRun") or ".so." in name else 0o644
 
 
 def anonymous(info):
@@ -161,6 +199,7 @@ def main():
         ap.add_argument("--" + a, required=True)
     for a in ("llvm", "python-embed", "curl"):
         ap.add_argument("--" + a, required=WINDOWS)
+    ap.add_argument("--zig", required=not WINDOWS)
     ap.add_argument("--xdelta")
     ap.add_argument("--xdelta-license")
     ap.add_argument("--librashader")
@@ -234,6 +273,13 @@ def main():
         copy(os.path.join(args.curl, "COPYING.txt"), os.path.join(lic, "curl.txt"))
     else:
         os.chmod(os.path.join(kit, "dsd", "dsd"), 0o755)
+        for rel in zig_subset(args.zig, os.path.join(kit, "include")):
+            copy(os.path.join(args.zig, rel), os.path.join(kit, "zig", rel))
+        os.chmod(os.path.join(kit, "zig", "zig"), 0o755)
+        copy(os.path.join(args.zig, "LICENSE"), os.path.join(lic, "zig.txt"))
+        # The subset alone must do what the player's first start does.
+        with tempfile.TemporaryDirectory() as tmp:
+            zig_probe(os.path.join(kit, "zig", "zig"), os.path.join(kit, "include"), tmp)
     copy(args.dsd_license, os.path.join(lic, "dsd.txt"))
     copy(os.path.join(args.sdl, "LICENSE.txt"), os.path.join(lic, "SDL3.txt"))
     copy(os.path.join(args.ffmpeg, "LICENSE.txt"), os.path.join(lic, "FFmpeg.txt"))

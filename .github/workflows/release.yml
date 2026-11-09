@@ -19,6 +19,7 @@ env:
   FFMPEG_LINUX: ffmpeg-n8.1-latest-linux64-lgpl-shared-8.1
   CURL: curl-8.23.0_8-win64-mingw
   LIBRASHADER: librashader-v0.12.0
+  ZIG: zig-x86_64-linux-0.17.1
 
 jobs:
   windows:
@@ -98,6 +99,9 @@ jobs:
           curl -sSLfo xdelta3-LICENSE.txt https://raw.githubusercontent.com/jmacd/xdelta/v3.2.2/xdelta3/LICENSE
           curl -sSLfo appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
           curl -sSLfo runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          # The game library's compiler on the player's machine (SteamOS has none, nor /usr/include).
+          curl -sSLfo zig.tar.xz https://ziglang.org/download/0.17.1/$ZIG.tar.xz
+          tar xf zig.tar.xz
           chmod +x appimagetool
           tar xf ffmpeg.tar.xz
           tar xf xdelta3.tar.gz
@@ -115,7 +119,7 @@ jobs:
 
       - name: Package
         run: |
-          python3 -I scripts/package.py --build build --dsd deps/dsd --dsd-license deps/dsd-LICENSE.txt             --sdl deps/fetch/sdl3-src --ffmpeg deps/$FFMPEG_LINUX             --rcheevos deps/fetch/rcheevos-src             --xdelta deps/xdelta3-3.2.2-linux-x86_64/xdelta3 --xdelta-license deps/xdelta3-LICENSE.txt             --librashader deps/librashader/target/optimized/librashader.so             --librashader-license deps/librashader/LICENSE.md             --out "dist/Egg of Time" --tar "dist/EggOfTime-${GITHUB_REF_NAME}-linux-x64.tar.gz"             --appimage "dist/EggOfTime-${GITHUB_REF_NAME}-x86_64.AppImage" --appimagetool deps/appimagetool             --appimage-runtime deps/runtime-x86_64
+          python3 -I scripts/package.py --build build --dsd deps/dsd --dsd-license deps/dsd-LICENSE.txt --zig deps/$ZIG             --sdl deps/fetch/sdl3-src --ffmpeg deps/$FFMPEG_LINUX             --rcheevos deps/fetch/rcheevos-src             --xdelta deps/xdelta3-3.2.2-linux-x86_64/xdelta3 --xdelta-license deps/xdelta3-LICENSE.txt             --librashader deps/librashader/target/optimized/librashader.so             --librashader-license deps/librashader/LICENSE.md             --out "dist/Egg of Time" --tar "dist/EggOfTime-${GITHUB_REF_NAME}-linux-x64.tar.gz"             --appimage "dist/EggOfTime-${GITHUB_REF_NAME}-x86_64.AppImage" --appimagetool deps/appimagetool             --appimage-runtime deps/runtime-x86_64
 
       - name: Upload the package
         uses: actions/upload-artifact@v4

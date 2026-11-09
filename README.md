@@ -58,11 +58,12 @@ and mods.
 
 ## Playing on Linux
 
-1. Install Python 3 and a C compiler if you don't have them. The first-start build uses your system's
-   `python3` and `cc` (or `clang` / `gcc`):
-   - Debian/Ubuntu: `sudo apt install python3 build-essential`
-   - Fedora: `sudo dnf install python3 gcc`
-   - Arch: `sudo pacman -S python gcc`
+1. Install Python 3 if you don't have it (SteamOS and most distros do). The first-start build uses your
+   system's `python3` and the C compiler bundled in the download (Zig), so no compiler or development headers
+   are needed:
+   - Debian/Ubuntu: `sudo apt install python3`
+   - Fedora: `sudo dnf install python3`
+   - Arch: `sudo pacman -S python`
 2. Download the latest release from the [Releases page](https://github.com/power-pudu/egg-of-time/releases), either:
    - `EggOfTime-<version>-x86_64.AppImage`: make it executable (`chmod +x EggOfTime-*.AppImage`) and start it.
      The AppImage is read-only, so your ROM, game build, saves, settings and mods go in
