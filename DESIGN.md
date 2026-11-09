@@ -304,7 +304,8 @@ original bytes, and caches the result per region until the region is written.
       stops at them instead of passing them, and a room smaller than the view stays centred in it. With it on, the view
       stops at the ends beyond which the map is the void over the rows shown (`void_beyond_ends`, `void_column`; above
       and below, `void_row`), with nothing to fill: a forest's west end, tile 0 on every layer where its map
-      wraps round, showed black there. The game clamps
+      wraps round, showed black there. Above and below the bounds, layer 2 may hold stray tiles on under half the
+      row: the Millennial Fair's south end has specks under the black, and the view passed the trees. The game clamps
       its camera for 256 x 192 and is left alone (`ws_fill_margins`, `view_shift`, `ws_view_shift`): the picture is
       shown shifted from the camera, by the BG scroll of the BGs on their ring origin (`Engine.view_bgs`; not a
       picture layer such as the prison bridge's sky, not a box's 256-wide map; each by its share of the shift, its

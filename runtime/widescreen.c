@@ -269,9 +269,12 @@ static int tile_black(uint32_t t) {
     return 1;
 }
 
-/* A metatile row of the void between rooms: across the bounds, one black metatile on layer 0, nothing on the others. */
-static int void_row(uint32_t scroll, uint32_t tilesets, int left, int right, int r) {
+/* A metatile row of the void between rooms: across the bounds, one black metatile on layer 0, nothing on the others.
+ * Beyond the bounds (the row above their top, below their bottom), layer 2 may hold stray tiles on fewer than half
+ * of the row's (the Millennial Fair's south end: specks under the black, which the camera never shows). */
+static int void_row(uint32_t scroll, uint32_t tilesets, int left, int right, int r, int beyond) {
     uint32_t first[4];
+    int stray = 0;
     for (int i = 0; i < 4; i++) {
         first[i] = room_tile(scroll, tilesets, 0, left * 2 + (i & 1), r * 2 + (i >> 1));
         if (!tile_black(first[i])) return 0;
@@ -280,7 +283,8 @@ static int void_row(uint32_t scroll, uint32_t tilesets, int left, int right, int
         for (int i = 0; i < 4; i++) {
             int c = m * 2 + (i & 1), row = r * 2 + (i >> 1);
             if (room_tile(scroll, tilesets, 0, c, row) != first[i]) return 0;
-            if (room_tile(scroll, tilesets, 1, c, row) & 0x3FF || room_tile(scroll, tilesets, 2, c, row) & 0x3FF) return 0;
+            if (room_tile(scroll, tilesets, 1, c, row) & 0x3FF) return 0;
+            if (room_tile(scroll, tilesets, 2, c, row) & 0x3FF && (!beyond || ++stray * 2 >= (right - left + 1) * 4)) return 0;
         }
     }
     return 1;
@@ -330,21 +334,21 @@ static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
     if (bottom < top || right < left) return 0;
     int view = (int16_t)rt_r16(CAMERA + 2), middle = (view + SCREEN_H / 2) >> 4;
     int from = top, to = bottom;
-    if (middle >= top && middle <= bottom && !void_row(scroll, tilesets, left, right, middle)) {
+    if (middle >= top && middle <= bottom && !void_row(scroll, tilesets, left, right, middle, 0)) {
         int last_up = (view - field_rows) >> 4, last_down = (view + SCREEN_H - 1 + field_rows) >> 4;
         for (int r = middle - 1; r >= top && r >= last_up; r--) {
-            if (void_row(scroll, tilesets, left, right, r)) { from = r + 1; break; }
+            if (void_row(scroll, tilesets, left, right, r, 0)) { from = r + 1; break; }
         }
         for (int r = middle + 1; r <= bottom && r <= last_down; r++) {
-            if (void_row(scroll, tilesets, left, right, r)) { to = r - 1; break; }
+            if (void_row(scroll, tilesets, left, right, r, 0)) { to = r - 1; break; }
         }
     }
     *y0 = from * 16 - view;
     *y1 = (to + 1) * 16 - view;
     if (*y0 > 0 && from > top) *y0 = 0;
     if (*y1 < SCREEN_H && to < bottom) *y1 = SCREEN_H;
-    if (top_void) *top_void = from > top || void_row(scroll, tilesets, left, right, top - 1);
-    if (bottom_void) *bottom_void = to < bottom || void_row(scroll, tilesets, left, right, bottom + 1);
+    if (top_void) *top_void = from > top || void_row(scroll, tilesets, left, right, top - 1, 1);
+    if (bottom_void) *bottom_void = to < bottom || void_row(scroll, tilesets, left, right, bottom + 1, 1);
     return 1;
 }
 
