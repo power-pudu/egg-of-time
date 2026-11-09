@@ -1119,6 +1119,16 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
     }
 }
 
+/* No other key held with sc: no modifier, nor any other key. */
+static int key_alone(SDL_Scancode sc) {
+    int n;
+    const bool *down = SDL_GetKeyboardState(&n);
+    for (int k = 0; k < n; k++) {
+        if (down[k] && k != (int)sc) return 0;
+    }
+    return 1;
+}
+
 int display_key(SDL_Scancode sc) {
     switch (sc) {
     case SDL_SCANCODE_F2:
@@ -1135,6 +1145,7 @@ int display_key(SDL_Scancode sc) {
         show_message("%s", swapped ? "Screens swapped" : "Screens in normal order");
         break;
     case SDL_SCANCODE_F4:
+        if (!key_alone(sc)) return 0; /* Alt+F4 closes the window, not changes the filter on the way */
         display_setting_set(SET_FILTER, (SETTING(SET_FILTER) + 1) % settings[SET_FILTER].count);
         show_message("Filter: %s", filter_labels[SETTING(SET_FILTER)]);
         return 1;
