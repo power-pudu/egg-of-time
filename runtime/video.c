@@ -114,6 +114,8 @@ typedef struct Engine {
     int rays;                /* effect_rows: the windows (bit per window) drawn as rays beyond the band; RAYS_KEPT: the
                               * band not stretched, the effect having had rays */
     int rays_seen;           /* the effect running has had rays */
+    int rays_up, rays_down;  /* the rays go on beyond the band's top, its bottom (the lines a menu or the text box
+                              * blanks); else the effect ends there */
     float ring_cx, ring_cy, ring_outer, ring_inner; /* the ring's circles (ring_inner 0: a disc) */
     float ring_width;        /* the ring's width when both its circles last showed (0: none yet) */
     int ring_keep;           /* the frames its centre still counts for, the ring having shown */
@@ -1217,8 +1219,19 @@ static void effect_rows(Engine *e) {
     int rays = 0;
     for (int w = 0; w < 2; w++) rays |= ray_fit[w] << w;
     if (rays) e->rays_seen = 1;
+    /* So is an effect hanging from the battle menu, or rising from the text box, that ends short of the other: it
+     * has a place on screen (Azala's red pillar, down to just below Marle, before its rounded end fits as rays),
+     * stretched from those lines its end went lower until the rays took over and it went back. */
+    if (top >= BATTLE_TOP && bottom < BATTLE_BOTTOM && (top == BATTLE_TOP) != (bottom == BATTLE_BOTTOM - 1)) e->rays_seen = 1;
     if (e->rays_seen) {
         e->rays = rays | RAYS_KEPT, e->band_top = top, e->band_rows = bottom - top + 1;
+        /* They go on only where the game blanks them, under a menu or the text box, or past the screen's edge;
+         * elsewhere the effect ends on its own lines (Azala's red pillar, a WIN0 column from under the top menu down
+         * to just below Marle, went on to the bottom of the picture; growing, it passed line 145, the bottom menu's
+         * edge when the menu is at the bottom, and went on for those frames). */
+        e->rays_up = top <= 0 || top == BATTLE_TOP;
+        e->rays_down = bottom >= SCREEN_H - 1 || bottom == BATTLE_BOTTOM - 1 ||
+                       (bottom == SCREEN_H - BATTLE_TOP - 1 && top < BATTLE_TOP); /* the menu at the bottom, not the top */
         return;
     }
     /* An effect between the battle menu and the text box is stretched from those lines, whatever it fills of them:
@@ -1519,6 +1532,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                          : e->ring_wins == 1 && in_w1y && in_window(vx, vwx, w1h, ext1) ? (winin >> 8) & 0x3F
                          : winobj && o->win[x] ? (winout >> 8) & 0x3F
                                                : winout & 0x3F;
+            } else if (ray_row && (win0 || win1 || winobj) && !(y < e->band_top ? e->rays_up : e->rays_down)) {
+                ctl = winobj && o->win[x] ? (winout >> 8) & 0x3F : winout & 0x3F; /* the effect ended above, below */
             } else if (ray_row && (win0 || win1 || winobj)) {
                 int in0 = win0 && (e->rays & 1 ? vx >= ray_sp[0][0] && vx < ray_sp[0][1] : in_w0y && in_window(vx, vwx, w0h, ext0));
                 int in1 = win1 && (e->rays & 2 ? vx >= ray_sp[1][0] && vx < ray_sp[1][1] : in_w1y && in_window(vx, vwx, w1h, ext1));

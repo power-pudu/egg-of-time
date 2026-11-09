@@ -251,7 +251,14 @@ original bytes, and caches the result per region until the region is written.
       Lightning II's fit on some frames only, and switching between the two the bolts jumped). The rows beyond its
       lines take each fitted window's span from its two edges carried on, the part of the nearest line
       (`Engine.rays`, `ray_fit`), a window that fits none that frame its nearest line's; the effect's BGs keep their
-      own rows (the bolts' SNES picture has 16 more above the DS's 192 and below).
+      own rows (the bolts' SNES picture has 16 more above the DS's 192 and below). They go on only past band ends
+      the game blanks (the screen's edge, under the top menu from line 46, the bottom menu from 146, the text box from
+      166: `rays_up`, `rays_down`; the bottom menu's only when the lines start above 46, the menu then not at the top,
+      as the pillar passed 145 while growing and was drawn to the bottom); elsewhere the effect ends on its lines (Azala's red pillar, a WIN0 column from
+      under the menu down to just below Marle, went on to the picture's bottom). An effect hanging from the battle
+      menu's line 46, or rising from the text box's 165, that ends short of the other is unstretched the same way from
+      its first frame: the pillar, before its rounded end fit as rays, was stretched from lines 46-165 and reached
+      lower than its end.
       A ring is not stretched (its circle would turn into an ellipse), nor are its edges carried on beyond the
       screen's sides (its arcs became straight bars): an enemy's "Rainbow Beam: Blind" grows a ring made of WIN0
       (the left arc) and WIN1 (the right arc), coloured line by line through the backdrop. When the window edges
