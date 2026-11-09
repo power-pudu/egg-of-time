@@ -121,12 +121,15 @@ def zig_probe(zig, kit_include, tmp, deps=False):
 def zig_subset(zig_dir, kit_include):
     """Files of Zig (relative paths) needed to compile and link the game library: the executable, the headers the
     probe reads, and lib/std/std.zig, by which zig finds its lib folder."""
-    zig_dir = os.path.abspath(zig_dir)
+    zig_dir = os.path.realpath(zig_dir)
     files = {"zig", "LICENSE", os.path.join("lib", "std", "std.zig")}
     with tempfile.TemporaryDirectory() as tmp:
         deps = zig_probe(os.path.join(zig_dir, "zig"), kit_include, tmp, deps=True)
     for p in re.split(r"(?<!\\)\s+", deps.replace("\\\n", " ")):
-        p = os.path.normpath(p.replace("\\ ", " "))
+        if not p or p.endswith(":"):
+            continue
+        # zig reports a path under the working directory relative to it (CI's deps/zig-*)
+        p = os.path.realpath(p.replace("\\ ", " "))
         if p.startswith(zig_dir + os.sep):
             files.add(os.path.relpath(p, zig_dir))
     if not any(os.path.basename(f) == "setjmp.h" for f in files):
