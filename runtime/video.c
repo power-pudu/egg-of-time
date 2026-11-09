@@ -110,6 +110,10 @@ typedef struct Engine {
     int band_top, band_rows; /* effect_rows: the lines a battle effect is on, stretched over the picture's rows, */
     int ring;                /* or (a ring) drawn from its circles beyond them, its tables repeating every */
     int band_period;         /* band_period lines (0: the nearest line's) */
+    int lines_top[2], lines_bottom[2]; /* effect_rows: the lines the effect was on this frame and the last */
+    int rays;                /* effect_rows: the windows (bit per window) drawn as rays beyond the band; RAYS_KEPT: the
+                              * band not stretched, the effect having had rays */
+    int rays_seen;           /* the effect running has had rays */
     float ring_cx, ring_cy, ring_outer, ring_inner; /* the ring's circles (ring_inner 0: a disc) */
     float ring_width;        /* the ring's width when both its circles last showed (0: none yet) */
     int ring_keep;           /* the frames its centre still counts for, the ring having shown */
@@ -853,8 +857,15 @@ static int ray_on_screen(const EdgeLine *a, const EdgeLine *b, int k, int y, flo
     return *e2 - *e1 >= 1.0f;
 }
 
+/* By window, this frame: its rays fit (fit_rays), their edges, and the parts of the first and last lines they are on
+ * (what the rows beyond those lines take, effect_rows). */
+static int ray_fit[2], ray_first_part[2], ray_last_part[2];
+enum { RAYS_KEPT = 4 };
+static EdgeLine ray_a[2], ray_b[2];
+
 static int fit_rays(int w, int below_menu) {
     int py[2 * SCREEN_H], px[2 * SCREEN_H], n = 0, x[2], first = -1;
+    ray_fit[w] = 0;
     uint8_t taken[2 * SCREEN_H] = {0}, mark[2 * SCREEN_H];
     for (int y = win_top; y < SCREEN_H; y++) {
         if (win_span(y, w, &x[0], &x[1]) <= 0) continue;
@@ -883,6 +894,12 @@ static int fit_rays(int w, int below_menu) {
         fitted += part[y] >= 0;
     }
     if (!lines || fitted * 10 < lines * 9) return 0;
+    ray_fit[w] = 1, ray_a[w] = a, ray_b[w] = b, ray_first_part[w] = ray_last_part[w] = -1;
+    for (int y = 0; y < SCREEN_H; y++) {
+        if (part[y] < 0) continue;
+        if (ray_first_part[w] < 0) ray_first_part[w] = part[y];
+        ray_last_part[w] = part[y];
+    }
     float cross = a.dx != b.dx ? (b.x0 - a.x0) / (a.dx - b.dx) : 1e6f; /* where the edges meet: the rays' centre */
     for (int y = 0; y < SCREEN_H; y++) {
         int k = part[y];
@@ -967,6 +984,7 @@ static void window_margins(void) {
     }
     int below_menu = win_top;
     while (below_menu < SCREEN_H && !win_span(below_menu, 0, &x[0], &x[1]) && !win_span(below_menu, 1, &x[0], &x[1])) below_menu++;
+    ray_fit[0] = ray_fit[1] = 0;
     fit_rays(0, below_menu);
     fit_rays(1, below_menu);
 }
@@ -1186,6 +1204,23 @@ static void effect_rows(Engine *e) {
         e->band_period = ws_hdma_period(top, bottom);
         return;
     }
+    /* The band takes the lines of the frame before too: Lightning II's rays alternate frame by frame between two
+     * sets, one of them clear of the top lines, and stretched from each in turn the bolts jumped up and down. */
+    e->lines_top[0] = top, e->lines_bottom[0] = bottom;
+    if (e->lines_top[1] < top) top = e->lines_top[1];
+    if (e->lines_bottom[1] > bottom) bottom = e->lines_bottom[1];
+    /* Rays are not stretched either (their centre, on the target, would move with the stretch: Lightning II's met
+     * below Crono): the rows beyond their lines are drawn from their edges, carried on, and the effect's BGs keep their
+     * own rows (the bolts' SNES picture has more of them above and below the DS's 192). */
+    /* Lightning II's fit on some frames only (a ray cut by the screen's sides into too few points), so once they have,
+     * the band stays unstretched while the effect lasts, a window that fits none drawn from its nearest line there. */
+    int rays = 0;
+    for (int w = 0; w < 2; w++) rays |= ray_fit[w] << w;
+    if (rays) e->rays_seen = 1;
+    if (e->rays_seen) {
+        e->rays = rays | RAYS_KEPT, e->band_top = top, e->band_rows = bottom - top + 1;
+        return;
+    }
     /* An effect between the battle menu and the text box is stretched from those lines, whatever it fills of them:
      * stretched from its own, it slid as it grew (Rainbow Storm's clouds open as an oval from the middle) and
      * jumped when the text box closed (its lines then taken too, those under the box left out). */
@@ -1204,6 +1239,7 @@ static int row_line(const Engine *e, int y) {
     if (!e->band_rows) return SDL_clamp(y, 0, SCREEN_H - 1);
     int top = e->band_top, n = e->band_rows, p = e->band_period;
     if (e->ring) return y >= top && y < top + n ? y : p ? top + ((y - top) % p + p) % p : SDL_clamp(y, top, top + n - 1);
+    if (e->rays) return SDL_clamp(y, top, top + n - 1);
     return top + (y + e->rows) * n / (SCREEN_H + 2 * e->rows);
 }
 
@@ -1239,7 +1275,10 @@ static void engine_frame_start(Engine *e) {
             e->ref_y[i] -= e->rows * (int16_t)reg16(e, 0x26 + 0x10 * i);
         }
         if (e->rows) memset(ui_frame, 0, sizeof ui_frame), memset(ui_stays, 0, sizeof ui_stays);
-        e->band_rows = e->ring = 0;
+        e->band_rows = e->ring = e->rays = 0;
+        e->lines_top[1] = e->lines_top[0], e->lines_bottom[1] = e->lines_bottom[0];
+        e->lines_top[0] = SCREEN_H, e->lines_bottom[0] = -1; /* none yet */
+        if (e->lines_top[1] == SCREEN_H) e->rays_seen = 0; /* no effect last frame */
         if (e->ring_keep) e->ring_keep--;
         e->ring_fits <<= 1;
         e->party = e->sliding = e->still_bgs = 0;
@@ -1318,7 +1357,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
     int m = e->margin, width = SCREEN_W + 2 * m;
     int on_screen = y >= 0 && y < SCREEN_H, wy = row_line(e, y); /* the line whose windows it has */
-    int by = e->band_rows && !e->ring ? wy : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
+    int by = e->band_rows && !e->ring && !e->rays ? wy : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
     if (e->track_top && y == SS_MAP_Y) {
         /* The marker as it last was belongs to its map: entering a house, the world map's pins and marker are gone
          * from the room's map, which the game shows a few frames without sprites. Read at the panel's first line,
@@ -1441,6 +1480,11 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         /* A ring (effect_rows): its windows from its circles in the margins and on the rows beyond its band. */
         int ring_sp[2][2], ring_n = e->ring ? ring_spans(e, y, ring_sp) : 0;
         int ring_row = e->ring && (y < e->band_top || y >= e->band_top + e->band_rows);
+        float ray_sp[2][2] = {{0, 0}, {0, 0}}; /* rays: the windows' spans on a row beyond their lines */
+        int ray_row = e->rays && (y < e->band_top || y >= e->band_top + e->band_rows);
+        for (int w = 0; w < 2 && ray_row; w++) {
+            if (e->rays >> w & 1) ray_span(&ray_a[w], &ray_b[w], y < e->band_top ? ray_first_part[w] : ray_last_part[w], y, &ray_sp[w][0], &ray_sp[w][1]);
+        }
 
         /* Pass 0: the picture (without the party when it has its own layer); pass 1: the shifted picture of the
          * age selector (sel_shift), or the party layer, the party's
@@ -1475,6 +1519,10 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                          : e->ring_wins == 1 && in_w1y && in_window(vx, vwx, w1h, ext1) ? (winin >> 8) & 0x3F
                          : winobj && o->win[x] ? (winout >> 8) & 0x3F
                                                : winout & 0x3F;
+            } else if (ray_row && (win0 || win1 || winobj)) {
+                int in0 = win0 && (e->rays & 1 ? vx >= ray_sp[0][0] && vx < ray_sp[0][1] : in_w0y && in_window(vx, vwx, w0h, ext0));
+                int in1 = win1 && (e->rays & 2 ? vx >= ray_sp[1][0] && vx < ray_sp[1][1] : in_w1y && in_window(vx, vwx, w1h, ext1));
+                ctl = in0 ? winin & 0x3F : in1 ? (winin >> 8) & 0x3F : winobj && o->win[x] ? (winout >> 8) & 0x3F : winout & 0x3F;
             } else if (win0 || win1 || winobj) {
                 if (in_w0y && in_window(vx, vwx, w0h, ext0)) ctl = winin & 0x3F;
                 else if (in_w1y && in_window(vx, vwx, w1h, ext1)) ctl = (winin >> 8) & 0x3F;

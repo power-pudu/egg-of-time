@@ -243,7 +243,15 @@ original bytes, and caches the result per region until the region is written.
       put back (`ws_hdma_line`); sprites and the room's BGs keep their own rows (the stars, stretched with the rest,
       had streaked; their colours come with the line's palette entries). Between the battle menu and the text box
       the stretch is from those lines (46-165) whatever the effect fills of them: from the effect's own lines, the
-      clouds slid as their oval opened from the middle and jumped when the text box closed.
+      clouds slid as their oval opened from the middle and jumped when the text box closed. The band spans this
+      frame's lines and the last one's (`Engine.lines_top`): Lightning II's rays alternate frame by frame between two
+      sets, one clear of the top lines, and stretched from each in turn the bolts jumped up and down.
+      Rays are not stretched (their centre, on the target, moved with the stretch: Lightning II's met below Crono):
+      once a window fits rays (`fit_rays`), the band stays unstretched while the effect lasts (`Engine.rays_seen`;
+      Lightning II's fit on some frames only, and switching between the two the bolts jumped). The rows beyond its
+      lines take each fitted window's span from its two edges carried on, the part of the nearest line
+      (`Engine.rays`, `ray_fit`), a window that fits none that frame its nearest line's; the effect's BGs keep their
+      own rows (the bolts' SNES picture has 16 more above the DS's 192 and below).
       A ring is not stretched (its circle would turn into an ellipse), nor are its edges carried on beyond the
       screen's sides (its arcs became straight bars): an enemy's "Rainbow Beam: Blind" grows a ring made of WIN0
       (the left arc) and WIN1 (the right arc), coloured line by line through the backdrop. When the window edges
