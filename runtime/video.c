@@ -156,6 +156,7 @@ typedef struct Engine {
     uint8_t solid_bgs;       /* widescreen, this line: text BGs one opaque tile throughout (see solid_256) */
     uint64_t solid_key[4];   /* solid_256's last answer by BG this frame, and the registers it was for */
     uint8_t solid_val[4];
+    uint8_t frame_solid;     /* widescreen: BG0/BG1 one-tile overlays (solid_256) as the frame started */
 } Engine;
 
 static Engine engines[2];
@@ -300,12 +301,14 @@ void video_reset(void) {
 
 /* Layer buffers hold a line from column -margin, so out[x + m] is screen column x. */
 /* Widescreen: a map one screen wide would only repeat itself in the margins. The field's text box is one: for
- * its lines the game switches BG0/BG1 from the field's 512-wide layers to 256-wide box maps. Such a map is drawn
+ * its lines the game switches BG0/BG1 from the field's 512-wide layers to 256-wide box maps, or from a one-tile
+ * overlay (frame_solid: the Mammon Machine's glow, BG0 over its hall) to another map. Such a map is drawn
  * in the screen's columns alone, and the margins keep the layer as the frame started (its map, scroll, priority
  * and blending), so the room goes on beside the box. In the race (repeat_256) the sky, mountains and skyline are
  * 256-wide maps that tile seamlessly, so they repeat into the margins as they would on a wider screen. */
 static int box_bg(const Engine *e, int bg) {
-    return !(reg16(e, 0x08 + 2 * bg) & 0x4000) && (e->frame_bg[bg][0] & 0x4000);
+    uint16_t cnt = reg16(e, 0x08 + 2 * bg), frame_cnt = e->frame_bg[bg][0];
+    return !(cnt & 0x4000) && ((frame_cnt & 0x4000) || (cnt != frame_cnt && (e->frame_solid >> bg & 1)));
 }
 
 static int margin_bg(const Engine *e, int bg) { return e->margin && box_bg(e, bg); }
@@ -1308,6 +1311,8 @@ static void engine_frame_start(Engine *e) {
         }
         e->frame_bld[0] = reg16(e, 0x50), e->frame_bld[1] = reg16(e, 0x52);
         memset(e->solid_key, 0xFF, sizeof e->solid_key);
+        e->frame_solid = 0;
+        for (int bg = 0; bg < 2 && e->margin; bg++) e->frame_solid |= (uint8_t)(solid_256(e, bg, dispcnt) << bg);
         if (e->id == !a_top) {
             /* The view stops at the room's ends, as far as it is shown (not the guard columns and rows); with Fill screen
              * sides, at those with nothing to fill beyond them. */
@@ -1446,7 +1451,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             if (!(e->sliding || e->rows) || !enabled[bg] || !margin_bg(e, bg)) continue;
             const uint16_t *f = e->frame_bg[bg];
             memset(under[bg], 0, sizeof under[bg]);
-            bg_text_cols(e, bg, y, dispcnt, f[0], f[1], f[2], -m, SCREEN_W + m, under[bg], NULL);
+            int uy = (e->frame_solid >> bg & 1) && !on_screen ? y & 7 : y; /* a one-tile overlay: as bg_text has it */
+            bg_text_cols(e, bg, uy, dispcnt, f[0], f[1], f[2], -m, SCREEN_W + m, under[bg], NULL);
             box |= 1 << bg;
         }
         if (box && !e->party && !e->rows) { /* the party layer starts here: the lines above have nothing on it */
@@ -1607,8 +1613,12 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 if (layer[1] < 4 && blended) e->shown_now |= (uint8_t)(1 << layer[1]);
             }
             if (pass && e->sel_shift) shifted_sprite[y * VIDEO_LINE_MAX + x] = (uint8_t)sprite_shows;
-            /* Beyond the room with no layer repeating, black but where a BG of its own is on top. */
-            int cut = beyond && !e->repeat_bgs && !(layer[0] < 4 && (own_bgs >> layer[0] & 1));
+            /* Beyond the room with no layer repeating, black but where a BG of its own is on top. A one-tile overlay
+             * blended over the room (the Mammon Machine's glow over its hall) tints the room alone, the margins black;
+             * on a text box's lines the margins show it as the frame started (under). */
+            int solid = layer[0] < 4 && ((layer[0] < 2 && src[layer[0]] == under[layer[0]] ? e->frame_solid : e->solid_bgs) >> layer[0] & 1);
+            int tint = solid && (ctl & 0x20) && first && effect == 1;
+            int cut = beyond && !e->repeat_bgs && !(layer[0] < 4 && (own_bgs >> layer[0] & 1) && !tint);
             if (cut) dst[x] = pass ? 0 : 0xFF000000u;
             /* The still layer: a pixel of a still BG or the backdrop on top, not blended with a layer that slides. */
             int to_still = !pass && e->still_bgs && !cut && still_layer(e, layer[0]) &&

@@ -97,7 +97,11 @@ original bytes, and caches the result per region until the region is written.
   other scenes stay 4:3, centred.
   - A 256x256 text BG whose on-screen map is one fully opaque tile throughout (`solid_256`) is a flash of colour:
     the field's red flash when the party takes damage switches BG0 to such a map (BG0CNT 0x0e00) blended over the
-    rest (BLDCNT 0x1e41). It fills the margins and the zoom out's rows with that tile, beyond the room's ends too.
+    rest (BLDCNT 0x1e41). It fills the margins and the zoom out's rows with that tile, beyond the room's ends too,
+    unless it is blended over the room there (with Fill screen sides off, beyond the room stays black): the
+    Mammon Machine's hall keeps such a map on BG0 as a steady glow. Its text box switches BG0 from that map to the
+    box's, which counts as a box layer like a switch from a 512-wide map (`frame_solid`), so the box goes to the
+    zoom out's UI layer and the glow goes on beside and under it.
   - The field keeps each BG in a 512x256 map used as a ring and only keeps the 34 columns around the 4:3 view
     current (scroll handler ov004 0x0213bcb0: per layer, generator 0x02137144 / 0x02137734 / 0x02137c4c into a
     staging buffer, uploaded into the ring at origin-1 / origin+32 by ov004 0x02137e2c and main 0x02046754).
