@@ -159,6 +159,12 @@ original bytes, and caches the result per region until the region is written.
     0-31, but its map's right half holds a second Epoch (its wing showed in the right margin), so the room ends at
     15. It stays narrow while the room holds (its bounds and first metatile row, `room_print`): taking off, the
     location reads the destination (0x1f7) for a few frames before the scene changes, and the wing came back.
+  - Rooms looked at from their left end (`left_rooms`): the view stops at the room's left end alone, the scene at
+    the view's left border. The Blackbird's wing (0x16c) is one screen wide, the plane's side and door at its left
+    end; centred, the party stood out of the door mid-screen with clouds beyond the plane too.
+  - With Fill screen sides on, a layer repeating into the margins (`ws_repeat_bgs`: the clouds there, the Epoch's
+    flight) leaves the rest black beyond the room (room_clip) all the same, so the view stops at the room's ends as
+    with it off (the rows above the wing were black once the text box no longer covered them).
   - Characters: two culls kept them inside the 4:3 view. (1) The field object loop (ov004 0x02130a10) draws an
     object only while ov004 0x02130dbc finds its tile within the camera columns `*(0x020708e0)+4 - 4 ..
     +6 + 4` (and rows); those fields are the camera's own, used by map streaming too, so the wrapper

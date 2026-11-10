@@ -222,6 +222,11 @@ static const struct { uint16_t location; uint8_t right; } narrow_rooms[] = {
     {0x1d9, 15}, /* the Epoch parked (Take off / Get off): its map's right half holds a second Epoch */
 };
 
+/* Rooms looked at from their left end: the view stops there alone, the scene at the view's left border. */
+static const uint16_t left_rooms[] = {
+    0x16c, /* the Blackbird's wing: the party out of its door, on the plane's side, looks out over the clouds */
+};
+
 /* The room's fingerprint: its bounds and its map's first metatile row. A narrow room stays narrow while it
  * holds: taking off, the location already reads the destination for a few frames before the scene changes. */
 static uint32_t room_print(uint32_t scroll) {
@@ -229,6 +234,19 @@ static uint32_t room_print(uint32_t scroll) {
     if (!ram_ptr(room)) return h;
     for (uint32_t i = 0; i < 0x40; i += 4) h = h * 31 + rt_r32(room + 0x1000 + i);
     return h;
+}
+
+/* The room is one of left_rooms, and stays one while it holds (room_print): leaving the Blackbird's wing, the
+ * location reads the next scene's (0x16e) for a few frames, and the view went back to the middle. */
+static int left_room(void) {
+    static int held;
+    static uint32_t held_print;
+    uint32_t scroll = rt_r32(SCROLL);
+    if (!ram_ptr(scroll)) return held = 0;
+    uint32_t print = room_print(scroll);
+    for (size_t i = 0; i < sizeof left_rooms / sizeof *left_rooms; i++)
+        if (rt_r16(LOCATION) == left_rooms[i]) return held = 1, held_print = print, 1;
+    return held = held && print == held_print;
 }
 
 int ws_room_span(int *x0, int *x1) {
@@ -948,10 +966,14 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
     int lo, hi;
     if (field && limit) {
         int at_lo = 1, at_hi = 1;
-        if (fill) void_beyond_ends(&at_lo, &at_hi); /* Fill screen sides: only where it has nothing to show */
+        /* Fill screen sides: only where it has nothing to show. A layer repeating into the margins (the clouds of
+         * the Epoch's flight) has the rest black beyond the room all the same (video.c room_clip): there as without. */
+        int fills = fill && !repeat_bgs;
+        if (fills) void_beyond_ends(&at_lo, &at_hi);
+        if (left_room()) at_lo = 1, at_hi = 0;
         if (ws_room_span(&lo, &hi)) next_x = view_shift(lo, hi, SCREEN_W, limit, at_lo, at_hi);
         if (limit_rows && room_rows(&lo, &hi, &at_lo, &at_hi)) {
-            if (!fill) at_lo = at_hi = 1;
+            if (!fills) at_lo = at_hi = 1;
             next_y = view_shift(lo, hi, SCREEN_H, limit_rows, at_lo, at_hi);
         }
     }
