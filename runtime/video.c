@@ -139,6 +139,12 @@ typedef struct Engine {
                      * under the opaque room, seen only through the time gate's hole in the middle) */
     uint8_t shown_bgs, shown_now; /* BGs seen in the screen's SIDE_COLS side columns (on top, or blended under the
                                    * top) in the last frame and in this one so far, text box lines left out */
+    /* Beyond the room the void is black, or the one colour the screen's own SIDE_COLS side columns showed in the
+     * last frame (sprites left out): the Blackbird's halls are one screen wide, their map dark grey around them
+     * within the room's bounds, and the margins beside the screen were black. void_now: bit 0 a side pixel seen,
+     * bit 1 one of another colour than void_now_col. */
+    uint8_t void_now;
+    uint32_t void_col, void_now_col;
     int party;      /* camera smoothing: this frame has sprites that move with the camera (party layer) */
     int sliding;    /* camera smoothing: the display may slide this frame (the camera moved within VIDEO_GLIDE_FRAMES) */
     int box_top;    /* the first line of the field's text box this frame (see box_bg; SCREEN_H: no box) */
@@ -1336,6 +1342,7 @@ static void engine_frame_start(Engine *e) {
             e->obj_stretch = e->margin && ss_in_warp();
             e->repeat_256 = e->margin && ss_in_race();
             e->shown_bgs = e->shown_now, e->shown_now = 0;
+            e->void_col = e->void_now == 1 ? e->void_now_col : 0xFF000000u, e->void_now = 0;
             e->repeat_bgs = e->margin ? ws_repeat_bgs() & e->shown_bgs : 0;
             e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs) &&
                            ws_room_span(&e->room_x0, &e->room_x1);
@@ -1611,15 +1618,19 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             if (!pass && !side && !margin_kept && (wx < SIDE_COLS || wx >= SCREEN_W - SIDE_COLS)) { /* what the screen shows of each BG (repeat_bgs) */
                 if (layer[0] < 4) e->shown_now |= (uint8_t)(1 << layer[0]);
                 if (layer[1] < 4 && blended) e->shown_now |= (uint8_t)(1 << layer[1]);
+                if (!beyond && layer[0] != 4) {
+                    if (!e->void_now) e->void_now_col = dst[x];
+                    e->void_now |= (uint8_t)(1 | (dst[x] != e->void_now_col) << 1);
+                }
             }
             if (pass && e->sel_shift) shifted_sprite[y * VIDEO_LINE_MAX + x] = (uint8_t)sprite_shows;
-            /* Beyond the room with no layer repeating, black but where a BG of its own is on top. A one-tile overlay
-             * blended over the room (the Mammon Machine's glow over its hall) tints the room alone, the margins black;
-             * on a text box's lines the margins show it as the frame started (under). */
+            /* Beyond the room with no layer repeating, the void (void_col) but where a BG of its own is on top. A
+             * one-tile overlay blended over the room (the Mammon Machine's glow over its hall) tints the room alone,
+             * the margins black; on a text box's lines the margins show it as the frame started (under). */
             int solid = layer[0] < 4 && ((layer[0] < 2 && src[layer[0]] == under[layer[0]] ? e->frame_solid : e->solid_bgs) >> layer[0] & 1);
             int tint = solid && (ctl & 0x20) && first && effect == 1;
             int cut = beyond && !e->repeat_bgs && !(layer[0] < 4 && (own_bgs >> layer[0] & 1) && !tint);
-            if (cut) dst[x] = pass ? 0 : 0xFF000000u;
+            if (cut) dst[x] = pass ? 0 : e->void_col;
             /* The still layer: a pixel of a still BG or the backdrop on top, not blended with a layer that slides. */
             int to_still = !pass && e->still_bgs && !cut && still_layer(e, layer[0]) &&
                            (!blended || still_layer(e, layer[1]));

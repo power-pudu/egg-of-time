@@ -133,6 +133,9 @@ original bytes, and caches the result per region until the region is written.
     room shows as the original. That camera is already the next frame's, so `video.c` moves the bounds to the frame's
     own: when a shake stepped it, a column beyond the room stayed unclipped, and with camera smoothing the prison
     bridge's sky (still layer) showed through it.
+    Beyond the room is black unless the screen's own side columns (8 each side, sprites left out) showed one
+    colour alone the frame before (`void_col`): the Blackbird's halls are one screen wide, their map dark grey around
+    them within the room's bounds, and the screen showed a grey box between black margins.
   - Rooms one screen wide with a layer scrolling on its own (the Epoch in flight: a 16-metatile room, the Epoch on
     BG2, the clouds on BG3 scrolling down while the camera stays; BG3's 512-wide map holds a sea of fire in its
     right half. The Epoch parked, location 0x1d9 with Take off / Get off: the water on BG0 drifting both ways):
@@ -241,7 +244,12 @@ original bytes, and caches the result per region until the region is written.
       jumping then (clamped at the map's last row).
       Layer 2 the same with BG0: the Blackbird seen from above (0x16e) scrolls BG0's clouds 4 rows a frame over
       BG3's, and every 64 frames, for 3, the fill wrote the room into them, the clouds jumping.
-    - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
+      Neither a repeating layer nor a drifting one starts in a room's first 8 frames (`ROOM_SETTLE`): entering the
+      Blackbird's hall from its wing, BG3 kept the wing's VOFS 403 for 3 frames and then went to 0 with the camera
+      still, taken for both, so BG3 was not filled for as long as the room held: the floor slid up over the walls as
+      the camera went down, and black blocks stood above the room. The room is told by its map and its four bounds
+      (`room_bounds`; read as one word at +0x16, the aligned read had only left and right, the wing's and the hall's
+      alike).    - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
       bottom from one above the view, as the DS's 64 unused rows did. `rt_ws_draw_cell` (main 0x02019fd4) knows the cell's
       place, and `rt_ws_enter_oam` (main 0x02048098) marks each sprite while it is entered, in attribute 1 bits that
       sprites without rotation do not use: `WS_OAM_ABOVE`. That entry also picks a priority from Y against a threshold
