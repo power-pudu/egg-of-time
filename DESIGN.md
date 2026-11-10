@@ -239,6 +239,8 @@ original bytes, and caches the result per region until the region is written.
       room holds: past the Blackbird's wing the clouds loop through BG3's own map, which wraps seamlessly, and the fill
       took it over only for the ~30 frames a loop its scroll passed near the layer's place, the rows beyond the screen
       jumping then (clamped at the map's last row).
+      Layer 2 the same with BG0: the Blackbird seen from above (0x16e) scrolls BG0's clouds 4 rows a frame over
+      BG3's, and every 64 frames, for 3, the fill wrote the room into them, the clouds jumping.
     - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
       bottom from one above the view, as the DS's 64 unused rows did. `rt_ws_draw_cell` (main 0x02019fd4) knows the cell's
       place, and `rt_ws_enter_oam` (main 0x02048098) marks each sprite while it is entered, in attribute 1 bits that
@@ -815,7 +817,11 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
   the old 64-line limit, a game thread held up by the host (often in fast forward, where a line takes half the host
   time) ran lines past their HBlank handler inside it, the line ending the box was missed, and the rest of the frame
   showed the box's BG0/BG1 and no window (the trees and the time gate gone for a frame; 77 of 2700 frames in fast
-  forward beside the gate, none after). A frame also starts (line 0) only once the game waits for an interrupt
+  forward beside the gate, none after). Time more than 192 lines ahead of video is dropped (`sched_now`), the game
+  held up with it: catching it up stepped past pending interrupts for a whole frame, the HBlank handler at line 262
+  that writes line 0's entry was merged, and a frame after a host stall (a screenshot written, in the Blackbird seen
+  from above) began with the box's BG0/BG1, the box drawn into the picture with a line above it (1-2 frames in 700,
+  none in 2300 after). A frame also starts (line 0) only once the game waits for an interrupt
   (`rt_halt`), up to 128 lines late: in fast forward the game was sometimes still updating at line 0, and the
   frame showed half of it (sprites gone, the gate's OBJ window square). Held lines catch up after, so speed holds.
   In fast forward the game also loses whole frames: it waits for VBlank discarding any already raised

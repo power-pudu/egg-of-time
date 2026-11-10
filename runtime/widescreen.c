@@ -899,18 +899,23 @@ static void fill_field_margins(int margin, int rows) {
     /* Walking, the origins in RAM are a tile ahead of the frame's scroll for one frame at each tile: that frame shows
      * a column or row the fill must have written too, so a BG a tile off is filled, by its own scroll. */
     int ok0 = bg_on_layer(2, scroll, 0), ok1 = bg_on_layer(3, scroll, 1), ok2 = bg_on_layer(0, scroll, 2);
-    /* Layer 1 drifting: BG3's scroll moves while the camera and BG2's hold still (the sky behind Azala's tower moves
-     * only with the camera; a shaking screen moves BG2 too). Its own map loops seamlessly: the clouds past the Blackbird's wing, a 256-row loop the game scrolls through
-     * BG3's map. Filled only while that scroll passed near the layer's place in the room, the rows beyond the screen
-     * jumped for those frames (from the map's last row on). Left to the game while the room holds. */
+    /* Layers 1 and 2 drifting: BG3's or BG0's scroll moves while the camera and BG2's hold still (the sky behind
+     * Azala's tower moves only with the camera; a shaking screen moves BG2 too). Their own maps loop seamlessly: the
+     * clouds past the Blackbird's wing, a 256-row loop the game scrolls through BG3's map; seen from above, BG0's
+     * clouds 4 rows a frame over BG3's. Filled only while that scroll passed near the layer's place in the room, the
+     * rows beyond the screen jumped for those frames (from the map's last row on). Left to the game while the room
+     * holds. */
     static uint32_t drift_room;
-    static int drift, last_cam, last_vofs, last_room_vofs;
+    static int drift, last_cam, last_vofs[2], last_room_vofs; /* drift: bit 0 layer 1 (BG3), bit 1 layer 2 (BG0) */
     uint32_t here = room ^ rt_r32(scroll + 0x16);
-    int cam = (int16_t)rt_r16(CAMERA + 2), vofs = io_get16(0x1e) & 511, room_vofs = io_get16(0x1a) & 511;
+    int cam = (int16_t)rt_r16(CAMERA + 2), room_vofs = io_get16(0x1a) & 511;
+    int vofs[2] = {io_get16(0x1e) & 511, io_get16(0x12) & 511};
     if (here != drift_room) drift = 0, drift_room = here;
-    else if (cam == last_cam && room_vofs == last_room_vofs && vofs != last_vofs) drift = 1;
-    last_cam = cam, last_vofs = vofs, last_room_vofs = room_vofs;
-    if (drift) ok1 = 0;
+    else if (cam == last_cam && room_vofs == last_room_vofs)
+        for (int i = 0; i < 2; i++) drift |= (vofs[i] != last_vofs[i]) << i;
+    last_cam = cam, last_vofs[0] = vofs[0], last_vofs[1] = vofs[1], last_room_vofs = room_vofs;
+    if (drift & 1) ok1 = 0;
+    if (drift & 2) ok2 = 0;
     if (!ok0 && !ok1 && !ok2) return;
     copy_room_rows(scroll, room);
     ok0 = ok0 && bg_holds_layer(2, scroll, tilesets, 0);
