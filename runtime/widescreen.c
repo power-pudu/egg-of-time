@@ -1002,9 +1002,24 @@ int ws_window_lines(uint32_t h[SCREEN_H]) {
     return found != 0;
 }
 
+static uint32_t hdma_entry(uint32_t c, int line, uint32_t *halves);
+
+/* BG bg's BGxCNT as the HDMA writes it for line `line`, else 0x10000 (it keeps the register). */
+static uint32_t hdma_cnt(uint32_t end, int bg, int line) {
+    for (uint32_t c = HDMA_CHANNELS; c < end; c += 0x28) {
+        uint32_t halves, from = hdma_entry(c, line, &halves), dst = rt_r32(c + 8);
+        for (uint32_t i = 0; from && i < halves; i++) {
+            if (dst + 2 * i == 0x04000008u + 2u * (uint32_t)bg) return rt_r16(from + 2 * i);
+        }
+    }
+    return 0x10000;
+}
+
 /* The BGs (bit per BG) whose scroll the HDMA changes line by line: an effect's picture (the ripples in Magus's
  * portal), not a room layer. Battles set BG1-BG3's scroll through the HDMA too, the same on every line: taken for an
- * effect's, the room's layers were stretched with its band and the battle seemed to zoom in (Frog's Water). */
+ * effect's, the room's layers were stretched with its band and the battle seemed to zoom in (Frog's Water). Only
+ * lines on the same map count: a text box's lines switch BG0/BG1 to the box's maps, with their own scroll, through
+ * the HDMA (the Blackbird's cell), and the room's BG0 beyond its ends was taken for an effect's and shown. */
 int ws_hdma_bgs(void) {
     uint32_t end = rt_r32(HDMA_END);
     if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * 32) return 0;
@@ -1013,9 +1028,12 @@ int ws_hdma_bgs(void) {
         uint32_t flags = rt_r32(c), dst = rt_r32(c + 8), src = rt_r32(c + 4), step = rt_r32(c + 0x14);
         if ((flags & 9) != 1 || !step || dst < 0x04000010u || dst >= 0x04000020u || !ram_ptr(src)) continue;
         uint32_t first = rt_r32(c + 0x20), last = rt_r32(c + 0x24), v = rt_r32(src);
+        int bg = (int)((dst - 0x04000010u) >> 2);
+        uint32_t map = hdma_cnt(end, bg, (int)first);
         for (uint32_t y = first + 1; y <= last && y < SCREEN_H; y++) {
+            if (hdma_cnt(end, bg, (int)y) != map) continue;
             if (rt_r32(src + step * (y - first)) != v) {
-                bgs |= 1 << ((dst - 0x04000010u) >> 2);
+                bgs |= 1 << bg;
                 break;
             }
         }
