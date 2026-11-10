@@ -881,6 +881,18 @@ static void fill_field_margins(int margin, int rows) {
     /* Walking, the origins in RAM are a tile ahead of the frame's scroll for one frame at each tile: that frame shows
      * a column or row the fill must have written too, so a BG a tile off is filled, by its own scroll. */
     int ok0 = bg_on_layer(2, scroll, 0), ok1 = bg_on_layer(3, scroll, 1), ok2 = bg_on_layer(0, scroll, 2);
+    /* Layer 1 drifting: BG3's scroll moves while the camera and BG2's hold still (the sky behind Azala's tower moves
+     * only with the camera; a shaking screen moves BG2 too). Its own map loops seamlessly: the clouds past the Blackbird's wing, a 256-row loop the game scrolls through
+     * BG3's map. Filled only while that scroll passed near the layer's place in the room, the rows beyond the screen
+     * jumped for those frames (from the map's last row on). Left to the game while the room holds. */
+    static uint32_t drift_room;
+    static int drift, last_cam, last_vofs, last_room_vofs;
+    uint32_t here = room ^ rt_r32(scroll + 0x16);
+    int cam = (int16_t)rt_r16(CAMERA + 2), vofs = io_get16(0x1e) & 511, room_vofs = io_get16(0x1a) & 511;
+    if (here != drift_room) drift = 0, drift_room = here;
+    else if (cam == last_cam && room_vofs == last_room_vofs && vofs != last_vofs) drift = 1;
+    last_cam = cam, last_vofs = vofs, last_room_vofs = room_vofs;
+    if (drift) ok1 = 0;
     if (!ok0 && !ok1 && !ok2) return;
     copy_room_rows(scroll, room);
     ok0 = ok0 && bg_holds_layer(2, scroll, tilesets, 0);

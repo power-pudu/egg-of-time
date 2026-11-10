@@ -229,6 +229,10 @@ original bytes, and caches the result per region until the region is written.
       never reaches, repeat its first or last row instead of wrapping round (`map_row`: the sky behind Azala's tower,
       layer 1 on its own camera near its map's top, had the canyon's rocks above it); a layer whose own 4:3 rows
       cross its map's end wraps as before.
+      Layer 1 drifting on its own (BG3's scroll moving while the camera and BG2's hold still) is not filled while the
+      room holds: past the Blackbird's wing the clouds loop through BG3's own map, which wraps seamlessly, and the fill
+      took it over only for the ~30 frames a loop its scroll passed near the layer's place, the rows beyond the screen
+      jumping then (clamped at the map's last row).
     - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
       bottom from one above the view, as the DS's 64 unused rows did. `rt_ws_draw_cell` (main 0x02019fd4) knows the cell's
       place, and `rt_ws_enter_oam` (main 0x02048098) marks each sprite while it is entered, in attribute 1 bits that
