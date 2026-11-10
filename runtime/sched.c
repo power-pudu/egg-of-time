@@ -24,9 +24,18 @@ static uint64_t line_done; /* absolute index of the last scanline whose events w
 enum { LINE_STARTED, LINE_DRAWN, LINE_HBLANK };
 static int line_phase = LINE_HBLANK;
 
+#define VIDEO_MAX_LAG 192u /* lines */
+
 uint64_t sched_now(void) {
     Uint64 t = SDL_GetTicksNS();
     uint64_t now = base_cycles + (uint64_t)((double)(t - base_ns) * (RT_CLOCK_HZ / 1e9) * speed);
+    /* Host stall: time more than VIDEO_MAX_LAG lines ahead of video is dropped, the game held up with it. Lines
+     * stepped past pending interrupts to catch it up merged the game's HBlank handlers: the one at line 262 writes
+     * line 0's entry of the software HDMA, and a frame after a stall (a screenshot written, in the Blackbird seen
+     * from above) began with the text box's BG0/BG1 instead of the clouds', the box drawn into the picture and a line
+     * above it. Never before an earlier now: line_done only grows. */
+    uint64_t lag_end = (line_done + VIDEO_MAX_LAG) * RT_LINE_CYCLES;
+    if (now > lag_end) now = lag_end, base_ns = t, base_cycles = now;
     int want = SDL_GetAtomicInt(&speed_wanted);
     if (want > 0 && want != speed) { /* time goes on from here at the new speed */
         base_ns = t;
@@ -246,7 +255,6 @@ void dma_trigger(int start_mode) {
 
 /* ---- scheduling ---- */
 
-#define VIDEO_MAX_LAG 192u /* lines */
 /* A frame starts drawing once the game waits for an interrupt (rt_halt), up to FRAME_HOLD_MAX lines late. The
  * game prepares a frame (sprites, registers) and then waits for VBlank; on the DS it always gets there before
  * line 0. Here emulated time follows the host clock, so a host hiccup, or fast forward halving the time a frame
@@ -283,21 +291,17 @@ void sched_update(void) {
     uint64_t now = sched_now();
     ff_hold(&now);
     uint64_t line = now / RT_LINE_CYCLES;
-    if (line > line_done + RT_FRAME_LINES) { /* host stall: drop old lines */
-        line_done = line - RT_FRAME_LINES;
-        line_phase = LINE_HBLANK;
-    }
     /* Games change video registers from VBlank/HBlank/VCount handlers in the middle of a frame. Lines are
      * drawn behind the host clock, so stop at a line whose interrupt is pending, and continue once the
      * handler has run: its register writes then reach the right line instead of one up to a poll later.
      * This includes while interrupts are masked by CPSR or IME (another handler running, SDK critical
      * sections). Video also holds while a handler runs: catching up while e.g. the VBlank handler is still
      * re-arming HBlank DMA would shift the per-line register table. Up to VIDEO_MAX_LAG lines behind the host
-     * clock; further behind (the game thread held up by the host, more often in fast forward), one line per
-     * call, so code that waits for VCOUNT with interrupts off still sees time pass, but a stall is never caught
-     * up in one go inside a handler or with interrupts masked: the HBlank interrupts of those lines merged, the
-     * game's software HDMA (HBlank handler) missed the line ending the text box, and the rest of the frame was
-     * drawn with the box's one-screen BG0/BG1 and no window (the field's trees and the time gate gone). */
+     * clock; at that, one line per call, so code that waits for VCOUNT with interrupts off still sees time pass, but
+     * a stall is never caught up in one go inside a handler or with interrupts masked (time beyond it is dropped):
+     * the HBlank interrupts of those lines merged, the game's software HDMA (HBlank handler) missed the line ending
+     * the text box, and the rest of the frame was drawn with the box's one-screen BG0/BG1 and no window (the field's
+     * trees and the time gate gone). */
     int stepped = 0; /* went on past a pending interrupt or a running handler (far behind) */
     for (;;) {
         int in_handler = rt_cur_cpu && (rt_cur_cpu->cpsr_ctl & 0x1F) == 0x12; /* IRQ mode */
