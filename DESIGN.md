@@ -165,6 +165,12 @@ original bytes, and caches the result per region until the region is written.
   - With Fill screen sides on, a layer repeating into the margins (`ws_repeat_bgs`: the clouds there, the Epoch's
     flight) leaves the rest black beyond the room (room_clip) all the same, so the view stops at the room's ends as
     with it off (the rows above the wing were black once the text box no longer covered them).
+  - A 4:3 view that has stayed outside the room's bounds for 8 frames (`view_outside`) has no room ends: the
+    Blackbird seen from above (0x16e) is a cutscene the game pans by scrolling the BGs, its camera held below the
+    bounds, whose ends had shifted the view 85 and 232 pixels off and cut the plane at them. A room loading has the
+    camera outside the new bounds for a few frames only (after the Lab 32 race), so the view's shift holds then; a
+    camera beyond the map itself (the Blackbird's, row 528 of a 512-row map) has none at once, or the scene's first
+    frames had them.
   - Characters: two culls kept them inside the 4:3 view. (1) The field object loop (ov004 0x02130a10) draws an
     object only while ov004 0x02130dbc finds its tile within the camera columns `*(0x020708e0)+4 - 4 ..
     +6 + 4` (and rows); those fields are the camera's own, used by map streaming too, so the wrapper

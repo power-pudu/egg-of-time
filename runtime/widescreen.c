@@ -249,8 +249,26 @@ static int left_room(void) {
     return held = held && print == held_print;
 }
 
+/* The 4:3 view has stayed outside the room's bounds (OUTSIDE_FRAMES): they are not the view's. The Blackbird seen
+ * from above (0x16e) is a cutscene the game pans by scrolling the BGs, its camera held below the bounds; their ends
+ * shifted the view 85 and 232 pixels off and cut the plane at them. A room loading has the camera outside the new
+ * bounds for a few frames only (after the Lab 32 race), within the map; a camera beyond the map (the Blackbird's,
+ * at row 528 of a 512-row map) counts at once, or the scene started wrong for those frames. Counted by
+ * ws_fill_margins, once a frame. */
+#define OUTSIDE_FRAMES 8
+static int outside_frames;
+
+static int view_outside(uint32_t scroll) {
+    int x = (int16_t)rt_r16(CAMERA), y = (int16_t)rt_r16(CAMERA + 2);
+    int left = rt_r8(scroll + 0x16) * 16, right = (rt_r8(scroll + 0x17) + 1) * 16;
+    int top = rt_r8(scroll + 0x18) * 16, bottom = (rt_r8(scroll + 0x19) + 1) * 16;
+    if (!(x + SCREEN_W <= left || x >= right || y + SCREEN_H <= top || y >= bottom)) return 0;
+    int map_w = (rt_r8(scroll + 0x1a) + 1) * 16, map_h = (rt_r8(scroll + 0x1b) + 1) * 16; /* layer 0's map */
+    return x < 0 || y < 0 || x >= map_w || y >= map_h ? OUTSIDE_FRAMES : 1;
+}
+
 int ws_room_span(int *x0, int *x1) {
-    if (!ss_in_field()) return 0;
+    if (!ss_in_field() || outside_frames >= OUTSIDE_FRAMES) return 0;
     uint32_t scroll = rt_r32(SCROLL);
     if (!ram_ptr(scroll)) return 0;
     /* The room's bounds in the map, metatiles (16 px), inclusive: left +0x16, right +0x17 (top +0x18, bottom
@@ -348,7 +366,7 @@ static void void_beyond_ends(int *left_void, int *right_void) {
  * never inside the 192 rows the game draws for itself. *top_void, *bottom_void (when not NULL): beyond that end of
  * the rows is the void (between rooms, or the map beyond the bounds). */
 static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
-    if (!ss_in_field()) return 0;
+    if (!ss_in_field() || outside_frames >= OUTSIDE_FRAMES) return 0;
     uint32_t scroll = rt_r32(SCROLL), tilesets = rt_r32(TILESETS);
     if (!ram_ptr(scroll) || !ram_ptr(tilesets) || room_copy.of != rt_r32(ROOM)) return 0;
     int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17), top = rt_r8(scroll + 0x18), bottom = rt_r8(scroll + 0x19);
@@ -962,6 +980,9 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
     world_rows = world_margin ? rows : 0;
     if (world_margin) fill_world_margins(margin, rows);
     int field = margin > 0 && ss_in_field();
+    uint32_t scroll = rt_r32(SCROLL);
+    int outside = field && ram_ptr(scroll) ? view_outside(scroll) : 0;
+    outside_frames = outside ? (outside_frames + outside < OUTSIDE_FRAMES ? outside_frames + outside : OUTSIDE_FRAMES) : 0;
     field_margin = field ? margin : 0;
     field_rows = field ? rows : 0;
     if (view_loaded) {
