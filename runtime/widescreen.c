@@ -229,6 +229,11 @@ static const uint16_t left_rooms[] = {
 
 /* The room's fingerprint: its bounds and its map's first metatile row. A narrow room stays narrow while it
  * holds: taking off, the location already reads the destination for a few frames before the scene changes. */
+/* The room's bounds (+0x16..0x19: left, right, top, bottom metatiles) as one word; rt_r32(scroll + 0x16) reads
+ * +0x14..0x17 (aligned), without the top and bottom: the Blackbird's wing and the hall past its door share their
+ * left and right, and the hall was taken for the wing. */
+static uint32_t room_bounds(uint32_t scroll) { return rt_r16(scroll + 0x16) | rt_r16(scroll + 0x18) << 16; }
+
 static uint32_t room_print(uint32_t scroll) {
     uint32_t room = rt_r32(ROOM), h = rt_r32(scroll + 0x16);
     if (!ram_ptr(room)) return h;
@@ -441,6 +446,7 @@ static void set_screen_view(int margin) {
  * is BG0 with a grey BG3 added onto it, BLDCNT 0x014a: without it the sides were dimmer), and keeps repeating
  * while the room stays: as the Epoch warps, the game brightens instead (BLDCNT 0x00bf), and the opaque BG3 then
  * covers the water, as it must beside the screen too. */
+#define ROOM_SETTLE 8 /* frames */
 static int repeat_bgs;
 static uint32_t repeat_room; /* the room the layers were seen moving in (room map, bounds) */
 
@@ -832,7 +838,7 @@ static struct {
 } rates;
 
 static void measure_rates(uint32_t scroll, uint32_t room) {
-    uint32_t here = room ^ rt_r32(scroll + 0x16);
+    uint32_t here = room ^ room_bounds(scroll);
     int fresh = here != rates.room;
     if (fresh) memset(&rates, 0, sizeof rates), rates.room = here;
     for (int a = 0; a < 2; a++) {
@@ -879,8 +885,18 @@ static void fill_field_margins(int margin, int rows) {
     for (int bg = 0; bg < 4; bg++) view_bgs |= ((io_get16(0x08 + 2 * bg) >> 14) == 3) << bg;
     int x0, x1;
     int one_screen = ws_room_span(&x0, &x1) && x0 == 0 && x1 == SCREEN_W;
+    /* A room's first frames: the game sets the layers' scroll a few frames after the bounds (entering the
+     * Blackbird's hall from its wing, BG3 kept the wing's VOFS 403 for 3 frames, then went to 0 with the camera
+     * still). Taken for a layer scrolling on its own (repeat_bgs, drift below), BG3 was neither filled nor moved
+     * with the view for as long as the room held: the floor slid up over the walls as the camera went down, and
+     * the zoom out's rows above the room showed black blocks. Nothing starts repeating or drifting then. */
+    static uint32_t settle_room;
+    static int settle;
+    uint32_t here = room ^ room_bounds(scroll);
+    if (here != settle_room) settle_room = here, settle = 0;
+    else if (settle < ROOM_SETTLE) settle++;
+    int settled = settle >= ROOM_SETTLE;
     if (one_screen) {
-        uint32_t here = room ^ rt_r32(scroll + 0x16); /* the room's bounds */
         if (here != repeat_room) seen = 0, repeat_room = here;
         if (!bg_follows(2, scroll, 0) && bg_near(2, scroll, 0)) repeat_bgs = seen;
     }
@@ -888,7 +904,7 @@ static void fill_field_margins(int margin, int rows) {
         static const int layer_of[4] = {2, -1, -1, 1}; /* BG1: priority tiles; BG2: the room itself */
         for (int bg = 0; bg < 4; bg++) {
             int s = layer_of[bg] < 0 ? 0 : scrolls_alone(bg, scroll, layer_of[bg]);
-            if (s == 2 || (s == 1 && (seen >> bg & 1))) repeat_bgs |= 1 << bg;
+            if ((s == 2 && settled) || (s == 1 && (seen >> bg & 1))) repeat_bgs |= 1 << bg;
         }
         uint16_t bld = io_get16(0x50);
         if (((bld >> 6) & 3) == 1 && (bld >> 8 & repeat_bgs)) repeat_bgs |= bld & 9; /* BG0, BG3 blended onto them */
@@ -907,11 +923,10 @@ static void fill_field_margins(int margin, int rows) {
      * holds. */
     static uint32_t drift_room;
     static int drift, last_cam, last_vofs[2], last_room_vofs; /* drift: bit 0 layer 1 (BG3), bit 1 layer 2 (BG0) */
-    uint32_t here = room ^ rt_r32(scroll + 0x16);
     int cam = (int16_t)rt_r16(CAMERA + 2), room_vofs = io_get16(0x1a) & 511;
     int vofs[2] = {io_get16(0x1e) & 511, io_get16(0x12) & 511};
     if (here != drift_room) drift = 0, drift_room = here;
-    else if (cam == last_cam && room_vofs == last_room_vofs)
+    else if (settled && cam == last_cam && room_vofs == last_room_vofs)
         for (int i = 0; i < 2; i++) drift |= (vofs[i] != last_vofs[i]) << i;
     last_cam = cam, last_vofs[0] = vofs[0], last_vofs[1] = vofs[1], last_room_vofs = room_vofs;
     if (drift & 1) ok1 = 0;
