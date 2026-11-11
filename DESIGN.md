@@ -154,7 +154,10 @@ original bytes, and caches the result per region until the region is written.
     the room stays: in passing, its scroll meets the origin (the clouds at VOFS 0 and 256, a frame each), which
     blanked the sides. So did BG2's own steps: walking, the ring origin in RAM is a tile ahead of the frame's scroll
     for one frame at each tile, so what already repeats carries on through a BG2 a tile off. A layer within a tile of its own
-    origin counts as on it: the shaft walls, a tile every 4 frames, repeated into the margins at each step and blinked. Only a layer the screen shows at its sides repeats (seen in the 4:3 picture's 8 side
+    origin counts as on it: the shaft walls, a tile every 4 frames, repeated into the margins at each step and blinked. It starts repeating once off its
+    origin two frames running: Dalton's beam (location 0x19e) moves BG0 to its effect map, scroll and ring origin a
+    frame apart, and the one frame they disagreed latched BG0, BG3 blended onto it with it, and BG3's map showed
+    beside the room until it was left. Only a layer the screen shows at its sides repeats (seen in the 4:3 picture's 8 side
     columns the frame before, on top or blended under the top, text box lines left out): at location 0x71 (Marle
     back, beside the gate) BG0 holds bubbles drifting at priority 3 under the opaque room, seen only through the
     time gate's hole mid-screen, and they had filled the sides.

@@ -918,9 +918,14 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     }
     if (one_screen && bg_follows(2, scroll, 0)) {
         static const int layer_of[4] = {2, -1, -1, 1}; /* BG1: priority tiles; BG2: the room itself */
+        static int off[4]; /* frames each BG has been off its ring origin */
         for (int bg = 0; bg < 4; bg++) {
             int s = layer_of[bg] < 0 ? 0 : scrolls_alone(bg, scroll, layer_of[bg]);
-            if ((s == 2 && settled) || (s == 1 && (seen >> bg & 1))) repeat_bgs |= 1 << bg;
+            /* Off its origin two frames running (DRIFT_STEPS): Dalton's beam (location 0x19e) moves BG0 to its effect
+             * map, scroll and ring origin a frame apart; taken for a layer moving on its own, it repeated, BG3 blended
+             * onto it with it, and the margins showed BG3's map beside the room until the room was left. */
+            off[bg] = s == 2 ? off[bg] + (off[bg] < DRIFT_STEPS) : 0;
+            if ((off[bg] >= DRIFT_STEPS && settled) || (s == 1 && (seen >> bg & 1))) repeat_bgs |= 1 << bg;
         }
         uint16_t bld = io_get16(0x50);
         if (((bld >> 6) & 3) == 1 && (bld >> 8 & repeat_bgs)) repeat_bgs |= bld & 9; /* BG0, BG3 blended onto them */
