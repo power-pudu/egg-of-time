@@ -21,7 +21,9 @@ finds next to itself (RPATH $ORIGIN; libcurl is the system's), kit/include, kit/
 (the Zig executable and the headers it reads for the game library, so no system compiler or /usr/include is needed:
 SteamOS has neither): the player's python3 does the rest, and the game library needs no import library. It is a .tar.gz, which keeps the executable bits,
 and (--appimage) the same files as an AppImage: AppRun, a .desktop file and the icon added, packed by appimagetool
-with the given type 2 runtime. The AppImage is read-only, so there the runtime keeps its data in
+with the given type 2 runtime. With --appimage-update the AppImage carries that update information (appimagetool -u)
+and gets a .zsync file next to it, which the release publishes so AppImageUpdate can fetch only the changed blocks.
+The AppImage is read-only, so there the runtime keeps its data in
 ~/.local/share/EggOfTime/ (rt_data_dir, runtime/main.c).
 
 Usage: python -I scripts/package.py --build <dir> --llvm <llvm-mingw dir> --python-embed <python-*-embed-amd64.zip>
@@ -30,7 +32,8 @@ Usage: python -I scripts/package.py --build <dir> --llvm <llvm-mingw dir> --pyth
            [--xdelta <xdelta3.exe> --xdelta-license <file>] [--librashader <dll> --librashader-license <file>]
        python3 -I scripts/package.py --build <dir> --dsd <dsd> --dsd-license <file> --zig <Zig dir> --sdl <SDL3 source dir>
            --ffmpeg <FFmpeg shared build dir> --rcheevos <rcheevos source dir> --out <dir> [--tar <file.tar.gz>] [--xdelta <xdelta3> --xdelta-license <file>]
-           [--appimage <file.AppImage> --appimagetool <appimagetool> --appimage-runtime <runtime-x86_64>]
+           [--appimage <file.AppImage> --appimagetool <appimagetool> --appimage-runtime <runtime-x86_64>
+            [--appimage-update <update information>]]
            [--librashader <librashader.so> --librashader-license <file>]
 """
 
@@ -166,8 +169,8 @@ Terminal=false
 """
 
 
-def appimage(out, target, tool, runtime):
-    """Packs the release folder as an AppImage."""
+def appimage(out, target, tool, runtime, update):
+    """Packs the release folder as an AppImage, with its update information and .zsync file when update is given."""
     with tempfile.TemporaryDirectory() as tmp:
         appdir = os.path.join(tmp, "EggOfTime.AppDir")
         shutil.copytree(out, appdir)
@@ -181,7 +184,12 @@ def appimage(out, target, tool, runtime):
                 os.chmod(os.path.join(d, n), mode(n, n in dirs))
         # appimagetool is itself an AppImage: extracting it avoids needing FUSE on the build machine.
         env = dict(os.environ, ARCH="x86_64", APPIMAGE_EXTRACT_AND_RUN="1")
-        subprocess.run([tool, "--no-appstream", "--runtime-file", runtime, appdir, target], check=True, env=env)
+        cmd = [tool, "--no-appstream", "--runtime-file", runtime]
+        if update:
+            cmd += ["-u", update]
+        subprocess.run(cmd + [appdir, target], check=True, env=env, cwd=os.path.dirname(target))
+    if update and not os.path.isfile(target + ".zsync"):
+        sys.exit(f"appimagetool made no {target}.zsync")
 
 
 def kit_id(kit):
@@ -209,7 +217,7 @@ def main():
     ap.add_argument("--librashader-license")
     ap.add_argument("--zip")
     ap.add_argument("--tar")
-    for a in ("appimage", "appimagetool", "appimage-runtime"):
+    for a in ("appimage", "appimagetool", "appimage-runtime", "appimage-update"):
         ap.add_argument("--" + a)
     args = ap.parse_args()
     out = os.path.abspath(args.out)
@@ -313,7 +321,8 @@ def main():
             t.add(out, "Egg of Time", filter=anonymous)
         print(f"{args.tar}: {os.path.getsize(args.tar) / 1e6:.0f} MB")
     if args.appimage:
-        appimage(out, os.path.abspath(args.appimage), args.appimagetool, args.appimage_runtime)
+        appimage(out, os.path.abspath(args.appimage), os.path.abspath(args.appimagetool),
+                 os.path.abspath(args.appimage_runtime), args.appimage_update)
         print(f"{args.appimage}: {os.path.getsize(args.appimage) / 1e6:.0f} MB")
 
 
