@@ -71,6 +71,11 @@
  *     items.
  *   - The Arena's battle starting (ov013): "Preparing arena for battle." in a box on the bottom screen, the top
  *     screen the same backdrop without it. The main screen shows the bottom screen.
+ *   - The Arena's battle (ov013): the Pit with the monsters and the battle's text box on the top screen; the two
+ *     monsters' panels (name, HP), the moves they use, the eight items in two columns of four and the help bar on
+ *     the bottom one. The main screen shows the panels and moves, the Pit around the monsters, the items as four
+ *     columns of two (the game's columns as rows: Left/Right and Up/Down swap while they are chosen), their buttons
+ *     narrowed without the count, then the text box or, while an item is chosen, the help bar with its count.
  *   - Age selector (ov012, time travel): the chosen age's map on the top screen, the ring of ages with the age's
  *     name, A Warp and B on the bottom one. The main screen shows the bottom screen with the ring and name moved
  *     left (a second picture of the bottom screen, swirl and buttons in place) and the map at half size beside the
@@ -97,7 +102,7 @@
 #include "ui_font.h"
 #include "video.h"
 
-enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP };
+enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP, SCENE_ARENA_BATTLE };
 typedef struct Scene { int kind; uint32_t obj; } Scene;
 static uint32_t title_held; /* keys held since before the title started: not a press */
 #define TITLE_STATE 0x4a  /* title scene: current state (halfword); +0x48 holds the requested one */
@@ -134,6 +139,7 @@ static uint32_t title_held; /* keys held since before the title started: not a p
 #define ARENA_TRAIN_ITEMS 0x021477b0u /* the items, */
 #define ARENA_TRAIN_ERA 0x0214783cu   /* the eras */
 #define ARENA_PREP 0x02148838u /* ov013: the scene before an Arena battle ("Preparing arena for battle.") */
+#define ARENA_BATTLE 0x02147f7cu /* ov013: an Arena battle */
 #define ARENA_SHOP_BUY 0x2a4e /* the Arena's shop: its Buy button's sprite is shown (byte), on Buy / Sell only */
 
 #define CURRENT_SCENE GAME_ADDR(0x0207088cu, 0x020708acu) /* the running scene's secondary base (scene + 8), set by Scene::run */
@@ -168,6 +174,7 @@ static Scene current(void) {
     if (vt == 0x02148574u && rt_overlay_resident(11)) sc.kind = SCENE_RACE; /* ov011: the race against Johnny (Lab 32) */
     if (vt == GAME_ADDR(0x02158290u, 0x021582f0u) && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
     if (vt == ARENA_PREP && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_PREP;
+    if (vt == ARENA_BATTLE && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_BATTLE;
     if (vt == 0x0214a550u && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_SHOP; /* ov013: the Arena's shop */
     if (vt == 0x02147460u && rt_overlay_resident(13)) { /* ov013: the Arena of the Ages */
         uint32_t page = rt_r32(sc.obj + ARENA_PAGE);
@@ -294,6 +301,16 @@ static uint32_t arena_keys(uint32_t keys) {
     return (keys & ~(KEY_LEFT | KEY_RIGHT)) | moved;
 }
 
+/* Arena battle: while an item is chosen (arena_choosing, from the picture), the main screen shows the game's columns
+ * of items as rows, so Left/Right move as the game's Up/Down and Up/Down as its Left/Right. */
+static SDL_AtomicInt arena_choosing;
+static uint32_t arena_battle_keys(uint32_t keys) {
+    if (!SDL_GetAtomicInt(&arena_choosing)) return keys;
+    uint32_t moved = (keys & KEY_LEFT ? KEY_UP : 0) | (keys & KEY_RIGHT ? KEY_DOWN : 0) |
+                     (keys & KEY_UP ? KEY_LEFT : 0) | (keys & KEY_DOWN ? KEY_RIGHT : 0);
+    return (keys & ~(KEY_LEFT | KEY_RIGHT | KEY_UP | KEY_DOWN)) | moved;
+}
+
 static SDL_AtomicInt turned_off;
 
 int ss_enabled(void) { return EGG_SINGLE_SCREEN && !SDL_GetAtomicInt(&turned_off); }
@@ -317,6 +334,7 @@ uint32_t ss_game_keys(uint32_t keys) {
     if (sc.kind == SCENE_OPTIONS) return options_keys(sc, keys);
     if (sc.kind == SCENE_PARTY) return party_keys(keys);
     if (sc.kind == SCENE_ARENA) return arena_keys(keys);
+    if (sc.kind == SCENE_ARENA_BATTLE) return arena_battle_keys(keys);
     if (!title_waiting(sc)) return keys;
     title_held &= keys;
     return keys & ~title_held ? keys | KEY_START : keys;
@@ -1020,6 +1038,76 @@ static void compose_arena_shop(Scene sc, uint32_t *main, const uint32_t *top, co
     memcpy(&main[ARENA_SHOP_TOP_H * SCREEN_W], bottom, (168 - ARENA_SHOP_TOP_H) * SCREEN_W * 4);
 }
 
+/* The Arena's battle (see the top). Top screen: the Pit rows 0-127 (the monsters on their pads within rows 28-103),
+ * the text box rows 128-191 (its lines in rows 137-165). Bottom screen: the panels rows 0-31 and the moves rows
+ * 32-46, the backdrop rows 47-55, the items 116x24 at x 8 + 124 c, y 56 + 28 r (column c, row r; the cursor's frame
+ * their edge, the label's text in rows 9-16 from column 8, the count's ending at column 107), the help bar rows
+ * 168-191 (its text in rows 176-183). Main screen: the panels and moves, the Pit's rows 28-103 at row 47, the
+ * items 62x14 at x 1 + 64 r, y 123 + 14 c (frame rows 0-1 and 22-23, label rows 6-15, columns 0-55 and the
+ * frame's last 6), then from row 151 the text box (frame rows 0-5, lines 137-165, frame rows 186-191) while it has
+ * text, else the help bar with the chosen item's count at its right end. */
+#define AB_HEAD_H 47
+#define AB_PIT_Y 28
+#define AB_PIT_H 76
+#define AB_ITEMS_AT (AB_HEAD_H + AB_PIT_H)
+#define AB_ITEM_W 62
+#define AB_ITEM_H 14
+#define AB_TEXT_AT (AB_ITEMS_AT + 2 * AB_ITEM_H)
+#define AB_WHITE 0xFFFFFFFFu
+
+static int arena_item = -1; /* the item the cursor was last seen on (c * 4 + r; its frame pulses) */
+
+/* Whether rows [y0, y1) of a screen between columns x0 and x1 have white text. */
+static int has_text(const uint32_t *px, int x0, int x1, int y0, int y1) {
+    for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+            if (px[y * SCREEN_W + x] == AB_WHITE) return 1;
+        }
+    }
+    return 0;
+}
+
+static void compose_arena_battle(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    memcpy(main, bottom, AB_HEAD_H * SCREEN_W * 4);
+    memcpy(&main[AB_HEAD_H * SCREEN_W], &top[AB_PIT_Y * SCREEN_W], AB_PIT_H * SCREEN_W * 4);
+    for (int y = AB_ITEMS_AT; y < AB_TEXT_AT; y++) /* the backdrop under the items */
+        memcpy(&main[y * SCREEN_W], &bottom[(48 + (y - AB_ITEMS_AT) % 8) * SCREEN_W], SCREEN_W * 4);
+    static const int sy[3] = {0, 6, 22}, h[3] = {2, 10, 2}; /* top frame, the label's rows, bottom frame */
+    for (int c = 0; c < 2; c++) {
+        for (int r = 0; r < 4; r++) {
+            int bx = 8 + 124 * c, by = 56 + 28 * r, dx = 1 + 64 * r, dy = AB_ITEMS_AT + AB_ITEM_H * c;
+            if (cyan(bottom[(by + 1) * SCREEN_W + bx + 2])) arena_item = c * 4 + r;
+            for (int k = 0, y = dy; k < 3; y += h[k++]) {
+                blit(main, dx, y, bottom, bx, by + sy[k], AB_ITEM_W - 6, h[k]);
+                blit(main, dx + AB_ITEM_W - 6, y, bottom, bx + 110, by + sy[k], 6, h[k]);
+            }
+        }
+    }
+    int box = has_text(top, 16, 240, 137, 166), help = has_text(bottom, 8, 248, 174, 186);
+    SDL_SetAtomicInt(&arena_choosing, help);
+    int at = AB_TEXT_AT;
+    if (box || !help) { /* the text box, its frame and lines */
+        memcpy(&main[at * SCREEN_W], &top[128 * SCREEN_W], 6 * SCREEN_W * 4);
+        memcpy(&main[(at + 6) * SCREEN_W], &top[137 * SCREEN_W], 29 * SCREEN_W * 4);
+        memcpy(&main[(at + 35) * SCREEN_W], &top[186 * SCREEN_W], 6 * SCREEN_W * 4);
+        return;
+    }
+    for (int y = at; y < 168; y++) /* the backdrop over the help bar */
+        memcpy(&main[y * SCREEN_W], &bottom[(48 + (y - at) % 8) * SCREEN_W], SCREEN_W * 4);
+    memcpy(&main[168 * SCREEN_W], &bottom[168 * SCREEN_W], (SCREEN_H - 168) * SCREEN_W * 4);
+    if (arena_item < 0) return;
+    /* The count (its text and shadow, right-aligned at column 107 of the button) at the bar's right end, on the
+     * description's line, where the description does not reach. */
+    int bx = 8 + 124 * (arena_item / 4), by = 56 + 28 * (arena_item % 4), to = 240 - 107;
+    if (has_text(bottom, 96 + to - 8, 248, 174, 186)) return;
+    for (int y = 9; y <= 16; y++) {
+        for (int x = 96; x <= 107; x++) {
+            uint32_t p = bottom[(by + y) * SCREEN_W + bx + x];
+            if (p == AB_WHITE || p == BLACK) main[(167 + y) * SCREEN_W + x + to] = p;
+        }
+    }
+}
+
 static void compose_bestiary(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     memcpy(main, top, SCREEN_W * SCREEN_H * 4);
     memcpy(main, bottom, 24 * SCREEN_W * 4); /* the tabs over the title */
@@ -1277,6 +1365,7 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
     Scene sc = current();
     *from = SS_FROM_NONE;
     if (sc.kind != SCENE_EQUIP) equip_portrait = -1; /* the page opens with its member's portrait */
+    if (sc.kind != SCENE_ARENA_BATTLE) arena_item = -1, SDL_SetAtomicInt(&arena_choosing, 0);
     int paused = EGG_SINGLE_SCREEN && sc.kind == SCENE_FIELD && field_paused();
     int title_menu = sc.kind == SCENE_TITLE && rt_r16(sc.obj + TITLE_PHASE) == TITLE_MENU;
     /* SELECT relabelled "System settings" (off, it stays the game's "Defaults") */
@@ -1369,6 +1458,9 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
         }
         memcpy(main, bottom, SCREEN_W * SCREEN_H * 4); /* the first frame, drawn before the scene was known */
         *from = SS_FROM_BOTTOM;
+        break;
+    case SCENE_ARENA_BATTLE:
+        compose_arena_battle(main, top, bottom);
         break;
     case SCENE_ARENA_PREP:
         memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
