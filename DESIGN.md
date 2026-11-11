@@ -144,7 +144,9 @@ original bytes, and caches the result per region until the region is written.
     BG2, the clouds on BG3 scrolling down while the camera stays; BG3's 512-wide map holds a sea of fire in its
     right half. The Epoch parked, location 0x1d9 with Take off / Get off: the water on BG0 drifting both ways):
     such a layer (BG0 or BG3 off its ring origin while BG2, the room's own, is on it, so a shaking screen does
-    not count; `ws_repeat_bgs`) is a 256-wide picture, so its screen columns repeat into the margins, and beyond
+    not count; `ws_repeat_bgs`) is a 256-wide picture (one screen wide by the room's width, wherever the camera
+    is: Lavos's room shaking as the party falls, location 0x1d3, put the camera at x 1, and taken for a room
+    spanning -1..255 that frame forgot what repeated, the margins blinking black and the view narrowing), so its screen columns repeat into the margins, and beyond
     the room the other BGs are left out, with Fill screen sides on or off; BG0 or BG3 alpha-blended onto such a
     layer repeats with it (the parked Epoch's water is lit by a grey BG3 added onto it, BLDCNT 0x014a, 16/16;
     without it the sides were dimmer), and keeps repeating while the room stays: as the Epoch warps the game

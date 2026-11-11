@@ -944,7 +944,10 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * target: Frog's Water at a room's end fell beside the enemy, on the party. */
     for (int bg = 0; bg < 4; bg++) view_bgs |= ((io_get16(0x08 + 2 * bg) >> 14) == 3) << bg;
     int x0, x1;
-    int one_screen = ws_room_span(&x0, &x1) && x0 == 0 && x1 == SCREEN_W;
+    /* One screen wide, wherever the camera is: a shaking screen moves it a pixel or two (Lavos's room, location 0x1d3,
+     * the party defeated: at x 1 the room spanned -1..255, what repeated was forgotten for that frame and, BG3's
+     * scroll passing its ring origin, not taken up again; the margins went black and back, the view narrowing). */
+    int one_screen = ws_room_span(&x0, &x1) && x1 - x0 == SCREEN_W;
     /* A room's first frames: the game sets the layers' scroll a few frames after the bounds (entering the
      * Blackbird's hall from its wing, BG3 kept the wing's VOFS 403 for 3 frames, then went to 0 with the camera
      * still). Taken for a layer scrolling on its own (repeat_bgs, drift below), BG3 was neither filled nor moved
