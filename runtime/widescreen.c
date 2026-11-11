@@ -69,6 +69,7 @@ static int view_x, view_y; /* the view's shift from the camera (the room's ends)
 static int next_x, next_y; /* and for the next frame's, from the camera in RAM */
 static int oam_x, oam_y;   /* the one this frame's sprites were placed with (ws_sprite_lag) */
 static int view_loaded;    /* a state was loaded: its sprite view says the shift */
+static int room_loaded;    /* and its room is no room just entered (fill_field_margins) */
 static int view_bgs;       /* the BGs it moves */
 
 /* The room map's metatile rows (room + 0x1000: 0x100 a row) as the field last had them. */
@@ -108,7 +109,7 @@ void ws_reset(void) { room_copy.of = 0, tent_reset(); }
 
 void ws_state(RtStateIO *s) {
     if (!rt_state_optional(s, "ws_room_copy", &room_copy, sizeof room_copy) && rt_state_loading(s)) room_copy.of = 0;
-    if (rt_state_loading(s)) view_loaded = 1;
+    if (rt_state_loading(s)) view_loaded = room_loaded = 1;
 }
 
 /* Layer L's camera: its top-left tile column and row in the room map, layer 0's (+4, +8). Layer 1 has its own
@@ -505,7 +506,7 @@ static void set_screen_view(int margin) {
 #define DRIFT_STEP 8  /* rows: the most a drifting layer moves in a frame */
 #define DRIFT_STEPS 2
 static int repeat_bgs;
-static uint32_t repeat_room; /* the room the layers were seen moving in (room map, bounds) */
+static uint32_t repeat_room; /* the room map the layers were seen moving in */
 
 int ws_repeat_bgs(void) { return repeat_bgs; }
 
@@ -959,11 +960,18 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     static uint32_t settle_room;
     static int settle;
     uint32_t here = room ^ room_bounds(scroll);
-    if (here != settle_room) settle_room = here, settle = 0;
+    /* A loaded state's room has its layers' scroll in place: settling, it showed no repeating layer for 8 frames. */
+    if (here != settle_room) settle_room = here, settle = room_loaded ? ROOM_SETTLE : 0;
     else if (settle < ROOM_SETTLE) settle++;
+    room_loaded = 0;
     int settled = settle >= ROOM_SETTLE;
     if (one_screen) {
-        if (here != repeat_room) seen = 0, repeat_room = here;
+        /* New bounds in the same map are no new room for what repeats: in Lavos's room (location 0x1a7) the scene
+         * narrows the bounds to rows 3..14 while BG3's ripples go on, and settling anew, the margins went black for
+         * 8 frames. A layer that repeated goes on repeating while it stays off its ring origin; back on it, it does so
+         * only once the room has settled (the Blackbird's hall: BG3 kept the wing's scroll for 3 frames, then went
+         * to its origin). */
+        if (room != repeat_room) seen = 0, repeat_room = room;
         if (!bg_follows(2, scroll, 0) && bg_near(2, scroll, 0)) repeat_bgs = seen;
     }
     if (one_screen && bg_follows(2, scroll, 0)) {
@@ -975,7 +983,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
              * map, scroll and ring origin a frame apart; taken for a layer moving on its own, it repeated, BG3 blended
              * onto it with it, and the margins showed BG3's map beside the room until the room was left. */
             off[bg] = s == 2 ? off[bg] + (off[bg] < DRIFT_STEPS) : 0;
-            if ((off[bg] >= DRIFT_STEPS && settled) || (s == 1 && (seen >> bg & 1))) repeat_bgs |= 1 << bg;
+            if ((off[bg] >= DRIFT_STEPS && settled) || ((s == 2 || settled) && s && (seen >> bg & 1))) repeat_bgs |= 1 << bg;
         }
         uint16_t bld = io_get16(0x50);
         if (((bld >> 6) & 3) == 1 && (bld >> 8 & repeat_bgs)) repeat_bgs |= bld & 9; /* BG0, BG3 blended onto them */

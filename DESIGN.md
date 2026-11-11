@@ -273,7 +273,11 @@ original bytes, and caches the result per region until the region is written.
       tile 0, and BG0's blue, blended away (BLDCNT 0x1e41, EVA 0) only over a second target, came through for a frame;
       after a state load, corners of cyan or black. The room is told by its map and its four bounds
       (`room_bounds`; read as one word at +0x16, the aligned read had only left and right, the wing's and the hall's
-      alike).
+      alike). A layer that repeated goes on repeating through a
+      room's first frames while it stays off its ring origin, and the bounds alone changing in the same map is no
+      new room for it (Lavos's room, 0x1a7: the scene narrows the bounds to rows 3..14 with BG3's ripples going on,
+      and the margins went black for 8 frames); back on its origin it takes repeating up again only once the room
+      has settled. A loaded state's room counts as settled at once.
     - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
       bottom from one above the view, as the DS's 64 unused rows did. `rt_ws_draw_cell` (main 0x02019fd4) knows the cell's
       place, and `rt_ws_enter_oam` (main 0x02048098) marks each sprite while it is entered, in attribute 1 bits that
