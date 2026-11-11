@@ -125,7 +125,9 @@ original bytes, and caches the result per region until the region is written.
     (`ws_picture_bgs`) shows the screen reflected in its margins (`mirror_bg`, as the battle bolts), so the sky
     and its mountains go on at both sides and hold still. A shaking screen (the Dragon Tank's charge: HOFS 0-1, VOFS
     0-3 on every BG) moves it a few pixels: it still counts, reflected at the picture's own sides; at any scroll but
-    0 the margins had shown the map's other half, which blinked.
+    0 the margins had shown the map's other half, which blinked. Both scrolls count: the elevator ride's shaft walls
+    (location 0x1a2, BG3 at HOFS 0 scrolling down its own ring against the camera) were taken for one, held still by
+    camera smoothing and gone from the screen, the platform alone in the dark.
   - Rooms narrower than the view: the margins show what the map holds beside the room, its tiles repeated (the
     map wraps at its masks) or neighbouring rooms (a house's map holds several). Fill screen sides (System
     Settings, shown with a wide aspect ratio): Yes keeps that; No (the default) draws black beyond the room
@@ -151,7 +153,8 @@ original bytes, and caches the result per region until the region is written.
     water shows a faint one, its map not quite periodic. A layer once seen off its origin keeps repeating while
     the room stays: in passing, its scroll meets the origin (the clouds at VOFS 0 and 256, a frame each), which
     blanked the sides. So did BG2's own steps: walking, the ring origin in RAM is a tile ahead of the frame's scroll
-    for one frame at each tile, so what already repeats carries on through a BG2 a tile off. Only a layer the screen shows at its sides repeats (seen in the 4:3 picture's 8 side
+    for one frame at each tile, so what already repeats carries on through a BG2 a tile off. A layer within a tile of its own
+    origin counts as on it: the shaft walls, a tile every 4 frames, repeated into the margins at each step and blinked. Only a layer the screen shows at its sides repeats (seen in the 4:3 picture's 8 side
     columns the frame before, on top or blended under the top, text box lines left out): at location 0x71 (Marle
     back, beside the gate) BG0 holds bubbles drifting at priority 3 under the opaque room, seen only through the
     time gate's hole mid-screen, and they had filled the sides.
@@ -348,7 +351,10 @@ original bytes, and caches the result per region until the region is written.
       wraps round, showed black there. Above and below the bounds, layer 2 may hold stray tiles on under half the
       row: the Millennial Fair's south end has specks under the black, and the view passed the trees. Bounds at the
       map's own first or last row end there too (beyond, row -1 wraps to the last, and the fill repeats the edge
-      row): a Zeal building whose roof is row 0 showed rows above it. The game clamps
+      row): a Zeal building whose roof is row 0 showed rows above it. The game's own 4:3 rows are never beyond, though: in a
+      room taller than the screen the camera may pass its bounds (the elevator ride, location 0x1a2, ends 162 px past its
+      bottom), and moved up by as much, the view's fill spanned more than the 32-row ring and wrote over the platform the
+      game draws, its top gone; the view moves no further than its rows then (`room_rows`). The game clamps
       its camera for 256 x 192 and is left alone (`ws_fill_margins`, `view_shift`, `ws_view_shift`): the picture is
       shown shifted from the camera, by the BG scroll of the BGs on their ring origin (`Engine.view_bgs`; not a
       picture layer such as the prison bridge's sky, not a box's 256-wide map; each by its share of the shift, its

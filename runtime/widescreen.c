@@ -392,8 +392,13 @@ static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
     }
     *y0 = from * 16 - view;
     *y1 = (to + 1) * 16 - view;
-    if (*y0 > 0 && from > top) *y0 = 0;
-    if (*y1 < SCREEN_H && to < bottom) *y1 = SCREEN_H;
+    /* The game's own rows are never beyond: a void row inside the view, or the camera past the bounds of a room taller
+     * than the screen (the elevator ride, location 0x1a2: down to 162 px past its bottom). Its rows cut there and the
+     * view moved up by as much, the fill's rows above it spanned more than the 32-row ring and overwrote the platform
+     * the game draws, its top gone. */
+    int tall = (bottom - top + 1) * 16 >= SCREEN_H;
+    if (*y0 > 0 && (from > top || tall)) *y0 = 0;
+    if (*y1 < SCREEN_H && (to < bottom || tall)) *y1 = SCREEN_H;
     /* The bounds at the map's own top or bottom: nothing of the map lies beyond (row -1 is the wrapped last one, and
      * the fill repeats the edge row there), so the view stops (a Zeal building whose roof is the map's first row). */
     int last = rt_r8(scroll + 0x1b); /* layer 0's map rows - 1 (metatiles) */
@@ -471,10 +476,13 @@ static int bg_on_layer(int bg, uint32_t scroll, int L) {
     return (io_get16(0x08 + 2 * bg) >> 14) == 1 && bg_near(bg, scroll, L);
 }
 
-/* 0: not a 512x256 text BG; 1: one on layer L's ring origin; 2: one off it. */
+/* 0: not a 512x256 text BG; 1: one on layer L's ring origin, or a tile off it (the origin in RAM is a tile ahead
+ * for a frame at each tile); 2: one further off. Counted as off at those steps, the elevator ride's shaft walls
+ * (location 0x1a2: BG3 on its own camera, a tile every 4 frames) repeated into the margins for a frame or three
+ * at each, the margins blinking between walls and void. */
 static int scrolls_alone(int bg, uint32_t scroll, int L) {
     if ((io_get16(0x08 + 2 * bg) >> 14) != 1) return 0;
-    return bg_follows(bg, scroll, L) ? 1 : 2;
+    return bg_follows(bg, scroll, L) || bg_near(bg, scroll, L) ? 1 : 2;
 }
 
 static int field_margin; /* this frame's margin columns in the field, 0 elsewhere */
@@ -958,8 +966,10 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     measure_rates(scroll, room); /* layer 1's own camera known */
     int pic1 = ok1 && !held1, pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
-    /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge). */
-    picture_bgs = (pic1 && !(io_get16(0x1c) & 0x1F8)) << 3 | (pic2 && !(io_get16(0x10) & 0x1F8));
+    /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge), both ways: the shaft
+     * walls of the elevator ride (location 0x1a2, BG3 at HOFS 0 scrolling down its own ring against the camera) are
+     * no picture, and held still they were gone from the screen. */
+    picture_bgs = (pic1 && !((io_get16(0x1c) | io_get16(0x1e)) & 0x1F8)) << 3 | (pic2 && !((io_get16(0x10) | io_get16(0x12)) & 0x1F8));
     view_bgs &= ~(pic1 << 3 | pic2);
     int okhi = ok0 && bg_on_layer(1, scroll, 0); /* BG1: the priority tiles of the filled layers 0 and 1 */
     int camc = layer_col(scroll, 0), camr = layer_row(scroll, 0);
