@@ -69,6 +69,8 @@
  *     Buy / Sell and the funds, or a category's items (tabs, funds, price and stock, the list) on the bottom one.
  *     The main screen shows the title and the monster over Buy / Sell and the funds, the bottom screen for the
  *     items.
+ *   - The Arena's battle starting (ov013): "Preparing arena for battle." in a box on the bottom screen, the top
+ *     screen the same backdrop without it. The main screen shows the bottom screen.
  *   - Age selector (ov012, time travel): the chosen age's map on the top screen, the ring of ages with the age's
  *     name, A Warp and B on the bottom one. The main screen shows the bottom screen with the ring and name moved
  *     left (a second picture of the bottom screen, swirl and buttons in place) and the map at half size beside the
@@ -95,7 +97,7 @@
 #include "ui_font.h"
 #include "video.h"
 
-enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP };
+enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP };
 typedef struct Scene { int kind; uint32_t obj; } Scene;
 static uint32_t title_held; /* keys held since before the title started: not a press */
 #define TITLE_STATE 0x4a  /* title scene: current state (halfword); +0x48 holds the requested one */
@@ -131,6 +133,7 @@ static uint32_t title_held; /* keys held since before the title started: not a p
 #define ARENA_TRAIN 0x02147718u   /* Train Monster's pages: the prompt, */
 #define ARENA_TRAIN_ITEMS 0x021477b0u /* the items, */
 #define ARENA_TRAIN_ERA 0x0214783cu   /* the eras */
+#define ARENA_PREP 0x02148838u /* ov013: the scene before an Arena battle ("Preparing arena for battle.") */
 #define ARENA_SHOP_BUY 0x2a4e /* the Arena's shop: its Buy button's sprite is shown (byte), on Buy / Sell only */
 
 #define CURRENT_SCENE GAME_ADDR(0x0207088cu, 0x020708acu) /* the running scene's secondary base (scene + 8), set by Scene::run */
@@ -164,6 +167,7 @@ static Scene current(void) {
     if (vt == 0x02120a68u && rt_overlay_resident(2)) sc.kind = SCENE_OVERWORLD; /* ov002: the world map */
     if (vt == 0x02148574u && rt_overlay_resident(11)) sc.kind = SCENE_RACE; /* ov011: the race against Johnny (Lab 32) */
     if (vt == GAME_ADDR(0x02158290u, 0x021582f0u) && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
+    if (vt == ARENA_PREP && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_PREP;
     if (vt == 0x0214a550u && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_SHOP; /* ov013: the Arena's shop */
     if (vt == 0x02147460u && rt_overlay_resident(13)) { /* ov013: the Arena of the Ages */
         uint32_t page = rt_r32(sc.obj + ARENA_PAGE);
@@ -1364,6 +1368,10 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
             return wide_w;
         }
         memcpy(main, bottom, SCREEN_W * SCREEN_H * 4); /* the first frame, drawn before the scene was known */
+        *from = SS_FROM_BOTTOM;
+        break;
+    case SCENE_ARENA_PREP:
+        memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
         *from = SS_FROM_BOTTOM;
         break;
     case SCENE_NAMING: {
