@@ -261,7 +261,12 @@ original bytes, and caches the result per region until the region is written.
       the Blackbird's hall from its wing, BG3 kept the wing's VOFS 403 for 3 frames and then went to 0 in one step
       with the camera still, taken for both, so BG3 was not filled for as long as the room held (the floor slid up
       over the walls as the camera went down, black blocks above the room); filled in those frames, the clouds seen
-      from above kept the room's rows in VRAM as streaks. The room is told by its map and its four bounds
+      from above kept the room's rows in VRAM as streaks. So in those frames layers 1 and 2 are filled tentatively
+      (`fill_put`): each cell's old entry is kept and given back (`give_back`, unless the game has written the cell
+      since) as soon as the layer is not filled, or filled for good. Not filled at all, the view's shift at a room's
+      end showed their ring rows unwritten: location 0x19f entered at its bottom end, 24 rows up, BG3 there held
+      tile 0, and BG0's blue, blended away (BLDCNT 0x1e41, EVA 0) only over a second target, came through for a frame;
+      after a state load, corners of cyan or black. The room is told by its map and its four bounds
       (`room_bounds`; read as one word at +0x16, the aligned read had only left and right, the wing's and the hall's
       alike).
     - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
