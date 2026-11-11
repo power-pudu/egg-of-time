@@ -164,32 +164,32 @@ static uint16_t get(int bg, int slot, int row) {
     return v;
 }
 
-/* Layers 1 and 2 filled while a room settles, before it is known whether they drift: the cells they had are kept, and
- * given back unless the layer is filled for good. A drifting layer's map is the game's own, never redrawn (the
- * Blackbird's clouds seen from above: the room's rows stayed as streaks). Not filled, the view's shift at a room's end
- * showed those layers' ring rows unwritten (location 0x19f, entered at its bottom end, 24 rows up: tile 0 in BG3, and
- * BG0's blue, blended away over BG3 only, came through). */
+/* Layers 1 and 2 are filled before it is known whether they drift: the cells they had are kept, and given back as
+ * soon as the layer turns out to drift or to be a picture, or is not filled while the room settles. A drifting
+ * layer's map is the game's own, never redrawn (the Blackbird's clouds seen from above: the room's rows stayed as
+ * streaks; Lavos's ripples, location 0x1d3, BG3 a 16-row picture down a 256-row map at a row every 4 frames, taken for
+ * drifting only after the room had settled: the rows above the room, map row 0 throughout, stayed in the loop). Not
+ * filled at all, the view's shift at a room's end showed those layers' ring rows unwritten (location 0x19f, entered at
+ * its bottom end, 24 rows up: tile 0 in BG3, and BG0's blue, blended away over BG3 only, came through). */
 static struct {
     uint16_t had[4][64 * 32], wrote[4][64 * 32];
     uint8_t kept[4][64 * 32];
     int bgs; /* those with cells kept */
 } tent;
-static int tent_filling; /* the BGs filled tentatively this frame */
+static int tent_back; /* the BGs whose kept cells go back this frame */
 static void tent_reset(void) { memset(&tent, 0, sizeof tent); }
 
-static void fill_put(int bg, int slot, int row, uint16_t v, int tentative) {
+static void fill_put(int bg, int slot, int row, uint16_t v) {
     int i = (slot & 63) * 32 + (row & 31);
-    if (tentative) {
-        if (!tent.kept[bg][i]) tent.kept[bg][i] = 1, tent.had[bg][i] = get(bg, slot, row), tent.bgs |= 1 << bg;
-        tent.wrote[bg][i] = v;
-    } else tent.kept[bg][i] = 0;
+    if (!tent.kept[bg][i]) tent.kept[bg][i] = 1, tent.had[bg][i] = get(bg, slot, row), tent.bgs |= 1 << bg;
+    tent.wrote[bg][i] = v;
     put(bg, slot, row, v);
 }
 
-/* The kept cells of the BGs not filled tentatively this frame given back, where the game has not written them since. */
-static void give_back(int filling) {
+/* The kept cells of these BGs given back, where the game has not written them since. */
+static void give_back(int bgs) {
     for (int bg = 0; bg < 4; bg++) {
-        if (!(tent.bgs >> bg & 1) || (filling >> bg & 1)) continue;
+        if (!(tent.bgs >> bg & 1) || !(bgs >> bg & 1)) continue;
         for (int i = 0; i < 64 * 32; i++) {
             if (!tent.kept[bg][i]) continue;
             if (get(bg, i >> 5, i & 31) == tent.wrote[bg][i]) put(bg, i >> 5, i & 31, tent.had[bg][i]);
@@ -950,9 +950,9 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * still). Taken for a layer scrolling on its own (repeat_bgs, drift below), BG3 was neither filled nor moved
      * with the view for as long as the room held: the floor slid up over the walls as the camera went down, and
      * the zoom out's rows above the room showed black blocks. Nothing starts repeating then, and layers 1 and 2 are
-     * filled only tentatively before it is known whether they drift (filled, the Blackbird's clouds seen from above,
-     * BG0 and BG3 moving on their own, took the room's rows for those frames, kept in VRAM as streaks: the game never
-     * redraws them): fill_put, give_back. */
+     * filled with their cells kept before it is known whether they drift (filled, the Blackbird's clouds seen from
+     * above, BG0 and BG3 moving on their own, took the room's rows for those frames, kept in VRAM as streaks: the
+     * game never redraws them): fill_put, give_back. */
     static uint32_t settle_room;
     static int settle;
     uint32_t here = room ^ room_bounds(scroll);
@@ -1005,6 +1005,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     last_cam = cam, last_vofs[0] = vofs[0], last_vofs[1] = vofs[1], last_room_vofs = room_vofs;
     if (drift & 1) ok1 = 0;
     if (drift & 2) ok2 = 0;
+    tent_back = (drift & 1) << 3 | (drift & 2) >> 1 | (!settled ? !ok1 << 3 | !ok2 : 0); /* BG3 layer 1, BG0 layer 2 */
     if (!ok0 && !ok1 && !ok2) return;
     copy_room_rows(scroll, room);
     ok0 = ok0 && bg_holds_layer(2, scroll, tilesets, 0);
@@ -1018,6 +1019,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     measure_rates(scroll, room); /* layer 1's own camera known */
     int pic1 = ok1 && !held1, pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
+    tent_back |= pic1 << 3 | pic2;
     /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge), both ways: the shaft
      * walls of the elevator ride (location 0x1a2, BG3 at HOFS 0 scrolling down its own ring against the camera) are
      * no picture, and held still they were gone from the screen. */
@@ -1043,7 +1045,6 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
         int st = r0 + ((vfine - shown_rows + vy) >> 3), sb = r0 + ((vfine + SCREEN_H - 1 + shown_rows + vy) >> 3);
         shown_top = st < shown_top ? st : shown_top, shown_bottom = sb > shown_bottom ? sb : shown_bottom;
     }
-    if (!settled) tent_filling = ok1 << 3 | ok2;
     for (int c = left; c <= right; c++) {
         for (int r = top; r <= bottom; r++) {
             /* The game's own: its columns, the rows of the 4:3 view and the 25th that a fine scroll shows. Told by their
@@ -1065,7 +1066,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
                 if (!ok) continue;
                 int slot = (rt_r8(scroll + 0x8e + 2 * L) + c - camc) & 63, row = (rt_r8(scroll + 0x8f + 2 * L) + r - camr) & 31;
                 uint32_t t = L == 0 ? t0 : L == 1 ? t1 : room_tile(scroll, tilesets, 2, c, map_row(scroll, 2, r, camr));
-                fill_put(bg_of[L], slot, row, L == 0 && pri0 ? 0 : L == 1 && pri1 ? 0 : map_entry(L, t), L && !settled);
+                (L ? fill_put : put)(bg_of[L], slot, row, L == 0 && pri0 ? 0 : L == 1 && pri1 ? 0 : map_entry(L, t));
                 if (L == 0 && okhi) put(1, slot, row, ok1 && pri1 ? map_entry(1, t1) : pri0 ? map_entry(0, t0) : 0);
             }
         }
@@ -1099,9 +1100,9 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
     oam_x = view_x, oam_y = view_y;
     view_x = next_x, view_y = next_y;
     if (ss_in_field()) set_screen_view(field_margin);
-    tent_filling = 0;
+    tent_back = 0;
     fill_field_margins(margin, rows, limit_rows);
-    give_back(tent_filling);
+    give_back(tent_back);
     next_x = next_y = 0;
     int lo, hi;
     if (field && limit) {
