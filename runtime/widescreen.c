@@ -419,7 +419,9 @@ static void void_beyond_ends(int *left_void, int *right_void) {
 
 /* The bounds can hold several rooms one above the other (the prison's towers), with the void between them; the
  * camera never shows the next one on the DS. So the rows end at the void on either side of the view's middle, though
- * never inside the 192 rows the game draws for itself. *top_void, *bottom_void (when not NULL): beyond that end of
+ * never inside the 192 rows the game draws for itself. The whole bounds are looked through, not only the rows the view
+ * reaches: a void row coming into reach as the camera moved cut the rows there at once, and the view, centred on a
+ * room smaller than it, jumped by half of it (the camera wiggled walking down a hall, location 0x1e8). *top_void, *bottom_void (when not NULL): beyond that end of
  * the rows is the void (between rooms, or the map beyond the bounds). */
 static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
     if (!ss_in_field() || outside_frames >= OUTSIDE_FRAMES) return 0;
@@ -430,11 +432,10 @@ static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
     int view = (int16_t)rt_r16(CAMERA + 2), middle = (view + SCREEN_H / 2) >> 4;
     int from = top, to = bottom;
     if (middle >= top && middle <= bottom && !void_row(scroll, tilesets, left, right, middle, 0)) {
-        int last_up = (view - field_rows) >> 4, last_down = (view + SCREEN_H - 1 + field_rows) >> 4;
-        for (int r = middle - 1; r >= top && r >= last_up; r--) {
+        for (int r = middle - 1; r >= top; r--) {
             if (void_row(scroll, tilesets, left, right, r, 0)) { from = r + 1; break; }
         }
-        for (int r = middle + 1; r <= bottom && r <= last_down; r++) {
+        for (int r = middle + 1; r <= bottom; r++) {
             if (void_row(scroll, tilesets, left, right, r, 0)) { to = r - 1; break; }
         }
     }

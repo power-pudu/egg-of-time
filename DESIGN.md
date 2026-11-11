@@ -396,7 +396,9 @@ original bytes, and caches the result per region until the region is written.
       bottom). Bounds can hold several rooms one above the other (the prison towers, location 0x1d: metatile rows
       0-32 with others stacked), which the camera never shows on the DS; the rows also end at the void between them:
       a metatile row that is one black metatile on layer 0 across the bounds and empty on the others (`void_row`),
-      looking out from the view's middle, never inside the 192 rows the game draws. Beyond the bounds the rows go on
+      looking out from the view's middle, never inside the 192 rows the game draws, over the whole bounds (looked for
+      only within the view's reach, a void row coming into it cut the rows at once, and the view centred on a room
+      smaller than it jumped: the camera wiggled walking down a hall, location 0x1e8). Beyond the bounds the rows go on
       while the map does (not the void), the view still stopping at the bounds: Lavos's room (location 0x1a7) has the
       camera at its top bound and Lavos's top spikes in the map rows above, cut by the screen's edge on the DS; the
       rows above the screen showed the water there.
