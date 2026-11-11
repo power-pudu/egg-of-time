@@ -1388,8 +1388,14 @@ static void engine_frame_start(Engine *e) {
 static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
     int m = e->margin, width = SCREEN_W + 2 * m;
-    int on_screen = y >= 0 && y < SCREEN_H, wy = row_line(e, y); /* the line whose windows it has */
-    int by = e->band_rows && !e->ring && !e->rays ? wy : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
+    int on_screen = y >= 0 && y < SCREEN_H, ly = row_line(e, y); /* the line it is drawn as (its registers) */
+    int by = e->band_rows && !e->ring && !e->rays ? ly : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
+    /* The line whose windows it has: the view's shift at a room's end moves the picture, and the windows the game
+     * placed on it with it, as for the columns (vx below). Shifted, the row's registers are another line's: its
+     * window spans are then the HDMA table's for that line (the portal a monster of the Arena of the Ages comes back
+     * through: a WIN0 disc showing only its swirl's sprites, 24 rows over them at the room's top end). */
+    int vy = y + e->view_y, wy = e->view_y ? row_line(e, vy) : ly;
+    int shifted = wy != ly && win_ext_on;
     if (e->track_top && y == SS_MAP_Y) {
         /* The marker as it last was belongs to its map: entering a house, the world map's pins and marker are gone
          * from the room's map, which the game shows a few frames without sprites. Read at the panel's first line,
@@ -1415,7 +1421,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         uint8_t **bank = &lcdc[((dispcnt >> 18) & 3) * 8];
         for (int x = 0; x < width; x++) {
             int sx = x - m;
-            out[x] = sx < 0 || sx >= SCREEN_W ? 0xFF000000u : to_rgba(vr16(bank, 0x1FFFF, ((uint32_t)wy * 256 + sx) * 2));
+            out[x] = sx < 0 || sx >= SCREEN_W ? 0xFF000000u : to_rgba(vr16(bank, 0x1FFFF, ((uint32_t)ly * 256 + sx) * 2));
         }
         goto advance;
     }
@@ -1507,16 +1513,17 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         int win0 = dispcnt & 0x2000, win1 = dispcnt & 0x4000, winobj = dispcnt & 0x8000;
         uint16_t winin = reg16(e, 0x48), winout = reg16(e, 0x4A);
         uint16_t w0h = reg16(e, 0x40), w1h = reg16(e, 0x42), w0v = reg16(e, 0x44), w1v = reg16(e, 0x46);
+        if (shifted) w0h = (uint16_t)win_lines[wy], w1h = (uint16_t)(win_lines[wy] >> 16);
         int in_w0y = win0 && in_range(wy, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(wy, w1v >> 8, w1v & 0xFF);
         int ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h); /* the line as the table has it */
         const int16_t *ext0 = ext ? win_ext[wy][0] : NULL, *ext1 = ext ? win_ext[wy][1] : NULL;
         /* A ring (effect_rows): its windows from its circles in the margins and on the rows beyond its band. */
-        int ring_sp[2][2], ring_n = e->ring ? ring_spans(e, y, ring_sp) : 0;
-        int ring_row = e->ring && (y < e->band_top || y >= e->band_top + e->band_rows);
+        int ring_sp[2][2], ring_n = e->ring ? ring_spans(e, vy, ring_sp) : 0;
+        int ring_row = e->ring && (vy < e->band_top || vy >= e->band_top + e->band_rows);
         float ray_sp[2][2] = {{0, 0}, {0, 0}}; /* rays: the windows' spans on a row beyond their lines */
-        int ray_row = e->rays && (y < e->band_top || y >= e->band_top + e->band_rows);
+        int ray_row = e->rays && (vy < e->band_top || vy >= e->band_top + e->band_rows);
         for (int w = 0; w < 2 && ray_row; w++) {
-            if (e->rays >> w & 1) ray_span(&ray_a[w], &ray_b[w], y < e->band_top ? ray_first_part[w] : ray_last_part[w], y, &ray_sp[w][0], &ray_sp[w][1]);
+            if (e->rays >> w & 1) ray_span(&ray_a[w], &ray_b[w], vy < e->band_top ? ray_first_part[w] : ray_last_part[w], vy, &ray_sp[w][0], &ray_sp[w][1]);
         }
 
         /* Pass 0: the picture (without the party when it has its own layer); pass 1: the shifted picture of the
@@ -1541,6 +1548,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             win0 = dispcnt & 0x2000, win1 = dispcnt & 0x4000, winobj = dispcnt & 0x8000;
             winin = reg16(e, 0x48), winout = reg16(e, 0x4A);
             w0h = reg16(e, 0x40), w1h = reg16(e, 0x42), w0v = reg16(e, 0x44), w1v = reg16(e, 0x46);
+            if (shifted) w0h = (uint16_t)win_lines[wy], w1h = (uint16_t)(win_lines[wy] >> 16);
             in_w0y = win0 && in_range(wy, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(wy, w1v >> 8, w1v & 0xFF);
             ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h);
             ext0 = ext ? win_ext[wy][0] : NULL, ext1 = ext ? win_ext[wy][1] : NULL;
