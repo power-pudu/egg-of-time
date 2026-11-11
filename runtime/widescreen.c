@@ -157,23 +157,26 @@ static void put(int bg, int slot, int row, uint16_t v) {
  * (9 in 10, so a few cells the game changed on its own do not stop it). Not so on the prison bridge:
  * BG3 holds a fixed 256-wide sky (tiles 0x199.. in order) and BG0 is mostly empty, both at scroll 0, 0 and
  * so on their (unmoving) ring origins; filled from the room map, the margins showed that map scrolling with the
- * camera beside a still sky. */
+ * camera beside a still sky. A view of priority tiles alone (location 0x178, its lights in the dark: layer 0 all on
+ * BG1) has nothing else to go by: then those cells must be empty, as the fill leaves them. Not filled, the zoom out's
+ * rows above the view showed lights from the BGs' old rows, gone as the camera brought them into the 4:3 view. */
 static int bg_holds_layer(int bg, uint32_t scroll, uint32_t tilesets, int L) {
     int camc = layer_col(scroll, L), camr = layer_row(scroll, L), oc = rt_r8(scroll + 0x8e + 2 * L), orow = rt_r8(scroll + 0x8f + 2 * L);
     uint32_t dispcnt = io_get32(0), cnt = io_get16(0x08 + 2 * bg);
     uint32_t base = 0x06000000u + ((dispcnt >> 27) & 7) * 0x10000u + ((cnt >> 8) & 0x1F) * 0x800u;
-    int cells = 0, same = 0;
+    int cells = 0, same = 0, pri_cells = 0, pri_empty = 0;
     for (int k = 1; k < 31; k++) {
         int slot = (oc + k) & 63;
         for (int r = 0; r < SCREEN_H / 8; r++) {
             uint32_t t = room_tile(scroll, tilesets, L, camc + k, camr + r);
-            if (L < 2 && (t >> 16) & 0xFF) continue;
             const uint8_t *p = video_vram_ptr(base + (uint32_t)(slot >> 5) * 0x800u + (uint32_t)((orow + r) & 31) * 64 + (uint32_t)(slot & 31) * 2);
             uint16_t v = 0;
             if (p) memcpy(&v, p, 2);
-            cells++, same += v == map_entry(L, t);
+            if (L < 2 && (t >> 16) & 0xFF) pri_cells++, pri_empty += v == 0;
+            else cells++, same += v == map_entry(L, t);
         }
     }
+    if (!cells) cells = pri_cells, same = pri_empty;
     return cells && same * 10 >= cells * 9;
 }
 
@@ -447,6 +450,8 @@ static void set_screen_view(int margin) {
  * while the room stays: as the Epoch warps, the game brightens instead (BLDCNT 0x00bf), and the opaque BG3 then
  * covers the water, as it must beside the screen too. */
 #define ROOM_SETTLE 8 /* frames */
+#define DRIFT_STEP 8  /* rows: the most a drifting layer moves in a frame */
+#define DRIFT_STEPS 2
 static int repeat_bgs;
 static uint32_t repeat_room; /* the room the layers were seen moving in (room map, bounds) */
 
@@ -872,7 +877,7 @@ void ws_bg_shift(int bg, int *x, int *y) {
     *x = bg_shift(bg, 0, view_x), *y = bg_shift(bg, 1, view_y);
 }
 
-static void fill_field_margins(int margin, int rows) {
+static void fill_field_margins(int margin, int rows, int shown_rows) {
     int seen = repeat_bgs;
     repeat_bgs = picture_bgs = view_bgs = 0;
     if (!field_margin) return;
@@ -889,7 +894,10 @@ static void fill_field_margins(int margin, int rows) {
      * Blackbird's hall from its wing, BG3 kept the wing's VOFS 403 for 3 frames, then went to 0 with the camera
      * still). Taken for a layer scrolling on its own (repeat_bgs, drift below), BG3 was neither filled nor moved
      * with the view for as long as the room held: the floor slid up over the walls as the camera went down, and
-     * the zoom out's rows above the room showed black blocks. Nothing starts repeating or drifting then. */
+     * the zoom out's rows above the room showed black blocks. Nothing starts repeating then, and layers 1 and 2 are
+     * not filled before it is known whether they drift (filled, the Blackbird's clouds seen from above, BG0 and BG3
+     * moving on their own, took the room's rows for those frames, kept in VRAM as streaks: the game never redraws
+     * them). */
     static uint32_t settle_room;
     static int settle;
     uint32_t here = room ^ room_bounds(scroll);
@@ -915,22 +923,28 @@ static void fill_field_margins(int margin, int rows) {
     /* Walking, the origins in RAM are a tile ahead of the frame's scroll for one frame at each tile: that frame shows
      * a column or row the fill must have written too, so a BG a tile off is filled, by its own scroll. */
     int ok0 = bg_on_layer(2, scroll, 0), ok1 = bg_on_layer(3, scroll, 1), ok2 = bg_on_layer(0, scroll, 2);
-    /* Layers 1 and 2 drifting: BG3's or BG0's scroll moves while the camera and BG2's hold still (the sky behind
-     * Azala's tower moves only with the camera; a shaking screen moves BG2 too). Their own maps loop seamlessly: the
+    /* Layers 1 and 2 drifting: BG3's or BG0's scroll moves against BG2's while the camera holds still (the sky behind
+     * Azala's tower moves only with the camera; a shaking screen moves BG2 alike; seen from above, the Blackbird's
+     * scene pans every BG, the clouds faster than BG2). Their own maps loop seamlessly: the
      * clouds past the Blackbird's wing, a 256-row loop the game scrolls through BG3's map; seen from above, BG0's
      * clouds 4 rows a frame over BG3's. Filled only while that scroll passed near the layer's place in the room, the
      * rows beyond the screen jumped for those frames (from the map's last row on). Left to the game while the room
-     * holds. */
+     * holds. Drifting is a few rows a frame, seen twice (DRIFT_STEPS), also while the room settles: entering the
+     * Blackbird's hall, BG3 went from the wing's VOFS 403 to 0 in one step, no drift. */
     static uint32_t drift_room;
-    static int drift, last_cam, last_vofs[2], last_room_vofs; /* drift: bit 0 layer 1 (BG3), bit 1 layer 2 (BG0) */
+    static int drift, steps[2], last_cam, last_vofs[2], last_room_vofs; /* drift: bit 0 layer 1 (BG3), bit 1 layer 2 (BG0) */
     int cam = (int16_t)rt_r16(CAMERA + 2), room_vofs = io_get16(0x1a) & 511;
     int vofs[2] = {io_get16(0x1e) & 511, io_get16(0x12) & 511};
-    if (here != drift_room) drift = 0, drift_room = here;
-    else if (settled && cam == last_cam && room_vofs == last_room_vofs)
-        for (int i = 0; i < 2; i++) drift |= (vofs[i] != last_vofs[i]) << i;
+    if (here != drift_room) drift = steps[0] = steps[1] = 0, drift_room = here;
+    else if (cam == last_cam) {
+        for (int i = 0; i < 2; i++) {
+            int d = (vofs[i] - last_vofs[i] - room_vofs + last_room_vofs) & 511;
+            if (d && (d <= DRIFT_STEP || d >= 512 - DRIFT_STEP) && ++steps[i] >= DRIFT_STEPS) drift |= 1 << i;
+        }
+    }
     last_cam = cam, last_vofs[0] = vofs[0], last_vofs[1] = vofs[1], last_room_vofs = room_vofs;
-    if (drift & 1) ok1 = 0;
-    if (drift & 2) ok2 = 0;
+    if ((drift & 1) || !settled) ok1 = 0;
+    if ((drift & 2) || !settled) ok2 = 0;
     if (!ok0 && !ok1 && !ok2) return;
     copy_room_rows(scroll, room);
     ok0 = ok0 && bg_holds_layer(2, scroll, tilesets, 0);
@@ -953,6 +967,7 @@ static void fill_field_margins(int margin, int rows) {
     /* The tiles the filled layers show: they agree on the tile, not always on the pixel (Zenan Bridge: BG0 still
      * at 0, 0, BG2 and BG3 6 rows down, so they show a 25th row). */
     int left = camc + 1, right = camc - 1, top = camr, bottom = camr;
+    int shown_top = camr, shown_bottom = camr; /* the rows shown, without camera smoothing's guard rows */
     for (int bg = 0; bg < 4; bg++) {
         if (!(bg == 2 ? ok0 : bg == 3 ? ok1 : bg == 0 ? ok2 : okhi)) continue;
         int hofs = io_get16(0x10 + 4 * bg), vofs = io_get16(0x12 + 4 * bg), L = bg == 2 || bg == 1 ? 0 : bg == 3 ? 1 : 2;
@@ -963,6 +978,8 @@ static void fill_field_margins(int margin, int rows) {
         int l = c0 + ((fine - margin + vx) >> 3), r = c0 + ((fine + SCREEN_W - 1 + margin + vx) >> 3);
         int t = r0 + ((vfine - rows + vy) >> 3), b = r0 + ((vfine + SCREEN_H - 1 + rows + vy) >> 3);
         left = l < left ? l : left, right = r > right ? r : right, bottom = b > bottom ? b : bottom, top = t < top ? t : top;
+        int st = r0 + ((vfine - shown_rows + vy) >> 3), sb = r0 + ((vfine + SCREEN_H - 1 + shown_rows + vy) >> 3);
+        shown_top = st < shown_top ? st : shown_top, shown_bottom = sb > shown_bottom ? sb : shown_bottom;
     }
     for (int c = left; c <= right; c++) {
         for (int r = top; r <= bottom; r++) {
@@ -971,6 +988,11 @@ static void fill_field_margins(int margin, int rows) {
              * (0, 16 after the Lab 32 race), and the view's shift to the room's ends then takes the range around the
              * ring, onto the game's own cells. */
             if (((c - camc) & 63) < 32 && ((r - camr) & 31) <= SCREEN_H / 8) continue;
+            /* Zoomed out with camera smoothing, the rows (the shown ones and 4 guard rows each side, 256 lines) span 33
+             * tile rows with a fine scroll, one more than the ring: a guard row shares its ring row with the shown
+             * row 32 away, and written last, the bottom guard row stood in the top row (location 0x178: lights
+             * at the view's top, gone as the camera brought those rows into the 4:3 view). The shown row keeps it. */
+            if ((r < shown_top && r + 32 <= bottom) || (r > shown_bottom && r - 32 >= top)) continue;
             uint32_t t0 = room_tile(scroll, tilesets, 0, c, map_row(scroll, 0, r, camr));
             uint32_t t1 = room_tile(scroll, tilesets, 1, c + dc1, map_row(scroll, 1, r + dr1, camr + dr1));
             int pri0 = (t0 >> 16) & 0xFF, pri1 = (t1 >> 16) & 0xFF;
@@ -1014,7 +1036,7 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
     oam_x = view_x, oam_y = view_y;
     view_x = next_x, view_y = next_y;
     if (ss_in_field()) set_screen_view(field_margin);
-    fill_field_margins(margin, rows);
+    fill_field_margins(margin, rows, limit_rows);
     next_x = next_y = 0;
     int lo, hi;
     if (field && limit) {

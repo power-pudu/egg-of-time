@@ -116,7 +116,9 @@ original bytes, and caches the result per region until the region is written.
     the margins take the tiles every filled layer shows at its own fine scroll; on Zenan Bridge BG0
     stays at 0, 0 while BG2 and BG3 sit 6 rows lower and show a 25th tile row).
     A layer is also filled only while the model reproduces what the game itself drew in the 4:3 view (9 cells in
-    10, priority tiles left out; `bg_holds_layer`): some rooms put a picture of their own on BG0 or BG3 that never
+    10, priority tiles left out; `bg_holds_layer`; a view of priority tiles alone, location 0x178's lights in the dark
+    all on BG1, goes by those being empty, as the fill leaves them: not filled, the zoom out's rows above the view
+    showed lights from the BGs' old rows, gone as the camera brought them into the 4:3 view): some rooms put a picture of their own on BG0 or BG3 that never
     scrolls, so its ring origin stays 0, 0 and agrees with its scroll. The prison bridge: BG3 holds a fixed
     256-wide sky (tiles 0x199.. in order), BG0 is mostly empty, the room on BG2 pans; filled from the room map,
     the margins showed that map scrolling with the camera beside the still sky. Such a BG at scroll 0
@@ -228,6 +230,9 @@ original bytes, and caches the result per region until the region is written.
     - Limits: BG maps are 32 tile rows tall, and a picture at a fine scroll shows one tile row more than rows / 8, so
       248 rows (77%) is the most that does not show a tile row at both edges (256 would be 75%). They are 512 wide, so
       a ratio beyond 496 columns (21:9 at 212 rows) zooms out less.
+      Camera smoothing's 4 guard rows each side go past that (256 lines, 33 tile rows at a fine scroll): a guard row
+      sharing its ring row with a shown one 32 rows away is left out of the fill, or written last it stood in the
+      shown row.
     - Rows: `video_render_line` draws the rows above the screen with line 0 and those below with line 191 (`Engine.rows`,
       `FROW`), using the registers those lines have, the frame's BG0 / BG1 where the text box switched them, and the
       windows of the nearest line; affine references are stepped back to match. A reflected picture
@@ -244,12 +249,16 @@ original bytes, and caches the result per region until the region is written.
       jumping then (clamped at the map's last row).
       Layer 2 the same with BG0: the Blackbird seen from above (0x16e) scrolls BG0's clouds 4 rows a frame over
       BG3's, and every 64 frames, for 3, the fill wrote the room into them, the clouds jumping.
-      Neither a repeating layer nor a drifting one starts in a room's first 8 frames (`ROOM_SETTLE`): entering the
-      Blackbird's hall from its wing, BG3 kept the wing's VOFS 403 for 3 frames and then went to 0 with the camera
-      still, taken for both, so BG3 was not filled for as long as the room held: the floor slid up over the walls as
-      the camera went down, and black blocks stood above the room. The room is told by its map and its four bounds
+      Drifting is BG3's or BG0's scroll moving against BG2's with the camera still, a few rows a frame, twice
+      (`DRIFT_STEPS`): the Blackbird seen from above pans every BG, the clouds faster than BG2. No repeating layer
+      starts in a room's first 8 frames (`ROOM_SETTLE`), and layers 1 and 2 are not filled before then: entering
+      the Blackbird's hall from its wing, BG3 kept the wing's VOFS 403 for 3 frames and then went to 0 in one step
+      with the camera still, taken for both, so BG3 was not filled for as long as the room held (the floor slid up
+      over the walls as the camera went down, black blocks above the room); filled in those frames, the clouds seen
+      from above kept the room's rows in VRAM as streaks. The room is told by its map and its four bounds
       (`room_bounds`; read as one word at +0x16, the aligned read had only left and right, the wing's and the hall's
-      alike).    - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
+      alike).
+    - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
       bottom from one above the view, as the DS's 64 unused rows did. `rt_ws_draw_cell` (main 0x02019fd4) knows the cell's
       place, and `rt_ws_enter_oam` (main 0x02048098) marks each sprite while it is entered, in attribute 1 bits that
       sprites without rotation do not use: `WS_OAM_ABOVE`. That entry also picks a priority from Y against a threshold
