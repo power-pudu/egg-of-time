@@ -76,6 +76,8 @@
  *     the bottom one. The main screen shows the panels and moves, the Pit around the monsters, the items as four
  *     columns of two (the game's columns as rows: Left/Right and Up/Down swap while they are chosen), their buttons
  *     narrowed without the count, then the text box or, while an item is chosen, the help bar with its count.
+ *   - After an Arena battle won (ov013): the monster in a spotlight on the top screen; the prize in a box and
+ *     "Return to the stables." on the bottom one. The main screen shows the spotlight over the box and the button.
  *   - Age selector (ov012, time travel): the chosen age's map on the top screen, the ring of ages with the age's
  *     name, A Warp and B on the bottom one. The main screen shows the bottom screen with the ring and name moved
  *     left (a second picture of the bottom screen, swirl and buttons in place) and the map at half size beside the
@@ -102,7 +104,7 @@
 #include "ui_font.h"
 #include "video.h"
 
-enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP, SCENE_ARENA_BATTLE };
+enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP, SCENE_ARENA_BATTLE, SCENE_ARENA_RESULT };
 typedef struct Scene { int kind; uint32_t obj; } Scene;
 static uint32_t title_held; /* keys held since before the title started: not a press */
 #define TITLE_STATE 0x4a  /* title scene: current state (halfword); +0x48 holds the requested one */
@@ -140,6 +142,7 @@ static uint32_t title_held; /* keys held since before the title started: not a p
 #define ARENA_TRAIN_ERA 0x0214783cu   /* the eras */
 #define ARENA_PREP 0x02148838u /* ov013: the scene before an Arena battle ("Preparing arena for battle.") */
 #define ARENA_BATTLE 0x02147f7cu /* ov013: an Arena battle */
+#define ARENA_RESULT 0x021465c0u /* ov013: after an Arena battle (the prize, "Return to the stables.") */
 #define ARENA_SHOP_BUY 0x2a4e /* the Arena's shop: its Buy button's sprite is shown (byte), on Buy / Sell only */
 
 #define CURRENT_SCENE GAME_ADDR(0x0207088cu, 0x020708acu) /* the running scene's secondary base (scene + 8), set by Scene::run */
@@ -175,6 +178,7 @@ static Scene current(void) {
     if (vt == GAME_ADDR(0x02158290u, 0x021582f0u) && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
     if (vt == ARENA_PREP && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_PREP;
     if (vt == ARENA_BATTLE && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_BATTLE;
+    if (vt == ARENA_RESULT && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_RESULT;
     if (vt == 0x0214a550u && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_SHOP; /* ov013: the Arena's shop */
     if (vt == 0x02147460u && rt_overlay_resident(13)) { /* ov013: the Arena of the Ages */
         uint32_t page = rt_r32(sc.obj + ARENA_PAGE);
@@ -1108,6 +1112,24 @@ static void compose_arena_battle(uint32_t *main, const uint32_t *top, const uint
     }
 }
 
+/* After an Arena battle (see the top). Top screen: the spotlight in rows 68-139 on black. Bottom screen: the
+ * backdrop rows 0-19, the prize's box rows 20-99, the button rows 112-151 (its frame rows 112-116 and 147-151, its
+ * label and the A icon within rows 122-141). Main screen: the spotlight (top rows 67-140) at the top, then on the
+ * backdrop the box from row 78 and the button, its empty rows left out, from row 162. */
+#define RESULT_SPOT_Y 67
+#define RESULT_SPOT_H 74
+#define RESULT_BOX_AT 78
+#define RESULT_BUTTON_AT 162
+
+static void compose_arena_result(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    memcpy(main, &top[RESULT_SPOT_Y * SCREEN_W], RESULT_SPOT_H * SCREEN_W * 4);
+    for (int y = RESULT_SPOT_H; y < SCREEN_H; y++) memcpy(&main[y * SCREEN_W], &bottom[(y % 20) * SCREEN_W], SCREEN_W * 4);
+    memcpy(&main[RESULT_BOX_AT * SCREEN_W], &bottom[20 * SCREEN_W], 80 * SCREEN_W * 4);
+    static const int sy[3] = {112, 122, 147}, h[3] = {5, 20, 5}; /* top frame, label and icon, bottom frame */
+    for (int k = 0, y = RESULT_BUTTON_AT; k < 3; y += h[k++])
+        memcpy(&main[y * SCREEN_W], &bottom[sy[k] * SCREEN_W], (size_t)h[k] * SCREEN_W * 4);
+}
+
 static void compose_bestiary(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     memcpy(main, top, SCREEN_W * SCREEN_H * 4);
     memcpy(main, bottom, 24 * SCREEN_W * 4); /* the tabs over the title */
@@ -1461,6 +1483,9 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
         break;
     case SCENE_ARENA_BATTLE:
         compose_arena_battle(main, top, bottom);
+        break;
+    case SCENE_ARENA_RESULT:
+        compose_arena_result(main, top, bottom);
         break;
     case SCENE_ARENA_PREP:
         memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
