@@ -320,6 +320,10 @@ original bytes, and caches the result per region until the region is written.
       menu's line 46, or rising from the text box's 165, that ends short of the other is unstretched the same way from
       its first frame: the pillar, before its rounded end fit as rays, was stretched from lines 46-165 and reached
       lower than its end.
+      Where the effect ends on its lines, a row beyond them is drawn as its own screen line, with what the HDMA
+      writes for it (`row_line`): Lavos's room (location 0x1a7) lights Schala with WIN0 from line 97 down, and the
+      text box above took line 97's BG0 scroll, its text sliding out of the box in a zig-zag, and BG0's glow lit a
+      band under it.
       A ring is not stretched (its circle would turn into an ellipse), nor are its edges carried on beyond the
       screen's sides (its arcs became straight bars): an enemy's "Rainbow Beam: Blind" grows a ring made of WIN0
       (the left arc) and WIN1 (the right arc), coloured line by line through the backdrop. When the window edges
@@ -392,7 +396,12 @@ original bytes, and caches the result per region until the region is written.
       bottom). Bounds can hold several rooms one above the other (the prison towers, location 0x1d: metatile rows
       0-32 with others stacked), which the camera never shows on the DS; the rows also end at the void between them:
       a metatile row that is one black metatile on layer 0 across the bounds and empty on the others (`void_row`),
-      looking out from the view's middle, never inside the 192 rows the game draws.
+      looking out from the view's middle, never inside the 192 rows the game draws. Beyond the bounds the rows go on
+      while the map does (not the void), the view still stopping at the bounds: Lavos's room (location 0x1a7) has the
+      camera at its top bound and Lavos's top spikes in the map rows above, cut by the screen's edge on the DS; the
+      rows above the screen showed the water there.
+    - Text box lines: the room drawn under the box takes the BGs, blending and windows as the frame started. Lavos's
+      room hides BG0's glow outside an empty WIN0, which the box's lines turn off; it lit a band over Lavos's top.
   - Not handled: rooms smaller than the wide view show what lies beside them in the map (other rooms of the same
     building, or void); the room's camera bounds were not found yet (the limits 0x02143fb0 the object cull clamps
     to hold the whole map, 0-255), so the margins are not masked. The game draws no 3D: the SDK sends a few housekeeping GX commands per frame but no geometry,

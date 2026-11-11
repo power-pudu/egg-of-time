@@ -455,7 +455,27 @@ static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
     return 1;
 }
 
-int ws_room_rows(int *y0, int *y1) { return room_rows(y0, y1, NULL, NULL); }
+/* The rows the room's clip keeps (video.c room_clip). Beyond the bounds the map can go on with the room's scenery,
+ * which the game draws when its view reaches there: Lavos's room (location 0x1a7) has the camera at its bounds' top,
+ * and Lavos's top spikes in the map rows above, cut by the screen's edge on the DS; clipped at the bounds, the rows
+ * above the screen showed the water where Lavos's top goes on. So the clip goes on over rows that are not the void
+ * (void_row), within the rows shown, the view still stopping at the bounds. */
+int ws_room_rows(int *y0, int *y1) {
+    int top_void, bottom_void;
+    if (!room_rows(y0, y1, &top_void, &bottom_void)) return 0;
+    uint32_t scroll = rt_r32(SCROLL), tilesets = rt_r32(TILESETS);
+    int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17), top = rt_r8(scroll + 0x18), bottom = rt_r8(scroll + 0x19);
+    int view = (int16_t)rt_r16(CAMERA + 2), last = rt_r8(scroll + 0x1b);
+    for (int r = top - 1; !top_void && r >= 0 && r * 16 + 16 > view - field_rows && *y0 == (r + 1) * 16 - view; r--) {
+        if (void_row(scroll, tilesets, left, right, r, 1)) break;
+        *y0 = r * 16 - view;
+    }
+    for (int r = bottom + 1; !bottom_void && r <= last && r * 16 < view + SCREEN_H + field_rows && *y1 == r * 16 - view; r++) {
+        if (void_row(scroll, tilesets, left, right, r, 1)) break;
+        *y1 = (r + 1) * 16 - view;
+    }
+    return 1;
+}
 
 int ws_sprite_origin(void) { /* the view as widened here, recognised by its shape (also after a state load) */
     uint32_t w = rt_r32(G2D_VIEW + 8);

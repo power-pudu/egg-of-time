@@ -157,6 +157,7 @@ typedef struct Engine {
                               * the widescreen margins */
     uint8_t follows[128]; /* by OAM slot: the sprite moves with the camera */
     uint16_t frame_bg[4][3]; /* widescreen: BGxCNT, HOFS, VOFS as the frame started, and its blending: */
+    uint16_t frame_win[7];   /* DISPCNT's window bits, WININ, WINOUT, WIN0H, WIN1H, WIN0V, WIN1V (see margin_bg) */
     uint16_t frame_bld[2];   /* BLDCNT, BLDALPHA (see margin_bg) */
     uint8_t mirror_bg;       /* widescreen: text BGs whose margins show the screen reflected (see picture_256) */
     uint8_t solid_bgs;       /* widescreen, this line: text BGs one opaque tile throughout (see solid_256) */
@@ -1261,7 +1262,11 @@ static int row_line(const Engine *e, int y) {
     if (!e->band_rows) return SDL_clamp(y, 0, SCREEN_H - 1);
     int top = e->band_top, n = e->band_rows, p = e->band_period;
     if (e->ring) return y >= top && y < top + n ? y : p ? top + ((y - top) % p + p) % p : SDL_clamp(y, top, top + n - 1);
-    if (e->rays) return SDL_clamp(y, top, top + n - 1);
+    /* Rays go on beyond their band only where the game blanks them; elsewhere a row is its own line, with what the
+     * HDMA writes for it (Lavos's room, location 0x1a7: Schala's light, WIN0 from line 97 down, did not reach the
+     * text box above; drawn as line 97, the box's lines took its BG0 scroll, the text out of the box, and BG0's glow
+     * lit a band under it). */
+    if (e->rays) return (y < top ? !e->rays_up : y >= top + n && !e->rays_down) ? SDL_clamp(y, 0, SCREEN_H - 1) : SDL_clamp(y, top, top + n - 1);
     return top + (y + e->rows) * n / (SCREEN_H + 2 * e->rows);
 }
 
@@ -1316,6 +1321,8 @@ static void engine_frame_start(Engine *e) {
             e->frame_bg[bg][2] = reg16(e, 0x12 + 4 * bg);
         }
         e->frame_bld[0] = reg16(e, 0x50), e->frame_bld[1] = reg16(e, 0x52);
+        e->frame_win[0] = (uint16_t)(dispcnt & 0xE000);
+        for (int k = 0; k < 6; k++) e->frame_win[1 + k] = reg16(e, k < 2 ? 0x48 + 2 * k : 0x40 + 2 * (k - 2));
         memset(e->solid_key, 0xFF, sizeof e->solid_key);
         e->frame_solid = 0;
         for (int bg = 0; bg < 2 && e->margin; bg++) e->frame_solid |= (uint8_t)(solid_256(e, bg, dispcnt) << bg);
@@ -1520,6 +1527,24 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         for (int pass = 0; pass < 3; pass++) {
         if (pass == 1 && !e->party && !e->sel_shift) continue;
         if (pass == 2 && !ui_line) continue;
+        /* Under the text box, the room's windows as the frame started too: Lavos's room (location 0x1a7) hides BG0's
+         * glow outside an empty WIN0, which the box's lines turn off; shown and blended there, it lit a band over
+         * Lavos's top. */
+        if (!pass && box) {
+            const uint16_t *fw = e->frame_win;
+            win0 = fw[0] & 0x2000, win1 = fw[0] & 0x4000, winobj = fw[0] & 0x8000;
+            winin = fw[1], winout = fw[2], w0h = fw[3], w1h = fw[4], w0v = fw[5], w1v = fw[6];
+            in_w0y = win0 && in_range(wy, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(wy, w1v >> 8, w1v & 0xFF);
+            ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h);
+            ext0 = ext ? win_ext[wy][0] : NULL, ext1 = ext ? win_ext[wy][1] : NULL;
+        } else if (pass && box) {
+            win0 = dispcnt & 0x2000, win1 = dispcnt & 0x4000, winobj = dispcnt & 0x8000;
+            winin = reg16(e, 0x48), winout = reg16(e, 0x4A);
+            w0h = reg16(e, 0x40), w1h = reg16(e, 0x42), w0v = reg16(e, 0x44), w1v = reg16(e, 0x46);
+            in_w0y = win0 && in_range(wy, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(wy, w1v >> 8, w1v & 0xFF);
+            ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h);
+            ext0 = ext ? win_ext[wy][0] : NULL, ext1 = ext ? win_ext[wy][1] : NULL;
+        }
         const ObjLine *o = pass == 2 ? &ol_ui : pass ? &ol_all : &ol;
         uint32_t *dst = pass == 2 ? &ui_frame[y * VIDEO_LINE_MAX] : !pass ? out : e->sel_shift ? &shifted_frame[y * VIDEO_LINE_MAX] : &party_frame[FROW(e, y)];
         VideoHd *hd = !hd_on || pass == 2 ? NULL : !pass ? hd_row : e->sel_shift ? NULL : &hd_party[FROW(e, y)];
