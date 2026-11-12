@@ -105,6 +105,8 @@ static const char *const ff_sound_labels[] = {"All", "Music only"};
 static const char *const minimap_size_names[] = {"big", "medium", "small"};
 static const char *const minimap_size_labels[] = {"Big", "Medium", "Small"};
 static const float minimap_scales[] = {1.0f / 2, 3.0f / 8, 1.0f / 4}; /* of the panel on the bottom screen */
+static const char *const multiplier_names[] = {"off", "2", "4", "8", "10"};
+static const char *const multiplier_labels[] = {"Disabled", "x2", "x4", "x8", "x10"};
 static const char *const off_names[] = {"off"};
 static const char **shader_names; /* "off", then shader_key() of each listed shader */
 
@@ -138,6 +140,12 @@ static Setting settings[SET_COUNT] = {
     [SET_FF_MUSIC] = {"ffmusic", "Fast forward music", 2, FF_MUSIC_FAST, ff_music_names, ff_music_labels},
     /* Music only mutes every channel but the BGM players' while fast forwarding (snd.c). */
     [SET_FF_SOUND] = {"ffsound", "Fast forward sound", 2, FF_SOUND_ALL, ff_sound_names, ff_sound_labels},
+    /* Cheats (cheats.c): EXP and TP won in battle multiplied, the party's HP and MP kept full, the gold at its most. */
+    [SET_CHEAT_EXP] = {"cheatexp", "EXP multiplier", 5, 0, multiplier_names, multiplier_labels},
+    [SET_CHEAT_TP] = {"cheattp", "TP multiplier", 5, 0, multiplier_names, multiplier_labels},
+    [SET_CHEAT_HP] = {"cheathp", "Infinite HP", 2, 0, onoff_names, onoff_labels},
+    [SET_CHEAT_MP] = {"cheatmp", "Infinite MP", 2, 0, onoff_names, onoff_labels},
+    [SET_CHEAT_GOLD] = {"cheatgold", "Infinite money", 2, 0, onoff_names, onoff_labels},
 };
 #define SETTING(id) (settings[id].value)
 

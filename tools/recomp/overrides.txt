@@ -18,6 +18,10 @@ main 02023cb0 rt_bad_alloc
 # (runtime/patches.c).
 ov007 0212a3f0 rt_ct_settings_defaults wrap jp=0212a2c8
 
+# A defeated enemy's EXP and TP added to the battle's rewards: multiplied by the EXP and TP multiplier cheats
+# (runtime/cheats.c).
+ov000 021111f4 rt_ct_battle_rewards wrap jp=02111214
+
 # Title idle timeout (30 s to the intro movie): held off while System Settings is open (runtime/patches.c).
 ov007 02127618 rt_ct_title_idle wrap jp=021274f0
 

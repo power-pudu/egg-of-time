@@ -73,6 +73,7 @@ set(RUNTIME_SOURCES
     runtime/minimap.c
     runtime/gfx_rom.c
     runtime/card.c
+    runtime/cheats.c
     runtime/cheevos.c
     runtime/hw.c
     runtime/memory.c

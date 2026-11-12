@@ -18,6 +18,9 @@
  * while it downloads), title, points and description; Left/Right turn a page. The password shows as stars and is
  * forgotten once sent. B or SELECT goes back.
  *
+ * A on Cheats opens their page: the EXP and TP multipliers and Infinite HP, MP and money (cheats.c), changed with Left/Right
+ * like the settings; B or SELECT goes back to the settings.
+ *
  * A on Controls opens the button mapping: a row per DS button, fast forward and the save state slots, with its
  * keyboard key and gamepad button. Left/Right pick the key or the button, A waits for the new one (controls_capture), a
  * last row restores the defaults; B or SELECT goes back to the settings. After a rebinding, input is kept from
@@ -44,9 +47,10 @@
 #define RESUME_MS 100 /* START held for the game after closing from the pause */
 
 #define ROW_CONTROLS SET_COUNT /* after the display settings */
-#define ROW_CHEEVOS (SET_COUNT + 1)
-#define ROW_DUMP (SET_COUNT + 2)
-#define ROW_COUNT (SET_COUNT + 3)
+#define ROW_CHEATS (SET_COUNT + 1)
+#define ROW_CHEEVOS (SET_COUNT + 2)
+#define ROW_DUMP (SET_COUNT + 3)
+#define ROW_COUNT (SET_COUNT + 4)
 #define ROW_RESET CTL_COUNT /* the Controls page's last row */
 #define ROWS_SHOWN 8        /* between the header and the footer */
 #define CH_SLOT 2           /* rows an achievement takes on the RetroAchievements page */
@@ -74,7 +78,13 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_MODS] = "Replacement movies and music (mods).",
     [SET_FF_MUSIC] = "Normal speed may delay music cues.",
     [SET_FF_SOUND] = "Music only mutes sound effects.",
+    [SET_CHEAT_EXP] = "Multiplies the EXP won in battle.",
+    [SET_CHEAT_TP] = "Multiplies the TP won in battle.",
+    [SET_CHEAT_HP] = "Keeps the party's HP at its maximum.",
+    [SET_CHEAT_MP] = "Keeps the party's MP at its maximum.",
+    [SET_CHEAT_GOLD] = "Keeps the gold at 9,999,999.",
     [ROW_CONTROLS] = "Keyboard keys and gamepad buttons.",
+    [ROW_CHEATS] = "EXP and TP multipliers, infinite HP, MP, money.",
     [ROW_CHEEVOS] = "Achievements of retroachievements.org.",
     [ROW_DUMP] = "Saves the graphics for mods, as PNG.",
 };
@@ -84,6 +94,7 @@ enum { CONFIRM_NONE, CONFIRM_LANGUAGE, CONFIRM_DUMP };
 static int place, cursor; /* place: where it was opened (SS_MENU_*), SS_MENU_NONE when closed */
 static SDL_AtomicInt open_now; /* place != SS_MENU_NONE, for the game thread */
 static int top;           /* the first row shown (rows: the shown settings, in order) */
+static int cheats_page, settings_cursor, settings_top; /* the Cheats page, and the settings' row and top to go back to */
 static int confirm, yes;  /* the question open (CONFIRM_*); Yes is chosen */
 static Uint64 dump_since; /* when the graphics dump started */
 static int controls_page, ctl_cursor, ctl_pad, ctl_top; /* ctl_pad: the gamepad column is chosen */
@@ -94,7 +105,11 @@ static int released_wait; /* a rebinding or typing ended: the menu ignores input
 static uint32_t prev_keys, blocked; /* blocked: held since the menu closed, kept from the game until released */
 static Uint64 repeat_at, resume_until;
 
-static int row_shown(int i) { return i >= SET_COUNT || display_setting_shown(i); }
+/* The rows of the page shown: the cheats on the Cheats page, else the settings and the actions after them. */
+static int row_shown(int i) {
+    if (cheats_page) return i >= SET_CHEATS && i < SET_COUNT;
+    return i >= SET_COUNT || (i < SET_CHEATS && display_setting_shown(i));
+}
 
 static void controls_input(uint32_t act) {
     if (act & (KEY_B | KEY_SELECT)) controls_page = 0;
@@ -200,7 +215,7 @@ static uint32_t input(uint32_t keys) {
     prev_keys = keys;
     if (place == SS_MENU_NONE) {
         if ((pressed & KEY_SELECT) && (place = ss_menu_place()) != SS_MENU_NONE) {
-            cursor = top = confirm = controls_page = cheevos_page = 0;
+            cursor = top = confirm = controls_page = cheevos_page = cheats_page = 0;
             while (!row_shown(cursor)) cursor++;
             return 0;
         }
@@ -256,6 +271,10 @@ static uint32_t input(uint32_t keys) {
         cheevos_input(act);
         return 0;
     }
+    if (cheats_page && (act & (KEY_B | KEY_SELECT)) && !left) {
+        cheats_page = 0, cursor = settings_cursor, top = settings_top;
+        return 0;
+    }
     if ((act & (KEY_B | KEY_SELECT)) || left) {
         if (place == SS_MENU_PAUSE && !left) resume_until = now + RESUME_MS;
         place = SS_MENU_NONE;
@@ -267,6 +286,8 @@ static uint32_t input(uint32_t keys) {
     if (act & KEY_DOWN) do cursor = (cursor + 1) % ROW_COUNT; while (!row_shown(cursor));
     if (cursor == ROW_CONTROLS) {
         if (act & KEY_A) controls_page = 1, ctl_cursor = ctl_pad = ctl_top = 0;
+    } else if (cursor == ROW_CHEATS) {
+        if (act & KEY_A) settings_cursor = cursor, settings_top = top, cheats_page = 1, cursor = SET_CHEATS, top = 0;
     } else if (cursor == ROW_CHEEVOS) {
         if (act & KEY_A) cheevos_page = 1, ch_cursor = ch_top = 0;
     } else if (cursor == ROW_DUMP) {
@@ -403,9 +424,10 @@ static void centered(uint32_t *s, const char *text, Rect r, uint32_t color) {
     ui_draw_text(s, text, r.x + (r.w - ui_text_width(text)) / 2, r.y + 4, color);
 }
 
-/* A row's label and value: a display setting's, or an action's (Controls, RetroAchievements, Dump graphics). */
+/* A row's label and value: a display setting's, or an action's (Controls, Cheats, RetroAchievements, Dump graphics). */
 static const char *row_title(int i) {
     if (i == ROW_CONTROLS) return ui_text("Controls");
+    if (i == ROW_CHEATS) return ui_text("Cheats");
     if (i == ROW_CHEEVOS) return "RetroAchievements";
     return ui_text(i == ROW_DUMP ? "Dump graphics" : display_setting_title(i));
 }
@@ -415,6 +437,11 @@ static const char *row_value(int i, int w) {
     int done, total;
     float share;
     if (i == ROW_CONTROLS) return ui_text("A: change");
+    if (i == ROW_CHEATS) { /* On while any cheat is */
+        int on = 0;
+        for (int c = SET_CHEATS; c < SET_COUNT; c++) on |= display_setting_get(c);
+        return ui_text(on ? "On" : "Off");
+    }
     if (i == ROW_CHEEVOS) {
         int st = cheevos_state();
         return st == CHEEVOS_LOGGED_IN ? fit(cheevos_user(), w) : ui_text(st == CHEEVOS_LOGGING_IN ? "Logging in..." : "A: log in");
@@ -648,7 +675,7 @@ void sysmenu_draw(uint32_t *s) {
     } else if (cheevos_page) {
         draw_cheevos(s);
     } else {
-        const char *title = ui_text("System Settings");
+        const char *title = ui_text(cheats_page ? "Cheats" : "System Settings");
         ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
 
         int rows[ROW_COUNT], n = 0, at = 0;
