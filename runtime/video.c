@@ -875,6 +875,38 @@ static int ray_fit[2], ray_first_part[2], ray_last_part[2];
 enum { RAYS_KEPT = 4 };
 static EdgeLine ray_a[2], ray_b[2];
 
+/* Rays kept (effect_rows), a window without rays of its own on the rows beyond its band (where the game blanks it):
+ * its sides carried on along their slopes on its last EDGE_RUN lines at that end, until they meet, so a shape that
+ * closes there closes and a pillar goes on (Luminaire's orb, cut by the battle menu at the bottom: its line 145 was
+ * repeated down to the picture's bottom, a column under it). A side cut by a screen side keeps its margin. */
+static int tail_y[2][2];                 /* by window, end (top, bottom): the line it goes on from (-1: none) */
+static float tail_x[2][2][2], tail_dx[2][2][2]; /* and by side: the column there (screen), its change per line */
+
+static void window_tail(int w, int end, int from, int dir) {
+    int x[2], y = from, k = 0;
+    tail_y[w][end] = -1;
+    while (y >= win_top && y < SCREEN_H && win_span(y, w, &x[0], &x[1]) <= 0 && k++ < EDGE_RUN) y += dir;
+    if (y < win_top || y >= SCREEN_H || win_span(y, w, &x[0], &x[1]) <= 0) return;
+    tail_y[w][end] = y;
+    for (int s = 0; s < 2; s++) {
+        tail_x[w][end][s] = win_ext[y][w][s], tail_dx[w][end][s] = 0;
+        if (x[s] < 0 || x[s] >= SCREEN_W) continue;
+        tail_x[w][end][s] = (float)x[s];
+        int far = y, xf[2];
+        for (int i = y + dir, n = 1; n < EDGE_RUN && i >= win_top && i < SCREEN_H && win_span(i, w, &xf[0], &xf[1]) > 0 &&
+                                    xf[s] >= 0 && xf[s] < SCREEN_W; i += dir, n++)
+            far = i;
+        if (far != y) win_span(far, w, &xf[0], &xf[1]), tail_dx[w][end][s] = (float)(x[s] - xf[s]) / (float)(y - far);
+    }
+}
+
+/* Column x of row y (beyond the band's end `end`) in window w's carried sides. */
+static int in_tail(int w, int end, int y, int x) {
+    if (tail_y[w][end] < 0) return 0;
+    float d = (float)(y - tail_y[w][end]);
+    return x >= tail_x[w][end][0] + tail_dx[w][end][0] * d && x < tail_x[w][end][1] + tail_dx[w][end][1] * d;
+}
+
 static int fit_rays(int w, int below_menu) {
     int py[2 * SCREEN_H], px[2 * SCREEN_H], n = 0, x[2], first = -1;
     ray_fit[w] = 0;
@@ -1235,6 +1267,7 @@ static void effect_rows(Engine *e) {
     if (top >= BATTLE_TOP && bottom < BATTLE_BOTTOM && (top == BATTLE_TOP) != (bottom == BATTLE_BOTTOM - 1)) e->rays_seen = 1;
     if (e->rays_seen) {
         e->rays = rays | RAYS_KEPT, e->band_top = top, e->band_rows = bottom - top + 1;
+        for (int w = 0; w < 2; w++) window_tail(w, 0, top, 1), window_tail(w, 1, bottom, -1);
         /* They go on only where the game blanks them, under a menu or the text box, or past the screen's edge;
          * elsewhere the effect ends on its own lines (Azala's red pillar, a WIN0 column from under the top menu down
          * to just below Marle, went on to the bottom of the picture; growing, it passed line 145, the bottom menu's
@@ -1244,6 +1277,10 @@ static void effect_rows(Engine *e) {
                        (bottom == SCREEN_H - BATTLE_TOP - 1 && top < BATTLE_TOP); /* the menu at the bottom, not the top */
         return;
     }
+    /* A shape the windows cut out of the room alone (the HDMA sets nothing else line by line) is not stretched: it
+     * stays its size, the rows beyond its lines without it (Luminaire's orb, a WIN0 oval growing from the middle,
+     * was drawn taller than it is and shrank when it reached the battle menu and was carried on from there). */
+    if (!ws_hdma_effect()) return;
     /* An effect between the battle menu and the text box is stretched from those lines, whatever it fills of them:
      * stretched from its own, it slid as it grew (Rainbow Storm's clouds open as an oval from the middle) and
      * jumped when the text box closed (its lines then taken too, those under the box left out). */
@@ -1581,8 +1618,9 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             } else if (ray_row && (win0 || win1 || winobj) && !(y < e->band_top ? e->rays_up : e->rays_down)) {
                 ctl = winobj && o->win[x] ? (winout >> 8) & 0x3F : winout & 0x3F; /* the effect ended above, below */
             } else if (ray_row && (win0 || win1 || winobj)) {
-                int in0 = win0 && (e->rays & 1 ? vx >= ray_sp[0][0] && vx < ray_sp[0][1] : in_w0y && in_window(vx, vwx, w0h, ext0));
-                int in1 = win1 && (e->rays & 2 ? vx >= ray_sp[1][0] && vx < ray_sp[1][1] : in_w1y && in_window(vx, vwx, w1h, ext1));
+                int end = vy >= e->band_top;
+                int in0 = win0 && (e->rays & 1 ? vx >= ray_sp[0][0] && vx < ray_sp[0][1] : in_w0y && in_tail(0, end, vy, vx));
+                int in1 = win1 && (e->rays & 2 ? vx >= ray_sp[1][0] && vx < ray_sp[1][1] : in_w1y && in_tail(1, end, vy, vx));
                 ctl = in0 ? winin & 0x3F : in1 ? (winin >> 8) & 0x3F : winobj && o->win[x] ? (winout >> 8) & 0x3F : winout & 0x3F;
             } else if (win0 || win1 || winobj) {
                 if (in_w0y && in_window(vx, vwx, w0h, ext0)) ctl = winin & 0x3F;

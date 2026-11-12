@@ -43,6 +43,8 @@ int ws_camera(int *x, int *y);
 int ws_window_lines(uint32_t h[192]);
 /* The BGs (bit per BG) whose scroll the game's software HDMA sets line by line: an effect's own picture. */
 int ws_hdma_bgs(void);
+/* 1 when it sets anything besides the windows line by line: a BG's scroll, another register, palette entries. */
+int ws_hdma_effect(void);
 /* Writes what the game's software HDMA writes before line `line` (registers, palette entries), keeping what was
  * there in *saved for ws_hdma_restore: to draw rows beyond the screen as that line. */
 enum { WS_HDMA_MAX = 32, WS_HDMA_UNITS = 8 };
