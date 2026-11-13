@@ -71,6 +71,7 @@ static int oam_x, oam_y;   /* the one this frame's sprites were placed with (ws_
 static int view_loaded;    /* a state was loaded: its sprite view says the shift */
 static int room_loaded;    /* and its room is no room just entered (fill_field_margins) */
 static int view_bgs;       /* the BGs it moves */
+static int drift;          /* the room's layers 1 (bit 0, BG3) and 2 (bit 1, BG0) drifting on their own (fill_field_margins) */
 
 /* The room map's metatile rows (room + 0x1000: 0x100 a row) as the field last had them. */
 static struct {
@@ -366,10 +367,19 @@ static int tile_black(uint32_t t) {
 
 /* A metatile row of the void between rooms: across the bounds, one black metatile on layer 0, nothing on the others.
  * Beyond the bounds (the row above their top, below their bottom), layer 2 may hold stray tiles on fewer than half
- * of the row's (the Millennial Fair's south end: specks under the black, which the camera never shows). */
+ * of the row's (the Millennial Fair's south end: specks under the black, which the camera never shows). A layer
+ * drifting on its own and blended over the others is an overlay, no part of the room: the fog inside Arris Dome
+ * (2300 A.D.), layer 2 over every row of the map, kept the rows below the bounds from being the void, and the zoom out
+ * showed them at the room's bottom end, a band of the map the game never draws. (Drifting under the room, a layer
+ * is the sky beyond it: the clouds under the Blackbird's wing.) */
+static int overlays(void) { /* bit 0 layer 1 (BG3), bit 1 layer 2 (BG0) */
+    uint16_t bld = io_get16(0x50);
+    return ((bld >> 6) & 3) == 1 ? drift & ((bld >> 3 & 1) | (bld & 1) << 1) : 0;
+}
+
 static int void_row(uint32_t scroll, uint32_t tilesets, int left, int right, int r, int beyond) {
     uint32_t first[4];
-    int stray = 0;
+    int stray = 0, over = overlays();
     for (int i = 0; i < 4; i++) {
         first[i] = room_tile(scroll, tilesets, 0, left * 2 + (i & 1), r * 2 + (i >> 1));
         if (!tile_black(first[i])) return 0;
@@ -378,8 +388,8 @@ static int void_row(uint32_t scroll, uint32_t tilesets, int left, int right, int
         for (int i = 0; i < 4; i++) {
             int c = m * 2 + (i & 1), row = r * 2 + (i >> 1);
             if (room_tile(scroll, tilesets, 0, c, row) != first[i]) return 0;
-            if (room_tile(scroll, tilesets, 1, c, row) & 0x3FF) return 0;
-            if (room_tile(scroll, tilesets, 2, c, row) & 0x3FF && (!beyond || ++stray * 2 >= (right - left + 1) * 4)) return 0;
+            if (!(over & 1) && room_tile(scroll, tilesets, 1, c, row) & 0x3FF) return 0;
+            if (!(over & 2) && room_tile(scroll, tilesets, 2, c, row) & 0x3FF && (!beyond || ++stray * 2 >= (right - left + 1) * 4)) return 0;
         }
     }
     return 1;
@@ -388,6 +398,7 @@ static int void_row(uint32_t scroll, uint32_t tilesets, int left, int right, int
 /* A metatile column of the void, as void_row, over rows top..bottom. */
 static int void_column(uint32_t scroll, uint32_t tilesets, int top, int bottom, int m) {
     uint32_t first[4];
+    int over = overlays();
     for (int i = 0; i < 4; i++) {
         first[i] = room_tile(scroll, tilesets, 0, m * 2 + (i & 1), top * 2 + (i >> 1));
         if (!tile_black(first[i])) return 0;
@@ -396,7 +407,7 @@ static int void_column(uint32_t scroll, uint32_t tilesets, int top, int bottom, 
         for (int i = 0; i < 4; i++) {
             int c = m * 2 + (i & 1), row = r * 2 + (i >> 1);
             if (room_tile(scroll, tilesets, 0, c, row) != first[i]) return 0;
-            if (room_tile(scroll, tilesets, 1, c, row) & 0x3FF || room_tile(scroll, tilesets, 2, c, row) & 0x3FF) return 0;
+            if ((!(over & 1) && room_tile(scroll, tilesets, 1, c, row) & 0x3FF) || (!(over & 2) && room_tile(scroll, tilesets, 2, c, row) & 0x3FF)) return 0;
         }
     }
     return 1;
@@ -460,18 +471,20 @@ static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
  * which the game draws when its view reaches there: Lavos's room (location 0x1a7) has the camera at its bounds' top,
  * and Lavos's top spikes in the map rows above, cut by the screen's edge on the DS; clipped at the bounds, the rows
  * above the screen showed the water where Lavos's top goes on. So the clip goes on over rows that are not the void
- * (void_row), within the rows shown, the view still stopping at the bounds. */
+ * (void_row), within the rows shown, the view still stopping at the bounds. The rows shown are the view's, shifted at
+ * the room's ends: counted from the camera, at Arris Dome's bottom end (2300 A.D.) the view's top rows, 14 above it,
+ * were cut black, the fog over them gone, while at its top end the same rows showed. */
 int ws_room_rows(int *y0, int *y1) {
     int top_void, bottom_void;
     if (!room_rows(y0, y1, &top_void, &bottom_void)) return 0;
     uint32_t scroll = rt_r32(SCROLL), tilesets = rt_r32(TILESETS);
     int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17), top = rt_r8(scroll + 0x18), bottom = rt_r8(scroll + 0x19);
-    int view = (int16_t)rt_r16(CAMERA + 2), last = rt_r8(scroll + 0x1b);
-    for (int r = top - 1; !top_void && r >= 0 && r * 16 + 16 > view - field_rows && *y0 == (r + 1) * 16 - view; r--) {
+    int view = (int16_t)rt_r16(CAMERA + 2), last = rt_r8(scroll + 0x1b), shown = view + view_y;
+    for (int r = top - 1; !top_void && r >= 0 && r * 16 + 16 > shown - field_rows && *y0 == (r + 1) * 16 - view; r--) {
         if (void_row(scroll, tilesets, left, right, r, 1)) break;
         *y0 = r * 16 - view;
     }
-    for (int r = bottom + 1; !bottom_void && r <= last && r * 16 < view + SCREEN_H + field_rows && *y1 == r * 16 - view; r++) {
+    for (int r = bottom + 1; !bottom_void && r <= last && r * 16 < shown + SCREEN_H + field_rows && *y1 == r * 16 - view; r++) {
         if (void_row(scroll, tilesets, left, right, r, 1)) break;
         *y1 = (r + 1) * 16 - view;
     }
@@ -908,7 +921,9 @@ static void fill_world_margins(int margin, int rows) {
  * the whole shift, the sky crept the wrong way while the view held still at the room's bottom end, then turned. The
  * rate is measured by axis, in 1/256: how far each BG's scroll moved while BG2's (the room) did, since the room was
  * entered, the frames where a BG holds another map (a text box) or jumps left out. Before the room has moved much,
- * layer 1 on its own camera starts from its place against the room's (its tile row and column over layer 0's). */
+ * layer 1 on its own camera starts from its place against the room's (its tile row and column over layer 0's). A layer
+ * drifting on its own (free) has no such start: a fog may be fixed to the screen or go with the room, so it moves only
+ * by the rate seen. */
 #define RATE_PRIOR 16 /* the pixels of the room's motion that start is worth */
 static struct {
     uint32_t room;           /* the room measured (room map, bounds) */
@@ -919,7 +934,7 @@ static struct {
     int rate[4][2];
 } rates;
 
-static void measure_rates(uint32_t scroll, uint32_t room) {
+static void measure_rates(uint32_t scroll, uint32_t room, int free) {
     uint32_t here = room ^ room_bounds(scroll);
     int fresh = here != rates.room;
     if (fresh) memset(&rates, 0, sizeof rates), rates.room = here;
@@ -938,7 +953,8 @@ static void measure_rates(uint32_t scroll, uint32_t room) {
         for (int bg = 0; bg < 4; bg++) {
             int prior = 256;
             if (bg == 3 && own_l1 && pos0 >= 8 && pos1 >= 0 && pos1 <= 2 * pos0) prior = pos1 * 256 / pos0;
-            rates.rate[bg][a] = bg == 2 ? 256 : (prior * RATE_PRIOR + rates.moved[bg][a] * 256) / (RATE_PRIOR + rates.size[bg][a]);
+            if (free >> bg & 1) rates.rate[bg][a] = rates.size[bg][a] ? rates.moved[bg][a] * 256 / rates.size[bg][a] : 0;
+            else rates.rate[bg][a] = bg == 2 ? 256 : (prior * RATE_PRIOR + rates.moved[bg][a] * 256) / (RATE_PRIOR + rates.size[bg][a]);
         }
     }
     for (int bg = 0; bg < 4; bg++) rates.cnt[bg] = io_get16(0x08 + 2 * bg);
@@ -1024,7 +1040,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * holds. Drifting is a few rows a frame, seen twice (DRIFT_STEPS), also while the room settles: entering the
      * Blackbird's hall, BG3 went from the wing's VOFS 403 to 0 in one step, no drift. */
     static uint32_t drift_room;
-    static int drift, steps[2], last_cam, last_vofs[2], last_room_vofs; /* drift: bit 0 layer 1 (BG3), bit 1 layer 2 (BG0) */
+    static int steps[2], last_cam, last_vofs[2], last_room_vofs;
     int cam = (int16_t)rt_r16(CAMERA + 2), room_vofs = io_get16(0x1a) & 511;
     int vofs[2] = {io_get16(0x1e) & 511, io_get16(0x12) & 511};
     if (here != drift_room) drift = steps[0] = steps[1] = 0, drift_room = here;
@@ -1048,7 +1064,8 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
         held1 = bg_holds_layer(3, scroll, tilesets, 1);
         own_l1 = held1;
     }
-    measure_rates(scroll, room); /* layer 1's own camera known */
+    int drifting = (drift & 1) << 3 | (drift & 2) >> 1; /* BG3 layer 1, BG0 layer 2 */
+    measure_rates(scroll, room, drifting); /* layer 1's own camera known */
     int pic1 = ok1 && !held1, pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
     tent_back |= pic1 << 3 | pic2;
@@ -1057,6 +1074,10 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * no picture, and held still they were gone from the screen. */
     picture_bgs = (pic1 && !((io_get16(0x1c) | io_get16(0x1e)) & 0x1F8)) << 3 | (pic2 && !((io_get16(0x10) | io_get16(0x12)) & 0x1F8));
     view_bgs &= ~(pic1 << 3 | pic2);
+    /* A layer drifting on its own may still go with the camera: the fog inside Arris Dome (2300 A.D.), BG0
+     * following the room's scroll and a row every 8 frames off it. Left out of the shift for being off its
+     * ring origin, at the room's bottom end the fog slid up over the room, its last rows bare. It moves by its share. */
+    for (int bg = 0; bg < 4; bg++) if ((drifting & ~repeat_bgs) >> bg & 1 && (io_get16(0x08 + 2 * bg) >> 14) == 1) view_bgs |= 1 << bg;
     int okhi = ok0 && bg_on_layer(1, scroll, 0); /* BG1: the priority tiles of the filled layers 0 and 1 */
     int camc = layer_col(scroll, 0), camr = layer_row(scroll, 0);
     int dc1 = layer_col(scroll, 1) - camc, dr1 = layer_row(scroll, 1) - camr; /* layer 1's tiles, from its own camera */
