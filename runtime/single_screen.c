@@ -957,8 +957,8 @@ static int save_shown = -1; /* the row of the file last seen highlighted (the cu
 
 static void compose_save(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
-    uint32_t stone = bottom[(SAVE_FILE_Y + SAVE_ROW + 20) * SCREEN_W + 128]; /* the second file's bluish stone... */
-    if (((stone >> 16) & 0xFF) < (stone & 0xFF) + 8) {                       /* ...or the confirmation's grey */
+    /* the second file's panel, or the confirmation's backdrop (bluish in some Window Designs, as the files' stone) */
+    if (!panel_at(bottom, 60, SAVE_FILE_Y + SAVE_ROW)) {
         save_shown = -1;
         return;
     }
