@@ -503,15 +503,31 @@ static void blit(uint32_t *dst, int dx, int dy, const uint32_t *src, int sx, int
 
 static int green(uint32_t p) { return (p >> 8) & 0xFF; }
 
-/* A member's panel: its top bevel (a light row over a dark one) under the black gap; the backdrop where there
- * is none. Relative, so it holds while the menu fades. */
-static int panel_at(const uint32_t *top, int py) {
-    return green(top[(py + 1) * SCREEN_W + 60]) > 2 * green(top[(py + 2) * SCREEN_W + 60]) + 4;
+/* A member's panel: its top bevel (rows 0-3), but for one row (the stone design's has a dark line) brighter than
+ * twice the dark gap over it (row -1), whatever the Window Design (its light and dark rows are placed and spaced
+ * unlike the default's in some, nearly alike in the gold and copper ones); the backdrop where there is none, a
+ * gradient. Relative, so it holds while the menu fades. */
+static int panel_at(const uint32_t *top, int x, int py) {
+    int gap = green(top[(py - 1) * SCREEN_W + x]), bright = 0;
+    for (int y = py; y < py + 4; y++) bright += green(top[y * SCREEN_W + x]) > 2 * gap + 4;
+    return bright >= 3;
 }
 
+/* The colours of the panels' stone and of the buttons (BG palettes 1 and 3) that are neutral grey, but black and
+ * white: none in the default Window Design, all of the stone design's (read from palette RAM with the backdrop's). */
+static uint32_t design_grey_stone[2 * 2 * 15];
+static int design_grey_stones;
+
 /* Text on the panels is white with a black shadow, neutral grey while the menu fades in (the text fades from
- * black, the stone does not): the stone (a dithered blue-grey gradient, lighter at the top) is never neutral. */
-static int text_px(uint32_t p) { return (p & 0xFF) == ((p >> 8) & 0xFF) && (p & 0xFF) == ((p >> 16) & 0xFF); }
+ * black, the stone does not): the stone (a dithered blue-grey gradient, lighter at the top) is neutral only in
+ * the stone design, whose greys are told apart by their colours. */
+static int text_px(uint32_t p) {
+    if ((p & 0xFF) != ((p >> 8) & 0xFF) || (p & 0xFF) != ((p >> 16) & 0xFF)) return 0;
+    for (int i = 0; i < design_grey_stones; i++) {
+        if (design_grey_stone[i] == p) return 0;
+    }
+    return 1;
+}
 
 /* The menus' backdrop: neutral greys (the striped gradient, BG palette 4) in the default Window Design. Another
  * design tints that palette (design 2's is a dark blue-violet), so its colours count too, taken from palette RAM
@@ -519,14 +535,24 @@ static int text_px(uint32_t p) { return (p & 0xFF) == ((p >> 8) & 0xFF) && (p & 
  * taken for the bar of a tech being used, and the main screen showed the members' lines over the list. */
 static uint32_t design_backdrop[2 * 15];
 
+static uint32_t design_colour(int engine, int palette, int i) {
+    uint16_t c;
+    memcpy(&c, &rt_palette[engine * 0x400 + (palette * 16 + i) * 2], 2);
+    uint32_t r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+    r = (r << 3) | (r >> 2), g = (g << 3) | (g >> 2), b = (b << 3) | (b >> 2);
+    return 0xFF000000u | b << 16 | g << 8 | r;
+}
+
 static void read_design_backdrop(void) {
+    design_grey_stones = 0;
     for (int e = 0; e < 2; e++) {
         for (int i = 1; i < 16; i++) {
-            uint16_t c;
-            memcpy(&c, &rt_palette[e * 0x400 + (4 * 16 + i) * 2], 2);
-            uint32_t r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
-            r = (r << 3) | (r >> 2), g = (g << 3) | (g >> 2), b = (b << 3) | (b >> 2);
-            design_backdrop[e * 15 + i - 1] = 0xFF000000u | b << 16 | g << 8 | r;
+            design_backdrop[e * 15 + i - 1] = design_colour(e, 4, i);
+            for (int pal = 1; pal <= 3; pal += 2) {
+                uint32_t p = design_colour(e, pal, i), v = p & 0xFF;
+                if (p == BLACK || p == 0xFFFFFFFFu || ((p >> 8) & 0xFF) != v || ((p >> 16) & 0xFF) != v) continue;
+                design_grey_stone[design_grey_stones++] = p;
+            }
         }
     }
 }
@@ -615,7 +641,7 @@ static void menu_bar(uint32_t *main, const uint32_t *top, int y) {
     blit(main, 6, y + BAR_TEXT, top, ft, BAR_Y + BAR_TEXT, wt, 9);                    /* TIME */
     blit(main, 6 + wt + 3, y + BAR_TEXT, top, fv, BAR_Y + BAR_TEXT, wv, 9);           /* the time */
     blit(main, SCREEN_W - 6 - wg, y + BAR_TEXT, top, fg, BAR_Y + BAR_TEXT, wg, 9);   /* the gold and G */
-    if (backdrop_px(top[140 * SCREEN_W + 200])) return; /* backdrop, not the panel's stone */
+    if (!panel_at(top, 200, 136)) return; /* the backdrop: its stone is the backdrop's colours in some designs */
     int f1 = 0, f2 = 0, w1 = text_span(top, 143, 7, 132, 252, &f1), w2 = text_span(top, 154, 7, 132, 252, &f2);
     int gap = w1 && w2 ? 4 : 0, x = (SCREEN_W - w1 - gap - w2) / 2;
     if (w1) blit_text(main, x, y + BAR_TEXT, top, f1, 142, w1, 9); /* the text alone: the bar's stone around it */
@@ -627,7 +653,7 @@ static void compose_menu(uint32_t *main, const uint32_t *top, const uint32_t *bo
     for (int y = 83; y >= 36; y--) memcpy(&main[(y + 8) * SCREEN_W], &bottom[y * SCREEN_W], SCREEN_W * 4); /* first row */
     memcpy(&main[36 * SCREEN_W], &bottom[28 * SCREEN_W], 8 * SCREEN_W * 4); /* backdrop where it was */
     for (int i = 0; i < 3; i++) {
-        if (panel_at(top, 24 + 48 * i)) menu_card(main, top, 24 + 48 * i, i * CARD_W, 1);
+        if (panel_at(top, 60, 24 + 48 * i)) menu_card(main, top, 24 + 48 * i, i * CARD_W, 1);
     }
     menu_bar(main, top, BAR_TO);
 }
