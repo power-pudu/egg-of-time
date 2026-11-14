@@ -513,6 +513,37 @@ static int panel_at(const uint32_t *top, int py) {
  * black, the stone does not): the stone (a dithered blue-grey gradient, lighter at the top) is never neutral. */
 static int text_px(uint32_t p) { return (p & 0xFF) == ((p >> 8) & 0xFF) && (p & 0xFF) == ((p >> 16) & 0xFF); }
 
+/* The menus' backdrop: neutral greys (the striped gradient, BG palette 4) in the default Window Design. Another
+ * design tints that palette (design 2's is a dark blue-violet), so its colours count too, taken from palette RAM
+ * (both engines; entry 0 is transparent): told by grey alone, the Techs page's backdrop under the category was
+ * taken for the bar of a tech being used, and the main screen showed the members' lines over the list. */
+static uint32_t design_backdrop[2 * 15];
+
+static void read_design_backdrop(void) {
+    for (int e = 0; e < 2; e++) {
+        for (int i = 1; i < 16; i++) {
+            uint16_t c;
+            memcpy(&c, &rt_palette[e * 0x400 + (4 * 16 + i) * 2], 2);
+            uint32_t r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+            r = (r << 3) | (r >> 2), g = (g << 3) | (g >> 2), b = (b << 3) | (b >> 2);
+            design_backdrop[e * 15 + i - 1] = 0xFF000000u | b << 16 | g << 8 | r;
+        }
+    }
+}
+
+/* A pixel of the backdrop itself, of whichever design. */
+static int design_backdrop_px(uint32_t p) {
+    for (size_t i = 0; i < SDL_arraysize(design_backdrop); i++) {
+        if (design_backdrop[i] == p) return 1;
+    }
+    return 0;
+}
+
+/* A pixel of the backdrop (or of text, neutral as the default design's backdrop). */
+static int backdrop_px(uint32_t p) {
+    return text_px(p) || design_backdrop_px(p);
+}
+
 /* Copies the text pixels of a w x h rectangle (see text_px) between two 256-wide screens. */
 static void blit_text(uint32_t *dst, int dx, int dy, const uint32_t *src, int sx, int sy, int w, int h) {
     for (int y = 0; y < h; y++) {
@@ -584,7 +615,7 @@ static void menu_bar(uint32_t *main, const uint32_t *top, int y) {
     blit(main, 6, y + BAR_TEXT, top, ft, BAR_Y + BAR_TEXT, wt, 9);                    /* TIME */
     blit(main, 6 + wt + 3, y + BAR_TEXT, top, fv, BAR_Y + BAR_TEXT, wv, 9);           /* the time */
     blit(main, SCREEN_W - 6 - wg, y + BAR_TEXT, top, fg, BAR_Y + BAR_TEXT, wg, 9);   /* the gold and G */
-    if (text_px(top[140 * SCREEN_W + 200])) return; /* backdrop, not the panel's stone */
+    if (backdrop_px(top[140 * SCREEN_W + 200])) return; /* backdrop, not the panel's stone */
     int f1 = 0, f2 = 0, w1 = text_span(top, 143, 7, 132, 252, &f1), w2 = text_span(top, 154, 7, 132, 252, &f2);
     int gap = w1 && w2 ? 4 : 0, x = (SCREEN_W - w1 - gap - w2) / 2;
     if (w1) blit_text(main, x, y + BAR_TEXT, top, f1, 142, w1, 9); /* the text alone: the bar's stone around it */
@@ -641,7 +672,7 @@ static int equip_row; /* choosing: the list row (0-3) the cursor was last seen o
  * the backdrop (greys). The page's state leaves EQUIP_PICKING for a few frames while the list scrolls. */
 static int equip_list_shown(const uint32_t *bottom) {
     for (int y = 36; y < 36 + 4 * EQ_ROW; y += 4) {
-        if (!text_px(bottom[y * SCREEN_W + 200])) return 1;
+        if (!backdrop_px(bottom[y * SCREEN_W + 200])) return 1;
     }
     return 0;
 }
@@ -788,7 +819,7 @@ static void heal_number(uint32_t *main, const uint32_t *top, const uint32_t *bot
  * scrolls, under its categories, which leave a black gap at (128, 40) the bar covers. */
 static int compose_targets(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     watch_heals();
-    if (text_px(bottom[50 * SCREEN_W + 128]) || bottom[40 * SCREEN_W + 128] == BLACK) return 0;
+    if (backdrop_px(bottom[50 * SCREEN_W + 128]) || bottom[40 * SCREEN_W + 128] == BLACK) return 0;
     for (int y = 0; y < 72; y += 17) memcpy(&main[y * SCREEN_W], &bottom[23 * SCREEN_W], (size_t)SDL_min(17, 72 - y) * SCREEN_W * 4);
     memcpy(main, &bottom[38 * SCREEN_W], 26 * SCREEN_W * 4); /* the bar */
     for (int i = 0; i < 3; i++) {
@@ -809,18 +840,46 @@ static void compose_items(uint32_t *main, const uint32_t *top, const uint32_t *b
 
 /* Techs page, the list: the bottom screen, with the member's HP and MP (top screen, first member's lines) in the
  * empty rows between the category and the list; the tech's name and cost on the top screen are on its row.
- * While the list scrolls its buttons pass through those rows (hidden only from row 47 up): the rows are kept
- * from the last frame at rest (backdrop at x 8, where the buttons start) and put back under the line. */
-#define TECHS_BAND_Y 48
-#define TECHS_BAND_H 16
+ * While the list scrolls its buttons pass through those rows and the categories' (hidden only from row 31 up):
+ * the rows are kept from the last frame at rest and put back under the line. At rest: backdrop at x 8 (where
+ * the buttons start) under the categories, and the categories' rows as on the frame before (a button coming
+ * down into them leaves the rows under them clear), but for the arrow over the list, which bobs. */
+#define TECHS_BAND_Y 32
+#define TECHS_BAND_H 32
+#define TECHS_TABS_H 16
+#define TECHS_ARROW_X0 104
+#define TECHS_ARROW_X1 152
 static uint32_t techs_band[TECHS_BAND_H * SCREEN_W];
+static uint32_t techs_tabs_last[TECHS_TABS_H * SCREEN_W];
 static int techs_band_kept;
+
+static int techs_tabs_still(const uint32_t *bottom) {
+    const uint32_t *tabs = &bottom[TECHS_BAND_Y * SCREEN_W];
+    int still = 1;
+    for (int y = 0; y < TECHS_TABS_H && still; y++) {
+        const uint32_t *a = &tabs[y * SCREEN_W], *b = &techs_tabs_last[y * SCREEN_W];
+        still = !memcmp(a, b, TECHS_ARROW_X0 * 4) &&
+                !memcmp(a + TECHS_ARROW_X1, b + TECHS_ARROW_X1, (SCREEN_W - TECHS_ARROW_X1) * 4);
+    }
+    memcpy(techs_tabs_last, tabs, sizeof techs_tabs_last);
+    return still;
+}
+
+/* Whether the list's buttons are under the band's rows (the backdrop goes from x 8, where they start, below the
+ * bar when choosing who uses the tech: the cards start further in). A button scrolling under the category, past
+ * (128, 50), is otherwise taken for that bar; the default design's are grey there, another design's are not. */
+static int techs_list_shown(const uint32_t *bottom) {
+    for (int y = 64; y < 130; y++) {
+        if (!design_backdrop_px(bottom[y * SCREEN_W + 8])) return 1;
+    }
+    return 0;
+}
 
 static void compose_techs(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
-    if (compose_targets(main, top, bottom)) return;
-    int rest = 1;
-    for (int y = TECHS_BAND_Y; y < TECHS_BAND_Y + TECHS_BAND_H; y++) rest &= text_px(bottom[y * SCREEN_W + 8]);
+    if (!techs_list_shown(bottom) && compose_targets(main, top, bottom)) return;
+    int rest = techs_tabs_still(bottom); /* below, the backdrop alone: a scrolling button's edge is neutral grey in some designs */
+    for (int y = TECHS_BAND_Y + TECHS_TABS_H; y < TECHS_BAND_Y + TECHS_BAND_H; y++) rest &= design_backdrop_px(bottom[y * SCREEN_W + 8]);
     if (rest) {
         memcpy(techs_band, &bottom[TECHS_BAND_Y * SCREEN_W], sizeof techs_band);
         techs_band_kept = 1;
@@ -928,8 +987,8 @@ static void compose_party(uint32_t *main, const uint32_t *top, const uint32_t *b
     for (int y = 0; y < PARTY_SPRITES_H; y++) {
         for (int x = 0; x < PARTY_SPRITES_W; x++) {
             const uint32_t *q = &top[(PARTY_SPRITES_Y + y) * SCREEN_W + PARTY_SPRITES_X + x];
-            int sprite = !text_px(*q) || !text_px(q[-1]) || !text_px(q[1]) || !text_px(q[-SCREEN_W]) ||
-                         !text_px(q[SCREEN_W]);
+            int sprite = !backdrop_px(*q) || !backdrop_px(q[-1]) || !backdrop_px(q[1]) || !backdrop_px(q[-SCREEN_W]) ||
+                         !backdrop_px(q[SCREEN_W]);
             if (sprite) main[(PARTY_SLOT_Y + y) * SCREEN_W + PARTY_SLOT_X + x] = *q;
         }
     }
@@ -1404,6 +1463,7 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
                const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from) {
     Scene sc = current();
     *from = SS_FROM_NONE;
+    read_design_backdrop();
     if (sc.kind != SCENE_EQUIP) equip_portrait = -1; /* the page opens with its member's portrait */
     if (sc.kind != SCENE_ARENA_BATTLE) arena_item = -1, SDL_SetAtomicInt(&arena_choosing, 0);
     int paused = EGG_SINGLE_SCREEN && sc.kind == SCENE_FIELD && field_paused();
