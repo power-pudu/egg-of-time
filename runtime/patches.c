@@ -1,4 +1,6 @@
 /* Deliberate behaviour changes to the game (Chrono Trigger DS), wired in via tools/recomp/overrides.txt. */
+#include <SDL3/SDL.h>
+
 #include "dispatch.h"
 #include "rt.h"
 #include "single_screen.h"
@@ -30,4 +32,41 @@ void rt_ct_settings_defaults(CPU *cpu) {
 void rt_ct_title_idle(CPU *cpu) {
     if (sysmenu_is_open()) rt_w16(R[0] + 0x3a44, 0);
     else rt_call_wrapped(cpu, "ov007", GAME_ADDR(0x02127618u, 0x021274f0u));
+}
+
+/* The game's cursor sound (sound effect 0, as its menus play it when the cursor moves) for the runtime's menus
+ * (System Settings), asked from the host thread and played on the game's main thread at a point where it runs no
+ * other code: NitroSDK's OS_WaitVBlankIntr (main 0x02008fa4), once a frame, calling SVC WaitByLoop(1) before it
+ * sleeps (other WaitByLoop callers, such as the sound library's waits, are left alone). It is told by its code at
+ * the return address: mov r0, #1; mov r1, r0 after the call, push {r3, lr}; mov r0, #1 before. The sound is played
+ * through the game's own function (main 0x020445f0, r0 the effect, r1 0: ov012 0x0214b938 in the field menu), found
+ * by its code, the same in either region: ldr r1, =0x18008000; ldr ip, =<sound command>; orr r0, r1, r0, lsl #16;
+ * bx ip (the sound command word 0x18 plays an effect). */
+static SDL_AtomicInt cursor_sound;
+
+void rt_menu_cursor_sound(void) { SDL_SetAtomicInt(&cursor_sound, 1); }
+
+static uint32_t sound_effect_fn(void) {
+    static uint32_t found;
+    static const uint32_t code[] = {0xe59f1008u, 0xe59fc008u, 0xe1810800u, 0xe12fff1cu, 0x18008000u};
+    for (uint32_t a = 0x02000000u; !found && a < 0x020a0000u; a += 4) {
+        size_t i = 0;
+        while (i < SDL_arraysize(code) && rt_r32(a + 4 * (uint32_t)i) == code[i]) i++;
+        if (i == SDL_arraysize(code)) found = a;
+    }
+    return found;
+}
+
+void rt_menu_sounds(CPU *cpu) {
+    uint32_t lr = R[14];
+    if (!SDL_GetAtomicInt(&cursor_sound) || lr >> 24 != 0x02 || rt_r32(lr) != 0xe3a00001u || rt_r32(lr + 4) != 0xe1a01000u ||
+        rt_r32(lr - 8) != 0xe3a00001u || rt_r32(lr - 12) != 0xe92d4008u)
+        return;
+    SDL_SetAtomicInt(&cursor_sound, 0);
+    uint32_t fn = sound_effect_fn();
+    if (!fn) return;
+    uint32_t saved[5] = {R[0], R[1], R[2], R[3], R[12]};
+    rt_call_game(cpu, fn, 0, 0, 0);
+    for (int i = 0; i < 4; i++) R[i] = saved[i];
+    R[12] = saved[4];
 }

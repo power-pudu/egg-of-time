@@ -1,5 +1,5 @@
 /* System Settings menu (system_menu.c): the runtime's display settings, opened with SELECT from the game's
- * Game Settings screen, the title screen's menu or the paused field. Host thread only, except sysmenu_is_open. */
+ * Game Settings screen, the title screen's menu or the paused field, or with F1 anywhere. Host thread only, except sysmenu_is_open. */
 #pragma once
 
 #include <stdint.h>
@@ -10,6 +10,8 @@
  * the menu is open, and none of the keys still held from closing it. */
 uint32_t sysmenu_input(uint32_t keys);
 int sysmenu_is_open(void); /* any thread */
+/* F1 was pressed: opens the menu wherever the game is, or closes it; taken at the next sysmenu_input. */
+void sysmenu_f1(void);
 /* Keyboard text, keys and gamepad buttons while a text field of the menu is being typed in (RetroAchievements
  * login); returns 1 if the event was used. */
 int sysmenu_text_event(const SDL_Event *e);

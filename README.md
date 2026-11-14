@@ -212,6 +212,7 @@ The defaults below can be changed in System Settings > Controls.
 
 | Key | Action |
 |---|---|
+| F1 | System Settings, anywhere (the game keeps running) |
 | F2 | Layout: top screen only / stacked / side by side |
 | F3 | Swap the screens |
 | F4 | Filter |

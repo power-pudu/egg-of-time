@@ -221,6 +221,7 @@ static uint32_t crc16(uint32_t crc, uint32_t ptr, uint32_t len) {
 void rt_swi(CPU *cpu, uint32_t n) {
     switch (n) {
     case 0x03: /* WaitByLoop */
+        rt_menu_sounds(cpu);
         break;
     case 0x04: /* IntrWait */
     case 0x05: { /* VBlankIntrWait */

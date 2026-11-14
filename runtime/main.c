@@ -116,7 +116,7 @@ static int SDLCALL game_thread(void *arg) {
 /* EGG_AUTOKEYS="<ms>:<KEY>:<ms>,...": press keys at fixed times after start (automated tests).
  * KEY TOUCH taps the bottom screen at EGG_TOUCH_POS="x,y" (default: the centre); SAVESTATE / LOADSTATE
  * act like F5 / F7, REBOOT like confirming a restart (System Settings, Language), LAYOUT / SWAP / FILTER like
- * F2 / F3 / F4, ESC like holding Exit game, FF like holding Left Shift (fast forward). */
+ * F2 / F3 / F4, MENU like F1, ESC like holding Exit game, FF like holding Left Shift (fast forward). */
 #define AUTO_TOUCH (1u << 31)
 #define AUTO_SAVE (1u << 30)
 #define AUTO_LOAD (1u << 29)
@@ -126,7 +126,8 @@ static int SDLCALL game_thread(void *arg) {
 #define AUTO_ESC (1u << 25)
 #define AUTO_REBOOT (1u << 24)
 #define AUTO_FF (1u << 23)
-#define AUTO_HOST (AUTO_TOUCH | AUTO_SAVE | AUTO_LOAD | AUTO_LAYOUT | AUTO_SWAP | AUTO_FILTER | AUTO_ESC | AUTO_REBOOT | AUTO_FF)
+#define AUTO_MENU (1u << 22)
+#define AUTO_HOST (AUTO_TOUCH | AUTO_SAVE | AUTO_LOAD | AUTO_LAYOUT | AUTO_SWAP | AUTO_FILTER | AUTO_ESC | AUTO_REBOOT | AUTO_FF | AUTO_MENU)
 typedef struct AutoKey { Uint64 at, until; uint32_t key; } AutoKey;
 static AutoKey autokeys[64];
 static int autokey_count;
@@ -136,7 +137,7 @@ static void parse_autokeys(const char *spec) {
         {"A", KEY_A}, {"B", KEY_B}, {"X", KEY_X}, {"Y", KEY_Y}, {"L", KEY_L}, {"R", KEY_R}, {"START", KEY_START},
         {"SELECT", KEY_SELECT}, {"UP", KEY_UP}, {"DOWN", KEY_DOWN}, {"LEFT", KEY_LEFT}, {"RIGHT", KEY_RIGHT},
         {"TOUCH", AUTO_TOUCH}, {"SAVESTATE", AUTO_SAVE}, {"LOADSTATE", AUTO_LOAD}, {"REBOOT", AUTO_REBOOT},
-        {"LAYOUT", AUTO_LAYOUT}, {"SWAP", AUTO_SWAP}, {"FILTER", AUTO_FILTER}, {"ESC", AUTO_ESC}, {"FF", AUTO_FF},
+        {"LAYOUT", AUTO_LAYOUT}, {"SWAP", AUTO_SWAP}, {"FILTER", AUTO_FILTER}, {"ESC", AUTO_ESC}, {"FF", AUTO_FF}, {"MENU", AUTO_MENU},
     };
     while (spec && *spec && autokey_count < (int)SDL_arraysize(autokeys)) {
         char name[16];
@@ -309,6 +310,8 @@ int main(int argc, char **argv) {
                 if (!SDL_CursorVisible()) SDL_SetCursor(NULL);
             } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && display_key(e.key.scancode)) {
                 continue;
+            } else if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F1 && !e.key.repeat) {
+                sysmenu_f1(); /* System Settings, anywhere */
             } else if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F5 && !e.key.repeat) {
                 rt_state_request = RT_STATE_SAVE;
             } else if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F7 && !e.key.repeat) {
@@ -328,6 +331,7 @@ int main(int argc, char **argv) {
             rt_state_request = RT_STATE_LOAD;
         }
         if (autok & ~auto_prev & AUTO_REBOOT) rt_state_request = RT_STATE_REBOOT;
+        if (autok & ~auto_prev & AUTO_MENU) sysmenu_f1();
         if (autok & ~auto_prev & AUTO_LAYOUT) display_key(SDL_SCANCODE_F2);
         if (autok & ~auto_prev & AUTO_SWAP) display_key(SDL_SCANCODE_F3);
         if (autok & ~auto_prev & AUTO_FILTER) display_key(SDL_SCANCODE_F4);

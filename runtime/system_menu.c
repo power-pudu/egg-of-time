@@ -1,7 +1,7 @@
 /* System Settings menu: language, window mode, layout, internal resolution, aspect ratio, framerate, V-Sync, graphics
  * filter, shader (listed when mods/shaders has some; the footer shows the chosen one's path), mods (display.c holds and applies them), and the Controls page (controls.c). SELECT opens it from the game's Game Settings screen (the button
- * single screen mode relabels "System settings"), the title screen's menu or while the field is paused; B or
- * SELECT closes it, and so does the game leaving that place (the title idling into the intro, say). Closed
+ * single screen mode relabels "System settings"), the title screen's menu or while the field is paused, and F1 opens it
+ * anywhere (the game runs on meanwhile, without the keys); B, SELECT or F1 closes it, and so does the game leaving that place (the title idling into the intro, say). Closed
  * from the pause, it also presses START for the game, which ends the pause. Up/Down pick a setting,
  * Left/Right change it (held: repeats); changes apply at once. Choosing a language other than the one the game
  * runs in asks whether to restart the game now (Left/Right pick Yes or No, A confirms, B is No): Yes powers the
@@ -93,6 +93,8 @@ enum { CONFIRM_NONE, CONFIRM_LANGUAGE, CONFIRM_DUMP };
 
 static int place, cursor; /* place: where it was opened (SS_MENU_*), SS_MENU_NONE when closed */
 static SDL_AtomicInt open_now; /* place != SS_MENU_NONE, for the game thread */
+#define PLACE_ANY 0x100 /* opened with F1 where the game offers no place: the game's moving on does not close it */
+static int f1_pressed; /* F1 since the last input */
 static int top;           /* the first row shown (rows: the shown settings, in order) */
 static int cheats_page, settings_cursor, settings_top; /* the Cheats page, and the settings' row and top to go back to */
 static int confirm, yes;  /* the question open (CONFIRM_*); Yes is chosen */
@@ -213,8 +215,11 @@ static uint32_t input(uint32_t keys) {
     uint32_t pressed = keys & ~prev_keys;
     Uint64 now = SDL_GetTicks();
     prev_keys = keys;
+    int f1 = f1_pressed;
+    f1_pressed = 0;
     if (place == SS_MENU_NONE) {
-        if ((pressed & KEY_SELECT) && (place = ss_menu_place()) != SS_MENU_NONE) {
+        if (f1 && (place = ss_menu_place()) == SS_MENU_NONE) place = PLACE_ANY;
+        if (f1 || ((pressed & KEY_SELECT) && (place = ss_menu_place()) != SS_MENU_NONE)) {
             cursor = top = confirm = controls_page = cheevos_page = cheats_page = 0;
             while (!row_shown(cursor)) cursor++;
             return 0;
@@ -229,7 +234,13 @@ static uint32_t input(uint32_t keys) {
         act |= dirs;
         repeat_at = now + REPEAT_MS;
     }
-    int left = ss_menu_place() != place; /* the game moved on */
+    int left = place != PLACE_ANY && ss_menu_place() != place; /* the game moved on */
+    if (f1) { /* closes it wherever it is, as from its first page */
+        if (typing) typing_end();
+        if (controls_capturing()) controls_capture_cancel();
+        confirm = CONFIRM_NONE, released_wait = 0;
+        act = KEY_B, controls_page = cheevos_page = cheats_page = 0;
+    }
     if (typing) {
         if (!left) return 0;
         typing_end();
@@ -295,12 +306,21 @@ static uint32_t input(uint32_t keys) {
     } else if (act & (KEY_LEFT | KEY_RIGHT)) {
         int n = display_setting_count(cursor);
         display_setting_set(cursor, (display_setting_get(cursor) + ((act & KEY_RIGHT) ? 1 : n - 1)) % n);
+        rt_menu_cursor_sound(); /* as the cursor moving: the option's value moves along */
         if ((cursor == SET_LANGUAGE || cursor == SET_LANGUAGE_JP) && display_language() != rt_language()) {
             confirm = CONFIRM_LANGUAGE;
             yes = 0;
         }
     }
     return 0;
+}
+
+/* Where the cursor is, on whichever page: when it moves, the game's cursor sound plays (rt_menu_cursor_sound), as it
+ * does when Left/Right change a setting's value. */
+static int cursor_at(void) {
+    int page = controls_page ? 1 : cheevos_page ? 2 : cheats_page ? 3 : 0;
+    int at = controls_page ? ctl_cursor * 2 + ctl_pad : cheevos_page ? ch_cursor : cursor;
+    return place == SS_MENU_NONE ? -1 : confirm ? 0x40000 | yes : page << 16 | at;
 }
 
 uint32_t sysmenu_input(uint32_t keys) {
@@ -310,12 +330,16 @@ uint32_t sysmenu_input(uint32_t keys) {
         SDL_snprintf(text, sizeof text, ui_text("Graphics: %d images in mods/graphics/dump"), images);
         display_message(text, 4000);
     }
+    int was = cursor_at();
     uint32_t game_keys = input(keys);
+    int now = cursor_at();
+    if (was >= 0 && now >= 0 && was != now && (was >> 16) == (now >> 16)) rt_menu_cursor_sound(); /* not a page changing */
     SDL_SetAtomicInt(&open_now, place != SS_MENU_NONE);
     return game_keys;
 }
 
 int sysmenu_is_open(void) { return SDL_GetAtomicInt(&open_now); }
+void sysmenu_f1(void) { f1_pressed = 1; }
 
 /* ---- drawing ---- */
 

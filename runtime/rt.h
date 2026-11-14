@@ -100,6 +100,10 @@ uint32_t rt_get_cpsr(CPU *cpu);
 void rt_enter_irq(CPU *cpu);              /* BIOS IRQ vector: deliver one interrupt now */
 void rt_switch_mode(CPU *cpu, uint32_t mode);
 
+/* ---- patches.c: the game's menu sounds for the runtime's menus ---- */
+void rt_menu_cursor_sound(void);  /* any thread: the game's cursor sound, played at its next VBlank wait */
+void rt_menu_sounds(CPU *cpu);    /* game thread, in SVC WaitByLoop: plays what was asked */
+
 /* ---- input (written by the host thread) ---- */
 enum { KEY_A = 1 << 0, KEY_B = 1 << 1, KEY_SELECT = 1 << 2, KEY_START = 1 << 3, KEY_RIGHT = 1 << 4,
        KEY_LEFT = 1 << 5, KEY_UP = 1 << 6, KEY_DOWN = 1 << 7, KEY_R = 1 << 8, KEY_L = 1 << 9,
