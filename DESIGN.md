@@ -167,6 +167,13 @@ original bytes, and caches the result per region until the region is written.
     sides on or off: a battle effect on a 512x512 map (an enemy's "Rainbow Storm: Poison Cloud" over the starry
     one-screen room: BG0's black bubbles, scrolled line by line, over the stars of BG3 coloured line by line through
     palette entries 0xc1-0xc3) had stopped at the 4:3 picture's sides.
+    Rooms whose repeating layer holds a picture wider than the screen in its own 512-wide map (`wide_picture_rooms`,
+    by location id; `ws_wide_picture_bgs`): Lavos's room (0x1d3), the ripples around him on BG3, whose map goes on
+    with the rings on both sides. Its 256 columns repeated showed seams at the 4:3 picture's sides, and in the room's
+    first frames (the fade to him), before the layer was seen scrolling on its own, the margins were black: a box. Such
+    a layer is drawn as it is beyond the screen's sides and the room's ends (as `own_bgs`), from the room's first frame,
+    and never filled from the room map. So is BG0 there, which BG3 is blended onto (BLDCNT 0x014a, 16/16): left out
+    beyond the room, the sides were darker than the 4:3 picture through the fade.
   - Rooms whose bounds hold more than the room (`narrow_rooms`, by location id, the halfword at 0x020720a0: 0x1d0
     the End of Time, 0x1d9 the parked Epoch, 0x1b0 the Epoch in flight): the parked Epoch's bounds are metatiles
     0-31, but its map's right half holds a second Epoch (its wing showed in the right margin), so the room ends at

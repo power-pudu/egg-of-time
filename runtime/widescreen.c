@@ -548,6 +548,20 @@ static uint32_t repeat_room; /* the room map the layers were seen moving in */
 
 int ws_repeat_bgs(void) { return repeat_bgs; }
 
+/* Rooms with a layer scrolling on its own whose 512-wide map holds a picture wider than the screen: shown as drawn
+ * beyond the screen's sides (and the room's ends) instead of repeating its columns, from the room's first frame.
+ * Lavos's room (0x1d3): the ripples around him on BG3, whose map goes on with the rings on both sides. Repeated, its
+ * 256 columns showed seams at the 4:3 picture's sides, and in the room's first frames (the fade to him), before the
+ * layer was seen scrolling on its own, the margins were black: a box. */
+static const struct { uint16_t location; uint8_t bgs; } wide_picture_rooms[] = {{0x1d3, 1 << 3 | 1}};
+
+int ws_wide_picture_bgs(void) {
+    if (!ss_in_field()) return 0;
+    for (size_t i = 0; i < sizeof wide_picture_rooms / sizeof *wide_picture_rooms; i++)
+        if (rt_r16(LOCATION) == wide_picture_rooms[i].location) return wide_picture_rooms[i].bgs;
+    return 0;
+}
+
 static int picture_bgs;
 int ws_picture_bgs(void) { return picture_bgs; }
 
@@ -1094,6 +1108,11 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     last_cam = cam, last_vofs[0] = vofs[0], last_vofs[1] = vofs[1], last_room_vofs = room_vofs;
     if (drift & 1) ok1 = 0;
     if (drift & 2) ok2 = 0;
+    /* A picture of its own wider than the screen (Lavos's ripples): never the room's. Filled while the room settled,
+     * its margins showed the room map's tiles for those frames, darker than the picture in the fade to him. */
+    int wide = ws_wide_picture_bgs();
+    if (wide >> 3 & 1) ok1 = 0;
+    if (wide & 1) ok2 = 0;
     tent_back = (drift & 1) << 3 | (drift & 2) >> 1 | (!settled ? !ok1 << 3 | !ok2 : 0); /* BG3 layer 1, BG0 layer 2 */
     if (!ok0 && !ok1 && !ok2) return;
     copy_room_rows(scroll, room);

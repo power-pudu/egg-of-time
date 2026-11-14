@@ -132,6 +132,7 @@ typedef struct Engine {
     int bg_dx[4], bg_dy[4];       /* each of those BGs' share of it (ws_bg_shift) */
     int obj_dx, obj_dy;           /* the world's sprites are that much off it (ws_sprite_lag) */
     int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
+    uint8_t wide_bgs; /* BGs drawn as they are beyond the screen's sides, not repeated (ws_wide_picture_bgs: Lavos's ripples) */
     int repeat_bgs; /* BGs whose screen columns repeat into the margins, the others empty beyond the room
                      * (ws_repeat_bgs: a one-screen room's layer scrolling on its own, the clouds of the Epoch's flight),
                      * only those seen at the screen's sides the frame before (shown_bgs), which the margins go on
@@ -434,7 +435,7 @@ static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *
             for (int x = -m; x < -h; x++) copy_col(out, hd, m + x, m + (-1 - x - 2 * h));
             for (int x = SCREEN_W - h; x < SCREEN_W + m; x++) copy_col(out, hd, m + x, m + (2 * SCREEN_W - 1 - x - 2 * h));
         }
-        if (m && (e->repeat_bgs >> bg & 1)) {
+        if (m && ((e->repeat_bgs & ~e->wide_bgs) >> bg & 1)) {
             for (int k = 0; k < m; k++) copy_col(out, hd, k, k + SCREEN_W), copy_col(out, hd, m + SCREEN_W + k, m + k);
         }
         return;
@@ -1391,6 +1392,7 @@ static void engine_frame_start(Engine *e) {
             e->shown_bgs = e->shown_now, e->shown_now = 0;
             e->void_col = e->void_now == 1 ? e->void_now_col : 0xFF000000u, e->void_now = 0;
             e->repeat_bgs = e->margin ? ws_repeat_bgs() & e->shown_bgs : 0;
+            e->wide_bgs = e->margin ? (uint8_t)ws_wide_picture_bgs() : 0;
             e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs) &&
                            ws_room_span(&e->room_x0, &e->room_x1);
             int rx = 0, ry = 0, rk = ws_camera(&rx, &ry); /* camera motion into this frame (camera smoothing) */
@@ -1492,7 +1494,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             if (bg == 0 && e->id == 0 && (dispcnt & 8)) continue; /* 3D layer: not rendered yet */
             enabled[bg] = 1;
             int affine = (bg == 3 && mode >= 1 && mode <= 5) || (bg == 2 && (mode == 2 || mode == 4 || mode == 5));
-            if (affine || (reg16(e, 0x08 + 2 * bg) & 0xC000) == 0xC000 || (e->hdma_bgs >> bg & 1)) own_bgs |= 1 << bg;
+            if (affine || (reg16(e, 0x08 + 2 * bg) & 0xC000) == 0xC000 || (e->hdma_bgs >> bg & 1) || (e->wide_bgs >> bg & 1))
+                own_bgs |= 1 << bg;
             e->solid_bgs = (uint8_t)(e->solid_bgs & ~(1u << bg));
             if (m && !affine && solid_256(e, bg, dispcnt)) own_bgs |= 1 << bg, e->solid_bgs |= (uint8_t)(1u << bg);
             if (mode == 6 && e->id == 0) {
