@@ -1169,6 +1169,7 @@ int display_key(SDL_Scancode sc) {
 const char *display_setting_title(int id) { return settings[id].title; }
 int display_setting_count(int id) { return settings[id].count; }
 int display_setting_get(int id) { return settings[id].value; }
+int display_main_only(void) { return main_shown(&primary); }
 int display_setting_shown(int id) {
     switch (id) {
     case SET_LAYOUT: return !secondary.win; /* one screen per window */

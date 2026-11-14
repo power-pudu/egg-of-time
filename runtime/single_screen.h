@@ -14,6 +14,9 @@
  * menu, but the main screen is the top screen and the keys reach the game unchanged. */
 int ss_enabled(void);
 void ss_set_enabled(int on);
+/* Any thread: Game Mode is held at Classic (its one-screen battle interface): single screen mode on, with the main
+ * screen shown alone (display_main_only). With both screens shown, the game's Game Mode is the player's. */
+int ss_classic_only(void);
 
 /* Game thread only. */
 uint32_t ss_game_keys(uint32_t keys); /* keys as the game reads them */

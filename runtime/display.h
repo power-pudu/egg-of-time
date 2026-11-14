@@ -55,6 +55,9 @@ int display_setting_get(int id);
  * screen mode is shown, Minimap size and background only with Minimap on, Shader only with shaders in mods/shaders,
  * Internal resolution and Graphics filter only without a shader. */
 int display_setting_shown(int id);
+/* Any thread: the main window shows the main screen alone (layout Top screen only, screens not swapped, no second
+ * screen window): the screen single screen mode lays out for one. */
+int display_main_only(void);
 /* The chosen shader's path under mods/shaders (e.g. "glsl/crt/crt-geom.glslp"); NULL when Shader is Off. */
 const char *display_shader_path(void);
 const char *display_setting_label(int id, int value); /* may use a buffer shared by every call */

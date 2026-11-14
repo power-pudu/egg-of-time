@@ -7,12 +7,12 @@
 static void game_settings_defaults(CPU *cpu) { rt_call_wrapped(cpu, "ov007", GAME_ADDR(0x0212a3f0u, 0x0212a2c8u)); } /* the original */
 
 /* New Game "Game Settings" scene (ov007): resets the three options, both when the scene opens and on
- * "Defaults" (SELECT). The original picks Game Mode DS, Battle Mode Active, Movies On; in single screen mode
- * the port defaults Game Mode to Classic (one-screen battle interface). The options are bits of the save configuration
+ * "Defaults" (SELECT). The original picks Game Mode DS, Battle Mode Active, Movies On; with the main screen
+ * shown alone (ss_classic_only) the port defaults Game Mode to Classic (one-screen battle interface). The options are bits of the save configuration
  * that *(0x020708d0) points to: Game Mode byte 2 bit 7 (1 = Classic), Battle Mode byte 0 bit 6
  * (1 = Wait), Movies byte 2 bits 3-4 (0 = On). r0 is the scene object. */
 void rt_ct_settings_defaults(CPU *cpu) {
-    if (!ss_enabled()) {
+    if (!ss_classic_only()) {
         game_settings_defaults(cpu);
         return;
     }

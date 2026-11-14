@@ -97,6 +97,7 @@
 #include <SDL3/SDL.h>
 
 #include "dispatch.h"
+#include "display.h"
 #include "rt.h"
 #include "ui_text.h"
 #include "single_screen.h"
@@ -213,9 +214,11 @@ static uint32_t settings_dir(uint32_t keys, uint32_t key, uint32_t *held_as, int
 
 /* Game Settings without its Game Mode row (rows 0 Game Mode, 1 Battle Mode, 2 Movies): the cursor leaves
  * row 0 (a pulsed Down, so the scene sees a fresh press once it takes input), and Up/Down wrap between the
- * two other rows. SELECT, the game's "Defaults", is kept for "System settings" (not implemented yet). */
+ * two other rows. SELECT, the game's "Defaults", is kept for "System settings". With both screens shown
+ * (ss_classic_only off) the row is the game's own. */
 static uint32_t settings_keys(Scene sc, uint32_t keys) {
     keys &= ~KEY_SELECT;
+    if (!ss_classic_only()) return keys;
     int row = rt_r8(sc.obj + SETTINGS_ROW);
     if (row == 0) {
         keys &= ~(KEY_UP | KEY_DOWN);
@@ -262,12 +265,16 @@ static uint32_t equip_keys(Scene sc, uint32_t keys) {
 
 /* Field menu, Settings page, without Game Mode (tab 0, row 0: single screen mode always plays Classic, kept
  * so whatever sets it). The cursor leaves row 0 with a pulsed Down, as in Game Settings; Up from Battle
- * Mode puts the cursor on row 0 first (unseen), so the game's own Up wraps to the last option. */
+ * Mode puts the cursor on row 0 first (unseen), so the game's own Up wraps to the last option. With both
+ * screens shown (ss_classic_only off) the row is the game's own. */
 static int options_wrap; /* row 0 stands in for Battle Mode until the game takes the Up */
 
 static uint32_t options_keys(Scene sc, uint32_t keys) {
-    uint32_t cfg = rt_r32(CONFIG), page = rt_r32(sc.obj + MENU_PAGE);
-    rt_w8(cfg + 2, rt_r8(cfg + 2) | 0x80u);
+    if (!ss_classic_only()) {
+        options_wrap = 0;
+        return keys;
+    }
+    uint32_t page = rt_r32(sc.obj + MENU_PAGE);
     int row = rt_r8(page + OPTIONS_ROW);
     if (rt_r8(page + OPTIONS_TAB) != 0) row = -1;
     if (row == 1 && (keys & KEY_UP)) {
@@ -319,9 +326,20 @@ static SDL_AtomicInt turned_off;
 
 int ss_enabled(void) { return EGG_SINGLE_SCREEN && !SDL_GetAtomicInt(&turned_off); }
 void ss_set_enabled(int on) { SDL_SetAtomicInt(&turned_off, !on); }
+int ss_classic_only(void) { return ss_enabled() && display_main_only(); }
+
+/* Game Mode held at Classic while ss_classic_only: set each frame outside battle (overlay 3), so a Game Mode
+ * chosen with both screens shown goes back to Classic once the layout shows the main screen alone again; the
+ * battle it was started in keeps its interface. */
+static void hold_classic(void) {
+    uint32_t cfg = rt_r32(CONFIG);
+    if (!ss_classic_only() || rt_overlay_resident(3) || cfg >> 24 != 0x02) return;
+    if (!(rt_r8(cfg + 2) & 0x80u)) rt_w8(cfg + 2, rt_r8(cfg + 2) | 0x80u);
+}
 
 uint32_t ss_game_keys(uint32_t keys) {
     static int seen = SCENE_OTHER;
+    hold_classic();
     Scene sc = current();
     if (!ss_enabled()) sc.kind = SCENE_OTHER;
     if (sc.kind != seen) { /* a scene started */
