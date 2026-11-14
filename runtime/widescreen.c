@@ -553,6 +553,9 @@ int ws_repeat_bgs(void) { return repeat_bgs; }
  * Lavos's room (0x1d3): the ripples around him on BG3, whose map goes on with the rings on both sides. Repeated, its
  * 256 columns showed seams at the 4:3 picture's sides, and in the room's first frames (the fade to him), before the
  * layer was seen scrolling on its own, the margins were black: a box. */
+/* Rooms with a layer scrolling on its own from their first frame (BGs by location): fill_field_margins. */
+static const struct { uint16_t location; uint8_t bgs; } repeat_rooms[] = {{0x1b0, 1 << 3}};
+
 static const struct { uint16_t location; uint8_t bgs; } wide_picture_rooms[] = {{0x1d3, 1 << 3 | 1}};
 
 int ws_wide_picture_bgs(void) {
@@ -1080,6 +1083,12 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
         uint16_t bld = io_get16(0x50);
         if (((bld >> 6) & 3) == 1 && (bld >> 8 & repeat_bgs)) repeat_bgs |= bld & 9; /* BG0, BG3 blended onto them */
     }
+    /* Rooms whose layer scrolls on its own from the start: it repeats from the room's first frame, not once seen off
+     * its ring origin after the room settles (the Epoch's flight, 0x1b0: BG3's clouds start at VOFS 0, their origin,
+     * and for 6 frames of the fade-in the margins were black around the 4:3 picture). */
+    if (one_screen)
+        for (size_t i = 0; i < sizeof repeat_rooms / sizeof *repeat_rooms; i++)
+            if (rt_r16(LOCATION) == repeat_rooms[i].location) repeat_bgs |= repeat_rooms[i].bgs;
     /* A layer scrolling on its own is no room layer, even while its scroll passes its ring origin (the stars of a
      * one-screen battle room, every 256 frames for 12): moved by the view's shift then, it jumped up and back. */
     view_bgs &= ~repeat_bgs;

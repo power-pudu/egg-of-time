@@ -293,7 +293,10 @@ original bytes, and caches the result per region until the region is written.
       room's first frames while it stays off its ring origin, and the bounds alone changing in the same map is no
       new room for it (Lavos's room, 0x1a7: the scene narrows the bounds to rows 3..14 with BG3's ripples going on,
       and the margins went black for 8 frames); back on its origin it takes repeating up again only once the room
-      has settled. A loaded state's room counts as settled at once.
+      has settled. A loaded state's room counts as settled at once. Rooms whose layer scrolls on its own from the
+      start (`repeat_rooms`, by location id: 0x1b0, the Epoch's flight, BG3's clouds) repeat it from the room's first
+      frame: the clouds start at VOFS 0, their ring origin, and for 6 frames of the fade-in back from Lavos the margins
+      were black around the 4:3 picture.
     - Sprites: the G2D view is widened in rows too (`ws_sprite_rows`), and 8-bit Y no longer tells a sprite at the
       bottom from one above the view, as the DS's 64 unused rows did. `rt_ws_draw_cell` (main 0x02019fd4) knows the cell's
       place, and `rt_ws_enter_oam` (main 0x02048098) marks each sprite while it is entered, in attribute 1 bits that
