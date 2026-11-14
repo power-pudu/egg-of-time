@@ -222,6 +222,15 @@ original bytes, and caches the result per region until the region is written.
     `rt_ws_world_sprite` (ov002 0x0211cc20) puts an X below -128 back at 256 and up: the right margin. Objects
     also keep an on-screen flag (ov002 0x0210cd24: X - camera + 16, negative values wrapped at 0x600, below
     0x120; the birds go away once it clears), widened the same way at its compare (return address 0x0210ce50).
+    Maps smaller than the world's 96 x 64 (the cutscene of the Epoch over the dome island in 2300 A.D.: layer 3 holds
+    metatiles in columns 0-50 and rows 0-37 only, id 0 beyond, a flat green in the right margin with the camera near
+    that end): the view stops at the map's ends as at a room's in the field (`world_shift`, the extent being where
+    layer 3's ids are not 0; only when it is smaller than the whole map, so the world maps are left as they were). The
+    shift is the frame's own (the BG scroll is the camera's): the margins are filled around the shifted view, the BGs
+    moved by all of it, the sprites (in 4:3 screen coordinates) too, and the sprite tests above and the choice of X
+    or X + 512 (Y or Y - 256) go from the shifted view. The camera smoothing's camera (`ws_camera`) has the shift in
+    it: it pairs the camera read the frame before with this frame's shift, and the explosion's shake (the camera a
+    pixel either way every few frames) slid a column past the map's end into view, green.
   - Text boxes: for the box lines the game switches BG0/BG1 mid-frame to one-screen (256-wide) maps (BG0CNT
     0x0818, BG1CNT 0x0914, VOFS 384), which would repeat in the margins; the renderer draws a 256-wide text BG
     in the screen columns only. In the margins of those lines it keeps the layer as the frame started (BGxCNT,

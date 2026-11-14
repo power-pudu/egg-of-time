@@ -71,6 +71,7 @@ static int oam_x, oam_y;   /* the one this frame's sprites were placed with (ws_
 static int view_loaded;    /* a state was loaded: its sprite view says the shift */
 static int room_loaded;    /* and its room is no room just entered (fill_field_margins) */
 static int view_bgs;       /* the BGs it moves */
+static int world_dx, world_dy; /* the world map's: the view's shift from the camera at the map's ends (0 normally) */
 static int drift;          /* the room's layers 1 (bit 0, BG3) and 2 (bit 1, BG0) drifting on their own (fill_field_margins) */
 
 /* The room map's metatile rows (room + 0x1000: 0x100 a row) as the field last had them. */
@@ -256,9 +257,12 @@ int ws_camera(int *x, int *y) {
     if (ss_in_overworld()) {
         uint32_t base = rt_r32(CURRENT_SCENE);
         if (!ram_ptr(base)) return 0;
-        *x = rt_r16(base + 0xddc0u + 0x22a4 + 2 * 3); /* the world object (WORLD) */
-        *y = rt_r16(base + 0xddc0u + 0x22ac + 2 * 3);
-        return *x < 0x600 && *y < 0x400;
+        int x0 = rt_r16(base + 0xddc0u + 0x22a4 + 2 * 3), y0 = rt_r16(base + 0xddc0u + 0x22ac + 2 * 3); /* the world object (WORLD) */
+        /* With the view's shift at a map's ends (world_shift), which goes with this camera: the camera smoothing reads
+         * it a frame before the picture it slides, and paired with the next frame's shift, the shake of the dome
+         * island's explosion (the camera a pixel either way every few frames) slid a column past the map's end in. */
+        *x = x0 + world_dx, *y = y0 + world_dy;
+        return x0 < 0x600 && y0 < 0x400;
     }
     if (!ss_in_field()) return 0;
     *x = (int16_t)rt_r16(CAMERA);
@@ -863,29 +867,66 @@ int ws_world_sprite_limit(int rows) {
 #define OBJECT_Y_TEST GAME_ADDR(0x0210ce80u, 0x0210cea0u)
 
 void rt_ws_snes_cmp(CPU *cpu) {
-    uint32_t a = rt_r16(R[0]), m = R[1] & 0xFFFF, wrap = 0, w = 0;
-    if (world_margin && R[14] == SPRITE_X_TEST && rt_overlay_resident(5)) wrap = 0x10000, w = (uint32_t)world_margin;
-    if (world_margin && R[14] == OBJECT_X_TEST) wrap = 0x600, w = (uint32_t)world_margin;
-    if (world_rows && R[14] == OBJECT_Y_TEST) wrap = 0x400, w = (uint32_t)world_rows;
+    uint32_t a = rt_r16(R[0]), m = R[1] & 0xFFFF, wrap = 0, w = 0, by = 0;
+    if (world_margin && R[14] == SPRITE_X_TEST && rt_overlay_resident(5)) wrap = 0x10000, w = (uint32_t)world_margin, by = (uint32_t)world_dx;
+    if (world_margin && R[14] == OBJECT_X_TEST) wrap = 0x600, w = (uint32_t)world_margin, by = (uint32_t)world_dx;
+    if (world_rows && R[14] == OBJECT_Y_TEST) wrap = 0x400, w = (uint32_t)world_rows, by = (uint32_t)world_dy;
     if (wrap) {
+        a = (a - by + wrap) % wrap; /* from the shifted view's place (the map's ends) */
         a = (a >= wrap - w ? a - wrap : a) + w; /* the left margin's values (just below zero) wrapped back */
         a &= 0xFFFF;
         m = (m + 2 * w) & 0xFFFF;
     }
     if (world_rows && R[14] == SPRITE_Y_TEST && rt_overlay_resident(5)) { /* within what 8 bits can tell */
-        a = (a - 15 + 256 - (uint32_t)ws_world_sprite_limit(world_rows)) & 0xFFFF;
+        a = (a - (uint32_t)world_dy - 15 + 256 - (uint32_t)ws_world_sprite_limit(world_rows)) & 0xFFFF;
         m = 256;
     }
     uint32_t d = a + (~m & 0xFFFF) + 1;
     rt_w8(SNES_FLAGS, (rt_r8(SNES_FLAGS) & 0x7c) | ((d >> 16) & 1) | ((d & 0xFFFF) == 0) << 1 | ((d & 0x8000) >> 8));
 }
 
-/* World map sprite piece to DS (ov002 0x0211cc20, r2 = X, signed 16-bit). */
+/* World map sprite piece to DS (ov002 0x0211cc20, r2 = X, signed 16-bit). Of X and X + 512 (and Y and Y - 256), the
+ * one within the view, shifted at the map's ends. */
 static void game_world_sprite(CPU *cpu) { rt_call_wrapped(cpu, "ov002", GAME_ADDR(0x0211cc20u, 0x0211cc40u)); } /* the original */
 void rt_ws_world_sprite(CPU *cpu) {
-    if (world_margin && !cpu->resume_pc && (int16_t)R[2] < -128) R[2] = (uint32_t)((int16_t)R[2] + 512) & 0xFFFF;
-    if (world_rows && !cpu->resume_pc && (int16_t)R[3] >= ws_world_sprite_limit(world_rows)) R[3] = (uint32_t)((int16_t)R[3] - 256) & 0xFFFF;
+    if (world_margin && !cpu->resume_pc && (int16_t)R[2] < world_dx - 128) R[2] = (uint32_t)((int16_t)R[2] + 512) & 0xFFFF;
+    if (world_rows && !cpu->resume_pc && (int16_t)R[3] >= ws_world_sprite_limit(world_rows) + world_dy) R[3] = (uint32_t)((int16_t)R[3] - 256) & 0xFFFF;
     game_world_sprite(cpu);
+}
+
+/* The world map's extent, in metatiles: columns ext[0]..ext[1], rows ext[2]..ext[3], inclusive, where layer 3 (the
+ * land) has a metatile other than 0. The world maps fill their 96 x 64; a cutscene's can be smaller (the Epoch over
+ * the dome island in 2300 A.D.: columns 0-50, rows 0-37), id 0 beyond it showing a flat green in the margins. */
+static int world_extent(uint32_t map, int ext[4]) {
+    ext[0] = ext[2] = 0x60, ext[1] = ext[3] = -1;
+    for (int r = 0; r < 64; r++) {
+        for (int c = 0; c < 0x60; c += 4) {
+            uint32_t v = rt_r32(map + (uint32_t)(r * 0x60 + c));
+            if (!v) continue;
+            int first = c, last = c + 3;
+            while (!(v & 0xFF)) v >>= 8, first++;
+            while (!(rt_r8(map + (uint32_t)(r * 0x60 + last)))) last--;
+            ext[0] = first < ext[0] ? first : ext[0], ext[1] = last > ext[1] ? last : ext[1];
+            ext[2] = r < ext[2] ? r : ext[2], ext[3] = r;
+        }
+    }
+    return ext[1] >= 0;
+}
+
+static int view_shift(int lo, int hi, int size, int pad, int at_lo, int at_hi);
+
+/* The view's shift (world_dx, world_dy) at the ends of a map smaller than the world's 96 x 64: the view stops at them,
+ * as at a room's in the field (only the shown margins: limit, limit_rows). Shown beyond, the map past its end. */
+static void world_shift(int limit, int limit_rows) {
+    world_dx = world_dy = 0;
+    uint32_t base = rt_r32(CURRENT_SCENE), w = base + WORLD;
+    if (!ram_ptr(base)) return;
+    uint32_t map = rt_r32(w + 0x22b4 + 4 * 3);
+    int x = rt_r16(w + 0x22a4 + 2 * 3), y = rt_r16(w + 0x22ac + 2 * 3), ext[4];
+    if (!ram_ptr(map) || x >= 0x600 || y >= 0x400 || !world_extent(map, ext)) return;
+    if (ext[0] > 0 || ext[1] < 0x5f) world_dx = view_shift(ext[0] * 16 - x, (ext[1] + 1) * 16 - x, SCREEN_W, limit, 1, 1);
+    if (limit_rows && (ext[2] > 0 || ext[3] < 63))
+        world_dy = view_shift(ext[2] * 16 - y, (ext[3] + 1) * 16 - y, SCREEN_H, limit_rows, 1, 1);
 }
 
 static void fill_world_margins(int margin, int rows) {
@@ -898,12 +939,12 @@ static void fill_world_margins(int margin, int rows) {
         if (!ram_ptr(map) || x >= 0x600 || y >= 0x400 || (io_get16(0x08 + 2 * L) >> 14) != 1 ||
             (io_get16(0x10 + 4 * L) & 511) != (x & 511) || (io_get16(0x12 + 4 * L) & 255) != (y & 255))
             continue;
-        int own = x >> 4, left = (x - margin) >> 4, right = (x + SCREEN_W - 1 + margin) >> 4;
+        int own = x >> 4, left = (x + world_dx - margin) >> 4, right = (x + world_dx + SCREEN_W - 1 + margin) >> 4;
         int own_top = y >> 4, own_bottom = (y + SCREEN_H - 1) >> 4;
         for (int c = left; c <= right; c++) {
             int wc = (c % 0x60 + 0x60) % 0x60;
             /* By tile row: zoomed out, a metatile row may show at both edges of the ring, a tile row of it at each. */
-            for (int t = (y - rows) >> 3; t <= (y + SCREEN_H - 1 + rows) >> 3; t++) {
+            for (int t = (y + world_dy - rows) >> 3; t <= (y + world_dy + SCREEN_H - 1 + rows) >> 3; t++) {
                 int r = t >> 1;
                 if (c >= own && c <= own + 16 && r >= own_top && r <= own_bottom) continue; /* the game's own */
                 uint32_t id = rt_r8(map + (uint32_t)(r & 63) * 0x60 + (uint32_t)wc);
@@ -962,7 +1003,7 @@ static void measure_rates(uint32_t scroll, uint32_t room, int free) {
 
 /* The share of the view's shift v that BG bg moves by along axis a. */
 static int bg_shift(int bg, int a, int v) {
-    int r = rates.room ? rates.rate[bg][a] : 256, p = v * r;
+    int r = rates.room && !world_margin ? rates.rate[bg][a] : 256, p = v * r; /* the world map's: all of it */
     return (p + (p >= 0 ? 128 : -128)) / 256;
 }
 
@@ -1137,7 +1178,8 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
     ws_frame++;
     world_margin = margin > 0 && ss_in_overworld() ? margin : 0;
     world_rows = world_margin ? rows : 0;
-    if (world_margin) fill_world_margins(margin, rows);
+    world_dx = world_dy = 0;
+    if (world_margin) world_shift(limit, limit_rows), fill_world_margins(margin, rows);
     int field = margin > 0 && ss_in_field();
     uint32_t scroll = rt_r32(SCROLL);
     int outside = field && ram_ptr(scroll) ? view_outside(scroll) : 0;
@@ -1172,6 +1214,9 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
         }
     }
     set_sprite_view(field_margin, field_rows, next_x, next_y);
+    /* The world map's shift is this frame's: its BGs' scroll is the camera's above. Its sprites are in the 4:3 screen's
+     * coordinates, moved by all of it. */
+    if (world_margin) view_x = world_dx, view_y = world_dy, view_bgs = 0xF, oam_x = oam_y = 0;
 }
 
 void ws_view_shift(int *x, int *y, int *bgs) {

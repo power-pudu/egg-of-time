@@ -583,7 +583,10 @@ static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, i
         int ly = (y - (a0 & 0xFF)) & 0xFF;
         if (e->rows && !ui) { /* Y 8 bits: from the view's top; the rows left over are above it, or tagged so */
             int oy = a0 & 0xFF, limit = e->obj_rows ? SCREEN_H + e->rows + e->obj_rows : ws_world_sprite_limit(e->rows);
-            if (oy >= limit || (!affine && (a1 & WS_OAM_ABOVE))) oy -= 256;
+            if (!e->obj_rows) { /* the world map: from the view's place, shifted at the map's ends (obj_dy) */
+                int lo = limit - e->obj_dy - 256;
+                oy = ((oy - lo) & 255) + lo;
+            } else if (oy >= limit || (!affine && (a1 & WS_OAM_ABOVE))) oy -= 256;
             ly = y + e->obj_rows - oy - e->obj_dy;
             if (ly < 0) continue;
         }
@@ -1392,13 +1395,15 @@ static void engine_frame_start(Engine *e) {
                            ws_room_span(&e->room_x0, &e->room_x1);
             int rx = 0, ry = 0, rk = ws_camera(&rx, &ry); /* camera motion into this frame (camera smoothing) */
             int cx = read_x, cy = read_y, known = read_known;
+            /* The view's place: the world map's camera has its shift in it already (ws_camera). */
+            int vx = ss_in_overworld() ? 0 : e->view_x, vy = ss_in_overworld() ? 0 : e->view_y;
             read_known = rk, read_x = rx, read_y = ry;
             frame_dx = frame_dy = 0, frame_cut = 1;
             if (known && camera_known) {
-                frame_dx = cx + e->view_x - camera_x, frame_dy = cy + e->view_y - camera_y, frame_cut = 0; /* the view, shifted */
+                frame_dx = cx + vx - camera_x, frame_dy = cy + vy - camera_y, frame_cut = 0; /* the view, shifted */
                 if (SDL_abs(frame_dx) > VIDEO_SLIDE_MAX || SDL_abs(frame_dy) > VIDEO_SLIDE_MAX) frame_dx = frame_dy = 0, frame_cut = 1;
             }
-            camera_known = known, camera_x = cx + e->view_x, camera_y = cy + e->view_y;
+            camera_known = known, camera_x = cx + vx, camera_y = cy + vy;
             /* ws_room_span goes by the camera in RAM, already the next frame's: the room's edge goes with this one's scroll. */
             if (e->room_clip) {
                 int to = (known && rk && SDL_abs(rx - cx) <= VIDEO_SLIDE_MAX ? rx - cx : 0) - e->view_x;
