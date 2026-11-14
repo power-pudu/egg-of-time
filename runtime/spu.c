@@ -15,6 +15,7 @@
 
 SpuChannel spu_ch[SPU_CHANNELS];
 float spu_master = 1.0f;
+SpuMod spu_mod[SPU_CHANNELS];
 
 static SDL_AudioStream *stream;
 static FILE *wav;
@@ -62,6 +63,7 @@ void spu_open_output(void) {
 
 void spu_reset(void) {
     memset(spu_ch, 0, sizeof spu_ch);
+    memset(spu_mod, 0, sizeof spu_mod);
     spu_master = 1.0f;
     frac_frames = 0;
 }
@@ -73,7 +75,7 @@ void spu_start(int ch) {
     c->active = 1;
     c->pos = 0;
     c->lfsr = 0x7FFF;
-    if (c->format == SPU_ADPCM) {
+    if (c->format == SPU_ADPCM && !spu_mod[ch].id) {
         c->adpcm_val = c->adpcm_prev = (int16_t)rt_r16(c->addr);
         c->adpcm_index = rt_r8(c->addr + 2) % 89;
         c->adpcm_n = 0;
@@ -118,8 +120,41 @@ static void adpcm_seek(SpuChannel *c, uint32_t i, uint32_t end) {
     }
 }
 
+/* A sample mod in place of the channel's data (sound_mod.c): 16-bit mono at its own rate, `step` scaled to it. */
+static void mix_mod(SpuChannel *c, const SpuMod *m, float *out, uint32_t frames, float gl, float gr, double step) {
+    uint32_t end;
+    int32_t loop;
+    const int16_t *d = sound_mod_data(m->id - 1, &end, &loop);
+    if (!d || end == 0) {
+        c->active = 0;
+        return;
+    }
+    step *= m->rate;
+    for (uint32_t f = 0; f < frames; f++) {
+        uint32_t i = (uint32_t)c->pos;
+        float frac = (float)(c->pos - i);
+        int s0 = d[i], s1 = i + 1 < end ? d[i + 1] : loop >= 0 ? d[loop] : s0;
+        float s = (s0 + (s1 - s0) * frac) * (1.0f / 32768.0f);
+        out[f * 2] += s * gl;
+        out[f * 2 + 1] += s * gr;
+        c->pos += step;
+        if (c->pos >= end) {
+            if (loop < 0 || (uint32_t)loop >= end) {
+                c->active = 0;
+                return;
+            }
+            c->pos = loop + SDL_fmod(c->pos - end, (double)(end - (uint32_t)loop));
+        }
+    }
+}
+
 static void mix_pcm(SpuChannel *c, float *out, uint32_t frames, float gl, float gr, double step) {
     uint32_t end, loop;
+    const SpuMod *m = &spu_mod[c - spu_ch];
+    if (m->id) {
+        mix_mod(c, m, out, frames, gl, gr, step);
+        return;
+    }
     sample_span(c, &end, &loop);
     if (end == 0) {
         c->active = 0;
@@ -178,6 +213,10 @@ static void mix_psg(SpuChannel *c, int ch, float *out, uint32_t frames, float gl
 }
 
 static void output(const float *buf, uint32_t frames) {
+#ifdef SPU_CAPTURE /* the audio dump's own copy of the mixer (sound_dump.c) */
+    SPU_CAPTURE(buf, frames);
+    return;
+#endif
     int bytes = (int)(frames * 2 * sizeof(float));
     if (stream) {
         int queued = SDL_GetAudioStreamQueued(stream);
@@ -217,7 +256,7 @@ void spu_render(double seconds, int speed, uint16_t normal, uint16_t muted, int 
         if (c->format == SPU_PSG) mix_psg(c, ch, buf, frames, gl, gr, step);
         else mix_pcm(c, buf, frames, gl, gr, step);
     }
-    music_mix(buf, frames, music_speed);
+    music_mix(buf, frames, music_speed, speed, muted != 0);
     for (uint32_t i = 0; i < frames * 2; i++) buf[i] = SDL_clamp(buf[i] * spu_master, -1.0f, 1.0f);
     output(buf, frames);
 }
@@ -226,4 +265,5 @@ void spu_state(RtStateIO *s) {
     RT_STATE(s, spu_ch);
     RT_STATE(s, spu_master);
     RT_STATE(s, frac_frames);
+    if (rt_state_loading(s)) memset(spu_mod, 0, sizeof spu_mod);
 }

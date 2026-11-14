@@ -41,6 +41,7 @@ static const Text texts[] = {
     {"Infinite MP", "PM infinis", "MP無限"},
     {"Infinite money", "Argent infini", "G無限"},
     {"Dump graphics", "Extraire graphismes", "画像の書き出し"},
+    {"Dump audio", "Extraire l'audio", "音声の書き出し"},
 
     /* Their values */
     {"Top screen only", "\xC3\x89" "cran du haut seul", "上画面のみ"},
@@ -110,8 +111,8 @@ static const Text texts[] = {
     {"RetroArch shaders in mods/shaders.", "Shaders RetroArch dans mods/shaders.",
      "mods/shaders の RetroArch シェーダーです。"},
     {"Deepens colors toward the SNES.", "Renforce les couleurs, comme sur SNES.", "色を SNES版に近づけます。"},
-    {"Replacement movies and music (mods).", "Films et musiques de remplacement (mods).",
-     "差し替えた ムービーと音楽を使います。"},
+    {"Replacement movies, music and sounds.", "Films, musiques et sons de remplacement.",
+     "差し替えた ムービー・音楽・効果音を使います。"},
     {"Normal speed may delay music cues.", "La vitesse normale peut retarder la musique.",
      "通常速度では 音楽が遅れることがあります。"},
     {"Music only mutes sound effects.", "Musique seule coupe les effets sonores.", "音楽のみでは 効果音を消します。"},
@@ -128,6 +129,8 @@ static const Text texts[] = {
      "retroachievements.org の 実績です。"},
     {"Saves the graphics for mods, as PNG.", "Enregistre les graphismes en PNG, pour les mods.",
      "MOD用に 画像をPNGで保存します。"},
+    {"Saves the sounds for mods, as WAV.", "Enregistre les sons en WAV, pour les mods.",
+     "MOD用に 音声をWAVで保存します。"},
 
     /* Questions and progress */
     {"A: confirm.  B: not now.", "A : confirmer.  B : pas maintenant.", "A: 決定  B: やめる"},
@@ -137,8 +140,12 @@ static const Text texts[] = {
     {"Dump all game graphics?", "Extraire tous les graphismes ?", "すべての画像を書き出しますか?"},
     {"Every sprite and background, to", "Sprites et d\xC3\xA9" "cors, vers", "すべての画像を次の場所へ"},
     {"mods/graphics/dump. May take a while.", "mods/graphics/dump. Peut \xC3\xAAtre long.", "mods/graphics/dump"},
+    {"Dump all game audio?", "Extraire tout l'audio ?", "すべての音声を書き出しますか?"},
+    {"Every sound effect and sample, to", "Effets sonores et \xC3\xA9" "chantillons, vers", "すべての音声を次の場所へ"},
+    {"mods/sounds/dump. May take a while.", "mods/sounds/dump. Peut \xC3\xAAtre long.", "mods/sounds/dump"},
     {"Closing the menu leaves it running.", "Fermer le menu ne l'interrompt pas.", "メニューを閉じても 続きます。"},
     {"Dumping graphics...", "Extraction des graphismes...", "書き出し中..."},
+    {"Dumping audio...", "Extraction de l'audio...", "書き出し中..."},
     {"Listing the game's files...", "Liste des fichiers du jeu...", "ファイルを調べています..."},
     {"%d of %d files", "%d fichiers sur %d", "%d / %d ファイル"},
     {"Working out the time left...", "Calcul du temps restant...", "残り時間を計算中..."},
@@ -147,6 +154,8 @@ static const Text texts[] = {
     {"Language: applies at the next start", "Langue : appliqu\xC3\xA9" "e au prochain d\xC3\xA9marrage", "言語: 次回の起動から変わります"},
     {"Graphics: %d images in mods/graphics/dump", "Graphismes : %d images dans mods/graphics/dump",
      "画像: %d枚を mods/graphics/dump へ"},
+    {"Audio: %d files in mods/sounds/dump", "Audio : %d fichiers dans mods/sounds/dump",
+     "音声: %d個を mods/sounds/dump へ"},
 
     /* Controls */
     {"Keyboard", "Clavier", "キーボード"},

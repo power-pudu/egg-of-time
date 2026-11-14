@@ -1,7 +1,8 @@
 /* Music mods: an audio file in mods/music next to the executable replaces one of the game's music sequences
  * while the Mods setting is on. Files are named after the sequence's symbol in the sound archive
  * (/sound/sound_data.sdat): BGM_00 to BGM_60, e.g. mods/music/BGM_18.ogg (res/mods/music/readme.txt lists them
- * with the titles of the game's Music Box).
+ * with the titles of the game's Music Box). Sound effect mods the same way, in mods/sounds (SE_000 to SE_1FF): an
+ * effect's file plays once, to its own end even past the sequence's (music_end), unless it has loop tags.
  *
  * Formats: anything FFmpeg reads (OGG Vorbis, Opus, FLAC, MP3, WAV, M4A...), looping from the LOOPSTART tag to
  * LOOPEND (or LOOPSTART + LOOPLENGTH), in samples, as vgmstream and RPG Maker use them; without tags the whole
@@ -25,74 +26,39 @@
 
 #include "display.h"
 #include "rt.h"
+#include "sdat.h"
 #include "sound.h"
 
 #define PLAYERS 16
 #define MUSIC_GAIN 1.0f /* a replacement at full volume, against the game's mix */
 
-/* ---- the sound archive's music sequences ---- */
+/* ---- the sound archive's music and effect sequences ---- */
 
-typedef struct Bgm {
-    char name[16];
-    const uint8_t *data; /* the sequence's data (what the driver gets the address of), in the ROM image */
-    uint32_t size;
-    int volume;          /* the archive's volume for it, which the game sets as the player's volume */
-} Bgm;
-
-static Bgm bgms[256];
-static int bgm_count, archive_read;
 static int is_bgm[PLAYERS]; /* each player's sequence is a BGM (whether or not it is replaced) */
 
 static uint32_t le32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
-static uint16_t le16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
 
-/* Finds the SDAT in the ROM image and lists its sequences named BGM_*. */
-static void read_archive(void) {
-    archive_read = 1;
-    const uint8_t *rom = rt_rom.data;
-    size_t n = rt_rom.size;
-    for (size_t at = 0; at + 0x40 <= n; at += 4) {
-        const uint8_t *s = rom + at;
-        if (memcmp(s, "SDAT", 4) || le16(s + 4) != 0xFEFF || le32(s + 8) > n - at) continue;
-        size_t size = le32(s + 8);
-        uint32_t symb = le32(s + 0x10), info = le32(s + 0x18), fat = le32(s + 0x20);
-        if (!symb || symb + 0x10 > size || info + 0x40 > size || fat + 0x10 > size) continue;
-        uint32_t names = symb + le32(s + symb + 8), infos = info + le32(s + info + 8);
-        uint32_t count = SDL_min(le32(s + infos), le32(s + names));
-        uint32_t files = le32(s + fat + 8);
-        for (uint32_t i = 0; i < count && bgm_count < (int)SDL_arraysize(bgms); i++) {
-            uint32_t name = le32(s + names + 4 + 4 * i), entry = le32(s + infos + 4 + 4 * i);
-            if (!name || !entry || symb + name >= size || info + entry + 8 > size) continue;
-            const char *sym = (const char *)s + symb + name;
-            if (strncmp(sym, "BGM_", 4)) continue;
-            uint32_t file = le16(s + info + entry);
-            if (file >= files) continue;
-            uint32_t off = le32(s + fat + 12 + 16 * file), len = le32(s + fat + 16 + 16 * file);
-            if (off + len > size || len < 0x1C || memcmp(s + off, "SSEQ", 4)) continue;
-            uint32_t data = le32(s + off + 0x18);
-            if (data >= len) continue;
-            Bgm *b = &bgms[bgm_count++];
-            snprintf(b->name, sizeof b->name, "%s", sym);
-            b->data = s + off + data;
-            b->size = len - data;
-            b->volume = s[info + entry + 6];
-        }
-        rt_log("music: %d music sequences in the sound archive", bgm_count);
-        return;
-    }
-    rt_log("music: no sound archive in the ROM");
-}
+static int is_effect(const SdatSeq *q) { return !strncmp(q->name, "SE_", 3); }
 
-/* The music sequence whose data is at `addr` in game memory, or NULL. */
-static const Bgm *identify(uint32_t addr) {
-    if (!archive_read) read_archive();
-    for (int i = 0; i < bgm_count; i++) {
-        const Bgm *b = &bgms[i];
+/* The music or effect sequences (by name: BGM_*, SE_*) whose data is at `addr` in game memory, longest first (one
+ * sequence's data can begin another's): up to `max`, their number returned. */
+static int identify(uint32_t addr, const SdatSeq **found, int max) {
+    int count, n = 0;
+    const SdatSeq *seqs = sdat_seqs(&count);
+    for (int i = 0; i < count; i++) {
+        const SdatSeq *q = &seqs[i];
+        if (strncmp(q->name, "BGM_", 4) && !is_effect(q)) continue;
         uint32_t k = 0;
-        while (k < b->size && rt_r8(addr + k) == b->data[k]) k++;
-        if (k == b->size) return b;
+        while (k < q->size && rt_r8(addr + k) == q->data[k]) k++;
+        if (k < q->size) continue;
+        int at;
+        if (n < max) at = n++;
+        else if (found[max - 1]->size < q->size) at = max - 1;
+        else continue;
+        while (at > 0 && found[at - 1]->size < q->size) found[at] = found[at - 1], at--;
+        found[at] = q;
     }
-    return NULL;
+    return n;
 }
 
 /* ---- decoding ---- */
@@ -109,9 +75,11 @@ typedef struct Source {
     int64_t pos, skip_to;         /* the next decoded sample; samples before skip_to are dropped (after a seek) */
     int ref_db;                   /* the sequence's own volume (0.1 dB): the replacement's full level */
     int running, db;              /* set every driver frame: the player plays, at this volume (0.1 dB) */
+    int once, effect, ended;      /* plays to its end (no loop tags); a sound effect's; it has ended */
 } Source;
 
 static Source *sources[PLAYERS];
+static Source *tails[PLAYERS]; /* effects playing on after their sequence ended */
 
 static void close_source(Source *s) {
     if (!s) return;
@@ -142,7 +110,7 @@ static Source *open_source(const char *path, int msu) {
         SDL_IOStream *f = SDL_IOFromFile(path, "rb");
         if (!f || SDL_ReadIO(f, h, 8) != 8 || memcmp(h, "MSU1", 4)) {
             if (f) SDL_CloseIO(f);
-            rt_log("music: %s is not an MSU-1 PCM file", path);
+            rt_log("sound mod: %s is not an MSU-1 PCM file", path);
             av_free(s);
             return NULL;
         }
@@ -169,7 +137,7 @@ static Source *open_source(const char *path, int msu) {
     ok = ok && (s->fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLT, 2, SPU_RATE / 10)) != NULL &&
          (s->pkt = av_packet_alloc()) != NULL && (s->frame = av_frame_alloc()) != NULL;
     if (!ok) {
-        rt_log("music: cannot play %s", path);
+        rt_log("sound mod: cannot play %s", path);
         close_source(s);
         return NULL;
     }
@@ -182,14 +150,14 @@ static Source *open_source(const char *path, int msu) {
             s->loop_end = end > start ? end : len > 0 ? start + len : -1;
         }
     }
-    rt_log("music: %s (%s, %d Hz, loop %lld-%lld)", path, codec->name, s->rate, (long long)s->loop_start,
+    rt_log("sound mod: %s (%s, %d Hz, loop %lld-%lld)", path, codec->name, s->rate, (long long)s->loop_start,
            (long long)s->loop_end);
     return s;
 }
 
 /* Goes back to the loop start; 0 if looping has stopped producing anything (the loop lies past the end). */
 static int restart(Source *s) {
-    if (++s->restarts > 2) return 0;
+    if (s->once || ++s->restarts > 2) return 0;
     AVRational tb = s->fmt->streams[s->stream]->time_base;
     if (av_seek_frame(s->fmt, s->stream, av_rescale_q(s->loop_start, (AVRational){1, s->rate}, tb), AVSEEK_FLAG_BACKWARD) < 0 &&
         av_seek_frame(s->fmt, s->stream, 0, AVSEEK_FLAG_BACKWARD) < 0) {
@@ -259,25 +227,34 @@ static int fill(Source *s, int need) {
 
 static const char *const extensions[] = {"ogg", "opus", "flac", "mp3", "wav", "m4a", "aac", "pcm"};
 
-void music_prepare(int pno, uint32_t seq_data) {
-    music_stop(pno);
-    if (pno < 0 || pno >= PLAYERS) return;
-    const Bgm *b = identify(seq_data);
-    is_bgm[pno] = b != NULL;
-    if (!b || !display_setting_get(SET_MODS)) return;
+/* The replacement for sequence q (mods/music/BGM_*.*, mods/sounds/SE_*.*), or NULL. */
+static Source *open_replacement(const SdatSeq *q) {
     const char *base = rt_data_dir();
     for (size_t i = 0; i < SDL_arraysize(extensions); i++) {
         char path[1024];
-        snprintf(path, sizeof path, "%smods/music/%s.%s", base, b->name, extensions[i]);
+        snprintf(path, sizeof path, "%smods/%s/%s.%s", base, is_effect(q) ? "sounds" : "music", q->name, extensions[i]);
         SDL_PathInfo info;
         if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) continue;
-        Source *s = open_source(path, !strcmp(extensions[i], "pcm"));
-        if (!s) return;
-        s->ref_db = b->volume ? (int)SDL_lround(400.0 * SDL_log10(b->volume / 127.0)) : 0;
-        sources[pno] = s;
-        return;
+        int msu = !strcmp(extensions[i], "pcm");
+        Source *s = open_source(path, msu);
+        if (!s) return NULL;
+        s->ref_db = q->volume ? (int)SDL_lround(400.0 * SDL_log10(q->volume / 127.0)) : 0;
+        s->effect = is_effect(q);
+        s->once = s->effect && !msu && s->loop_end < 0 && s->loop_start == 0; /* without loop tags: once */
+        return s;
     }
-    rt_log("music: %s (no replacement)", b->name);
+    return NULL;
+}
+
+void music_prepare(int pno, uint32_t seq_data) {
+    music_stop(pno);
+    if (pno < 0 || pno >= PLAYERS) return;
+    const SdatSeq *found[4];
+    int n = identify(seq_data, found, 4);
+    is_bgm[pno] = n && !is_effect(found[0]);
+    if (!n || !display_setting_get(SET_MODS)) return;
+    for (int i = 0; i < n && !sources[pno]; i++) sources[pno] = open_replacement(found[i]);
+    if (!sources[pno] && !is_effect(found[0])) rt_log("music: %s (no replacement)", found[0]->name);
 }
 
 void music_stop(int pno) {
@@ -286,36 +263,70 @@ void music_stop(int pno) {
     sources[pno] = NULL;
 }
 
+void music_reset(void) {
+    for (int i = 0; i < PLAYERS; i++) {
+        music_stop(i);
+        close_source(tails[i]);
+        tails[i] = NULL;
+    }
+}
+
+/* The player's sequence ended by itself: an effect's replacement plays on to its own end (in a free tail; with
+ * none, it stops with the sequence). */
+void music_end(int pno) {
+    if (pno < 0 || pno >= PLAYERS || !sources[pno] || !sources[pno]->effect || sources[pno]->ended) return;
+    for (int i = 0; i < PLAYERS; i++) {
+        if (tails[i]) continue;
+        tails[i] = sources[pno];
+        sources[pno] = NULL;
+        return;
+    }
+}
+
 int music_replaced(int pno) { return pno >= 0 && pno < PLAYERS && sources[pno]; }
 int music_is_bgm(int pno) { return pno >= 0 && pno < PLAYERS && is_bgm[pno]; }
 
 void music_player(int pno, int running, int db) {
     if (!music_replaced(pno)) return;
-    sources[pno]->running = running;
+    sources[pno]->running = running && !sources[pno]->ended;
     sources[pno]->db = db;
 }
 
-void music_mix(float *out, uint32_t frames, int speed) {
+/* Adds a source's next frames to out, `speed` (1 or 2) times faster; 0 once it has nothing more. */
+static int mix_source(Source *s, float *out, uint32_t frames, int speed) {
     static float buf[SPU_RATE / 10 * 2 * 2];
-    speed = SDL_clamp(speed, 1, 2);
-    frames = SDL_min(frames, (uint32_t)SPU_RATE / 10);
-    for (int i = 0; i < PLAYERS; i++) {
-        Source *s = sources[i];
-        if (!s || !s->running) continue;
-        if (!fill(s, (int)frames * speed)) {
-            rt_log("music: playback stopped (decoding failed)");
-            music_stop(i);
-            continue;
-        }
-        float *p = buf;
-        int got = av_audio_fifo_read(s->fifo, (void **)&p, (int)frames * speed) / speed;
-        int db = SDL_min(s->db - s->ref_db, 60); /* up to 6 dB above the sequence's own volume */
-        float gain = db <= -723 ? 0.0f : MUSIC_GAIN * (float)SDL_pow(10.0, db / 200.0) / speed;
-        for (int k = 0; k < got; k++) { /* fast forward: each output frame averages `speed` of the file's */
-            for (int j = 0; j < speed; j++) {
-                out[k * 2] += buf[(k * speed + j) * 2] * gain;
-                out[k * 2 + 1] += buf[(k * speed + j) * 2 + 1] * gain;
-            }
+    if (!fill(s, (int)frames * speed) && !s->once) {
+        rt_log("sound mod: playback stopped (decoding failed)");
+        return 0;
+    }
+    float *p = buf;
+    int got = av_audio_fifo_read(s->fifo, (void **)&p, (int)frames * speed) / speed;
+    int db = SDL_min(s->db - s->ref_db, 60); /* up to 6 dB above the sequence's own volume */
+    float gain = db <= -723 ? 0.0f : MUSIC_GAIN * (float)SDL_pow(10.0, db / 200.0) / speed;
+    for (int k = 0; k < got; k++) { /* fast forward: each output frame averages `speed` of the file's */
+        for (int j = 0; j < speed; j++) {
+            out[k * 2] += buf[(k * speed + j) * 2] * gain;
+            out[k * 2 + 1] += buf[(k * speed + j) * 2 + 1] * gain;
         }
     }
+    return got > 0;
+}
+
+void music_mix(float *out, uint32_t frames, int speed, int effect_speed, int effects_muted) {
+    static float silent[SPU_RATE / 10 * 2]; /* muted effects: played, so they end on time, then dropped */
+    frames = SDL_min(frames, (uint32_t)SPU_RATE / 10);
+    for (int i = 0; i < PLAYERS * 2; i++) {
+        Source **slot = i < PLAYERS ? &sources[i] : &tails[i - PLAYERS];
+        Source *s = *slot;
+        if (!s || !s->running) continue;
+        int sp = SDL_clamp(s->effect ? effect_speed : speed, 1, 2);
+        if (mix_source(s, s->effect && effects_muted ? silent : out, frames, sp)) continue;
+        if (i < PLAYERS && s->once) { /* ended before its sequence: silent while the sequence runs on */
+            s->running = 0, s->ended = 1;
+            continue;
+        }
+        close_source(s);
+        *slot = NULL;
+    }
+    memset(silent, 0, sizeof silent);
 }

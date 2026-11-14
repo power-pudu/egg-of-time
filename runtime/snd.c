@@ -96,6 +96,7 @@ typedef struct SndAlarm { uint32_t tick, period, id; int active; uint64_t next; 
 #define SND_ALARMS 8
 
 static ExChannel ex[SPU_CHANNELS];
+static SpuMod ex_mod[SPU_CHANNELS]; /* a sample mod for the channel's note (sound_mod.c), not in save states */
 static Track tracks[TRACKS];
 static Player players[PLAYERS];
 static SndAlarm alarms[SND_ALARMS];
@@ -227,10 +228,10 @@ static int read_inst(uint32_t bank, int prg, int key, Inst *inst) {
 
 /* Sets up an ex channel's wave from an instrument; 0 if the wave isn't loaded. */
 static int ex_set_wave(ExChannel *e, uint32_t bank, const Inst *inst) {
-    uint32_t wave;
+    uint32_t wave, arc = 0;
     switch (inst->type) {
     case INST_PCM: {
-        uint32_t arc = rt_r32(bank + 0x18 + (inst->wave[1] & 3u) * 8);
+        arc = rt_r32(bank + 0x18 + (inst->wave[1] & 3u) * 8);
         if (!arc || (uint32_t)inst->wave[0] >= rt_r32(arc + 0x38)) return 0;
         wave = rt_r32(arc + 0x3C + inst->wave[0] * 4u);
         if (!wave) return 0;
@@ -256,7 +257,16 @@ static int ex_set_wave(ExChannel *e, uint32_t bank, const Inst *inst) {
     e->loop_start = rt_r16(wave + 6) * 4u;
     e->loop_len = rt_r32(wave + 8) * 4u;
     e->data = wave + 12;
-    return e->format != SPU_PSG;
+    if (e->format == SPU_PSG) return 0;
+    if (arc && e->base_timer) { /* a sample mod for the wave: from rate and loop in samples */
+        uint32_t bytes = e->loop_start + e->loop_len, per = e->format == SPU_PCM16 ? 2 : 1;
+        uint32_t samples = e->format == SPU_ADPCM ? (bytes > 4 ? (bytes - 4) * 2 : 0) : bytes / per;
+        uint32_t loop = e->format == SPU_ADPCM ? (e->loop_start > 4 ? (e->loop_start - 4) * 2 : 0) : e->loop_start / per;
+        SpuMod *m = &ex_mod[e - ex];
+        m->id = sound_mod_sample(arc, inst->wave[0], SPU_CLOCK / e->base_timer, samples, loop, e->repeat == SPU_LOOP_REPEAT,
+                                 &m->rate);
+    }
+    return 1;
 }
 
 /* ---- tracks ---- */
@@ -335,6 +345,7 @@ static void note_on(int ti, Player *p, int key, int velocity, int32_t length) {
         if (c < 0) return;
         e = &ex[c];
         memset(e, 0, sizeof *e);
+        ex_mod[c].id = 0;
         if (!ex_set_wave(e, p->bank, &inst)) {
             e->track = e->next = -1;
             return;
@@ -667,6 +678,7 @@ static void player_main(int pno) {
         while (p->tempo_counter >= 240) {
             p->tempo_counter -= 240;
             if (!player_tick(pno, 1)) {
+                music_end(pno);
                 player_stop(pno);
                 return;
             }
@@ -744,6 +756,7 @@ static void ex_main(uint16_t mask) {
             s->loop_start = e->loop_start;
             s->loop_len = e->loop_len;
             s->duty = e->duty;
+            spu_mod[c] = ex_mod[c];
             spu_start(c);
             e->start = 0;
         } else if (!s->active) {
@@ -884,6 +897,7 @@ static void setup_channel_pcm(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3
     static const float shift_div[4] = {1, 2, 4, 16};
     SpuChannel *s = &spu_ch[a0 & 15];
     s->active = 0;
+    spu_mod[a0 & 15].id = 0;
     s->timer = a0 >> 16;
     s->addr = a1;
     s->volume = (a2 >> 24 & 0x7F) / 127.0f / shift_div[a2 >> 22 & 3];
@@ -1068,10 +1082,11 @@ void snd_update(uint64_t now) {
 void snd_reset(void) {
     if (!dsq[0]) init_tables();
     memset(ex, 0, sizeof ex);
+    memset(ex_mod, 0, sizeof ex_mod);
     for (int c = 0; c < SPU_CHANNELS; c++) ex[c].track = ex[c].next = -1;
     memset(tracks, 0, sizeof tracks);
     memset(players, 0, sizeof players);
-    for (int i = 0; i < PLAYERS; i++) music_stop(i);
+    music_reset();
     memset(alarms, 0, sizeof alarms);
     shared_work = locked = 0;
     rand_state = 0x12345678u;
@@ -1089,8 +1104,9 @@ void snd_state(RtStateIO *s) {
     RT_STATE(s, rand_state);
     RT_STATE(s, frame_next);
     if (rt_state_loading(s)) { /* music mods: the loaded players' replacements, from the start */
+        memset(ex_mod, 0, sizeof ex_mod);
+        music_reset();
         for (int i = 0; i < PLAYERS; i++) {
-            music_stop(i);
             if (players[i].active && players[i].tracks[0] >= 0) music_prepare(i, tracks[players[i].tracks[0]].base);
         }
     }

@@ -10,7 +10,8 @@
  *
  * A on Dump graphics asks whether to save every sprite and background as PNG files (gfx_dump.c), which takes a
  * while; Yes starts the dump on its own thread. While it runs, the menu shows its progress and the time left (from
- * the pace so far); the menu can be closed meanwhile, and the message box says when the dump is done.
+ * the pace so far); the menu can be closed meanwhile, and the message box says when the dump is done. Dump audio
+ * does the same with every sound effect and sample, as WAV files (sound_dump.c); one dump runs at a time.
  *
  * A on RetroAchievements opens its login page (cheevos.c): the player's name and password, typed with the keyboard
  * (or the system's on-screen keyboard) after A on their row, Enter or Esc ending the typing, and Log in; once logged
@@ -36,6 +37,7 @@
 #include "display.h"
 #include "gfx_dump.h"
 #include "rt.h"
+#include "sound_dump.h"
 #include "single_screen.h"
 #include "system_menu.h"
 #include "ui_font.h"
@@ -50,7 +52,8 @@
 #define ROW_CHEATS (SET_COUNT + 1)
 #define ROW_CHEEVOS (SET_COUNT + 2)
 #define ROW_DUMP (SET_COUNT + 3)
-#define ROW_COUNT (SET_COUNT + 4)
+#define ROW_DUMP_AUDIO (SET_COUNT + 4)
+#define ROW_COUNT (SET_COUNT + 5)
 #define ROW_RESET CTL_COUNT /* the Controls page's last row */
 #define ROWS_SHOWN 8        /* between the header and the footer */
 #define CH_SLOT 2           /* rows an achievement takes on the RetroAchievements page */
@@ -75,7 +78,7 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_FILTER] = "How the pixels are scaled up.",
     [SET_SHADER] = "RetroArch shaders in mods/shaders.",
     [SET_COLOR] = "Deepens colors toward the SNES.",
-    [SET_MODS] = "Replacement movies and music (mods).",
+    [SET_MODS] = "Replacement movies, music and sounds.",
     [SET_FF_MUSIC] = "Normal speed may delay music cues.",
     [SET_FF_SOUND] = "Music only mutes sound effects.",
     [SET_CHEAT_EXP] = "Multiplies the EXP won in battle.",
@@ -87,9 +90,10 @@ static const char *const descriptions[ROW_COUNT] = {
     [ROW_CHEATS] = "EXP and TP multipliers, infinite HP, MP, money.",
     [ROW_CHEEVOS] = "Achievements of retroachievements.org.",
     [ROW_DUMP] = "Saves the graphics for mods, as PNG.",
+    [ROW_DUMP_AUDIO] = "Saves the sounds for mods, as WAV.",
 };
 
-enum { CONFIRM_NONE, CONFIRM_LANGUAGE, CONFIRM_DUMP };
+enum { CONFIRM_NONE, CONFIRM_LANGUAGE, CONFIRM_DUMP, CONFIRM_DUMP_AUDIO };
 
 static int place, cursor; /* place: where it was opened (SS_MENU_*), SS_MENU_NONE when closed */
 static SDL_AtomicInt open_now; /* place != SS_MENU_NONE, for the game thread */
@@ -98,7 +102,7 @@ static int f1_pressed; /* F1 since the last input */
 static int top;           /* the first row shown (rows: the shown settings, in order) */
 static int cheats_page, settings_cursor, settings_top; /* the Cheats page, and the settings' row and top to go back to */
 static int confirm, yes;  /* the question open (CONFIRM_*); Yes is chosen */
-static Uint64 dump_since; /* when the graphics dump started */
+static Uint64 dump_since; /* when the graphics or audio dump started */
 static int controls_page, ctl_cursor, ctl_pad, ctl_top; /* ctl_pad: the gamepad column is chosen */
 static int cheevos_page, ch_cursor, ch_top; /* the RetroAchievements page, its row and the first row shown */
 static int typing;                  /* the text field typed in (CH_NAME, CH_PASSWORD; 0: none) */
@@ -111,6 +115,14 @@ static Uint64 repeat_at, resume_until;
 static int row_shown(int i) {
     if (cheats_page) return i >= SET_CHEATS && i < SET_COUNT;
     return i >= SET_COUNT || (i < SET_CHEATS && display_setting_shown(i));
+}
+
+/* A dump runs (graphics or audio: one at a time), and its progress. */
+static int dumping(void) { return gfxdump_running() || sounddump_running(); }
+
+static void dump_progress(int *done, int *total, float *share) {
+    if (gfxdump_running()) gfxdump_progress(done, total, share);
+    else sounddump_progress(done, total, share);
 }
 
 static void controls_input(uint32_t act) {
@@ -264,6 +276,8 @@ static uint32_t input(uint32_t keys) {
             confirm = CONFIRM_NONE;
             if (asked == CONFIRM_DUMP) {
                 if ((act & KEY_A) && yes) gfxdump_start(), dump_since = now;
+            } else if (asked == CONFIRM_DUMP_AUDIO) {
+                if ((act & KEY_A) && yes) sounddump_start(), dump_since = now;
             } else if ((act & KEY_A) && yes) {
                 rt_state_request = RT_STATE_REBOOT;
                 place = SS_MENU_NONE;
@@ -292,7 +306,7 @@ static uint32_t input(uint32_t keys) {
         blocked = keys;
         return 0;
     }
-    if (gfxdump_running()) return 0; /* the progress covers the rows */
+    if (dumping()) return 0; /* the progress covers the rows */
     if (act & KEY_UP) do cursor = (cursor + ROW_COUNT - 1) % ROW_COUNT; while (!row_shown(cursor));
     if (act & KEY_DOWN) do cursor = (cursor + 1) % ROW_COUNT; while (!row_shown(cursor));
     if (cursor == ROW_CONTROLS) {
@@ -302,7 +316,9 @@ static uint32_t input(uint32_t keys) {
     } else if (cursor == ROW_CHEEVOS) {
         if (act & KEY_A) cheevos_page = 1, ch_cursor = ch_top = 0;
     } else if (cursor == ROW_DUMP) {
-        if ((act & KEY_A) && !gfxdump_running()) confirm = CONFIRM_DUMP, yes = 0;
+        if (act & KEY_A) confirm = CONFIRM_DUMP, yes = 0;
+    } else if (cursor == ROW_DUMP_AUDIO) {
+        if (act & KEY_A) confirm = CONFIRM_DUMP_AUDIO, yes = 0;
     } else if (act & (KEY_LEFT | KEY_RIGHT)) {
         int n = display_setting_count(cursor);
         display_setting_set(cursor, (display_setting_get(cursor) + ((act & KEY_RIGHT) ? 1 : n - 1)) % n);
@@ -324,10 +340,15 @@ static int cursor_at(void) {
 }
 
 uint32_t sysmenu_input(uint32_t keys) {
-    int images;
+    int images, files;
     if (gfxdump_finished(&images)) {
         char text[96];
         SDL_snprintf(text, sizeof text, ui_text("Graphics: %d images in mods/graphics/dump"), images);
+        display_message(text, 4000);
+    }
+    if (sounddump_finished(&files)) {
+        char text[96];
+        SDL_snprintf(text, sizeof text, ui_text("Audio: %d files in mods/sounds/dump"), files);
         display_message(text, 4000);
     }
     int was = cursor_at();
@@ -448,11 +469,12 @@ static void centered(uint32_t *s, const char *text, Rect r, uint32_t color) {
     ui_draw_text(s, text, r.x + (r.w - ui_text_width(text)) / 2, r.y + 4, color);
 }
 
-/* A row's label and value: a display setting's, or an action's (Controls, Cheats, RetroAchievements, Dump graphics). */
+/* A row's label and value: a display setting's, or an action's (Controls, Cheats, RetroAchievements, the dumps). */
 static const char *row_title(int i) {
     if (i == ROW_CONTROLS) return ui_text("Controls");
     if (i == ROW_CHEATS) return ui_text("Cheats");
     if (i == ROW_CHEEVOS) return "RetroAchievements";
+    if (i == ROW_DUMP_AUDIO) return ui_text("Dump audio");
     return ui_text(i == ROW_DUMP ? "Dump graphics" : display_setting_title(i));
 }
 
@@ -470,9 +492,9 @@ static const char *row_value(int i, int w) {
         int st = cheevos_state();
         return st == CHEEVOS_LOGGED_IN ? fit(cheevos_user(), w) : ui_text(st == CHEEVOS_LOGGING_IN ? "Logging in..." : "A: log in");
     }
-    if (i != ROW_DUMP) return fit(ui_text(display_setting_label(i, display_setting_get(i))), w);
-    if (!gfxdump_running()) return ui_text("A: dump");
-    gfxdump_progress(&done, &total, &share);
+    if (i != ROW_DUMP && i != ROW_DUMP_AUDIO) return fit(ui_text(display_setting_label(i, display_setting_get(i))), w);
+    if (!(i == ROW_DUMP ? gfxdump_running() : sounddump_running())) return ui_text("A: dump");
+    dump_progress(&done, &total, &share);
     SDL_snprintf(buf, sizeof buf, "%d%%", (int)(share * 100));
     return buf;
 }
@@ -483,11 +505,11 @@ static void dialog(uint32_t *s, Rect r, const char *const *lines, int n) {
     for (int i = 0; i < n; i++) ui_draw_text(s, lines[i], (SCREEN_W - ui_text_width(lines[i])) / 2, r.y + 10 + 12 * i, WHITE);
 }
 
-/* The graphics dump's progress: a bar filling with the work done, and the time left at the pace so far. */
+/* The dump's progress: a bar filling with the work done, and the time left at the pace so far. */
 static void draw_dump_progress(uint32_t *s) {
     int done, total;
     float share;
-    gfxdump_progress(&done, &total, &share);
+    dump_progress(&done, &total, &share);
     char count[80], left[80];
     if (!total) {
         SDL_strlcpy(count, ui_text("Listing the game's files..."), sizeof count);
@@ -499,7 +521,7 @@ static void draw_dump_progress(uint32_t *s) {
         else if (rest < 60000) SDL_snprintf(left, sizeof left, ui_text("About %d s left"), (int)(rest / 1000) + 1);
         else SDL_snprintf(left, sizeof left, ui_text("About %d min left"), (int)((rest + 30000) / 60000));
     }
-    const char *lines[] = {ui_text("Dumping graphics...")};
+    const char *lines[] = {ui_text(gfxdump_running() ? "Dumping graphics..." : "Dumping audio...")};
     Rect r = {28, 52, 200, 86}, bar = {44, 78, 168, 12};
     dialog(s, r, lines, 1);
     panel(s, bar, &BUTTON);
@@ -726,7 +748,7 @@ void sysmenu_draw(uint32_t *s) {
     const char *footer = ui_text(descriptions[cursor]);
     if (cursor == SET_SHADER && display_shader_path()) footer = fit(display_shader_path(), 208);
     if (confirm) footer = ui_text("A: confirm.  B: not now.");
-    else if (gfxdump_running() && !controls_page && !cheevos_page) footer = ui_text("Closing the menu leaves it running.");
+    else if (dumping() && !controls_page && !cheevos_page) footer = ui_text("Closing the menu leaves it running.");
     else if (controls_page && controls_capturing() && controls_capture_conflict()) {
         static char used[96];
         SDL_snprintf(used, sizeof used, ui_text("%s uses that one. Press another."), ui_text(controls_capture_conflict()));
@@ -745,7 +767,9 @@ void sysmenu_draw(uint32_t *s) {
                                         ui_text("Unsaved progress will be lost.")};
         const char *const dump[] = {ui_text("Dump all game graphics?"), ui_text("Every sprite and background, to"),
                                     ui_text("mods/graphics/dump. May take a while.")};
-        dialog(s, (Rect){28, 52, 200, 86}, confirm == CONFIRM_DUMP ? dump : language, 3);
+        const char *const audio[] = {ui_text("Dump all game audio?"), ui_text("Every sound effect and sample, to"),
+                                     ui_text("mods/sounds/dump. May take a while.")};
+        dialog(s, (Rect){28, 52, 200, 86}, confirm == CONFIRM_DUMP ? dump : confirm == CONFIRM_DUMP_AUDIO ? audio : language, 3);
         for (int i = 0; i < 2; i++) {
             Rect b = {64 + 72 * i, 106, 56, 20};
             int sel = (i == 0) == yes;
@@ -754,7 +778,7 @@ void sysmenu_draw(uint32_t *s) {
             const char *label = ui_text(i == 0 ? "Yes" : "No");
             ui_draw_text(s, label, b.x + (b.w - ui_text_width(label)) / 2, b.y + 6, sel ? WHITE : GREY);
         }
-    } else if (gfxdump_running() && !controls_page && !cheevos_page) {
+    } else if (dumping() && !controls_page && !cheevos_page) {
         draw_dump_progress(s);
     }
 }

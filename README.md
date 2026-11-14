@@ -140,6 +140,11 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 - **Music**: put an audio file in `mods\music\` to replace a music track, for example `BGM_18.ogg` for
   "Chrono Trigger". Use OGG, Opus, FLAC, MP3, WAV or M4A, looped with `LOOPSTART`/`LOOPEND` tags, or MSU-1
   `.pcm` files. The `readme.txt` there lists every track with its Music Box title.
+- **Sounds**: put an audio file in `mods\sounds\` to replace a sound effect, for example `SE_0A3.wav`, or in a
+  wave archive's folder to replace one of the instruments' samples wherever it plays, for example
+  `WAVE_SE_01.wav` (the game still plays its notes on it). The same formats as music. System Settings >
+  Dump audio saves every effect and sample as WAV files in `mods\sounds\dump`, under these names. The
+  `readme.txt` there has the details.
 - **Translations**: put a translation patch in `mods\translation\`: IPS (`.ips`), BPS (`.bps`), xdelta
   (`.xdelta`, `.vcdiff`, `.xdelta3`) or xdelta 1 (`.delta`). It is applied to your ROM when the game is built,
   so `rom\CT.nds` stays the unmodified dump. Patches apply in file-name order, so a translation split into
@@ -147,7 +152,7 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
   works on a USA or European game too: put your dump of that version next to it (`.nds`), and its text, fonts and
   graphics are carried over. The Japanese game takes only patches made for it. The `readme.txt` there has the details. Changing a patch rebuilds
   the game on the next start.
-- Cutscene and music mods can be turned off in System Settings > Mods.
+- Cutscene, music and sound mods can be turned off in System Settings > Mods.
 
 ### System Settings
 

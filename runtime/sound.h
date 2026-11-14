@@ -29,6 +29,14 @@ typedef struct SpuChannel {
 extern SpuChannel spu_ch[SPU_CHANNELS];
 extern float spu_master; /* master volume, 0-1 */
 
+/* A sample mod playing on a channel instead of its data (sound_mod.c). Kept apart from SpuChannel, out of save
+ * states (their layout stays): a state loads with none. */
+typedef struct SpuMod {
+    int id;      /* the mod's id + 1, 0: none */
+    double rate; /* its rate over the replaced sample's */
+} SpuMod;
+extern SpuMod spu_mod[SPU_CHANNELS];
+
 void spu_open_output(void);    /* host thread, once at startup */
 void spu_reset(void);
 void spu_start(int ch);        /* key on: restart playback with the channel's current settings */
@@ -41,11 +49,22 @@ void snd_reset(void);
 void snd_command_list(uint32_t list); /* ARM9 -> ARM7 SOUND message: linked list of SNDCommand */
 void snd_update(uint64_t now);        /* driver frames, alarms and audio output up to now */
 
-/* Music mods (music.c): replacement files for the game's music sequences. Game thread. */
+/* Music and sound effect mods (music.c): replacement files for the game's music and effect sequences. Game
+ * thread. */
 void music_prepare(int pno, uint32_t seq_data); /* a player loaded the sequence whose data is at seq_data */
 void music_stop(int pno);                       /* the player stopped */
+void music_end(int pno);                        /* its sequence ended by itself (an effect's file plays on) */
+void music_reset(void);                         /* the driver reset or a state loaded: effects playing on stop */
 int music_replaced(int pno);                    /* the player's sequence is replaced: mute it */
 int music_is_bgm(int pno);                      /* the player's sequence is one of the archive's BGM_* */
 void music_player(int pno, int running, int db); /* every driver frame: playing (not paused), volume in 0.1 dB */
-void music_mix(float *out, uint32_t frames, int speed); /* adds the replacements to float stereo output at SPU_RATE,
-                                                       * `speed` (1 or 2) times faster */
+/* Adds the replacements to float stereo output at SPU_RATE, the music's `speed` and the effects' effect_speed (1
+ * or 2) times faster; muted effects play on silent. */
+void music_mix(float *out, uint32_t frames, int speed, int effect_speed, int effects_muted);
+
+/* Sample mods (sound_mod.c): replacement files for single waves of the archive's wave archives. Game thread. */
+/* The mod for wave `index` of the wave archive at `arc` in game memory, of `rate` Hz, looping from loop_start (of
+ * `samples`; loops 0: once): its id + 1 (0: none), and its rate over the wave's. */
+int sound_mod_sample(uint32_t arc, int index, double rate, uint32_t samples, uint32_t loop_start, int loops, double *mod_rate);
+/* A sample mod's 16-bit mono data, its length and loop start (samples; loop < 0: once), or NULL. */
+const int16_t *sound_mod_data(int mod, uint32_t *len, int32_t *loop);
