@@ -126,6 +126,7 @@ typedef struct Engine {
     int obj_rows;   /* sprite Y counts from this many rows above the screen (the widened view, widescreen.c) */
     int room_y0, room_y1; /* with room_clip: its rows */
     int obj_origin; /* sprite X counts from this many columns left of the screen (widescreen.c) */
+    int edge_bgs;    /* BGs whose screen's side columns go on across the margins (the Epoch's dashboard, single_screen.c) */
     int obj_stretch; /* the sprites' screen columns are stretched across the margins (the warp, single_screen.c) */
     int repeat_256; /* 256-wide text BGs repeat into the margins (the race's sky, single_screen.c) */
     int view_x, view_y, view_bgs; /* the view's shift from the camera at the room's ends, the BGs it moves (ws_view_shift) */
@@ -441,6 +442,12 @@ static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *
         return;
     }
     bg_text_cols(e, bg, y, dispcnt, cnt, hofs, vofs, 0, SCREEN_W, out, hd);
+    if (e->edge_bgs >> bg & 1) {
+        /* The Epoch's cockpit over the lava: its dashboard, a 256-wide picture, goes on as its side columns. Beneath it
+         * the game zeroes the perspective of the lava (pa 0: one colour a line), which the margins showed beside it. */
+        for (int k = 0; k < m; k++) copy_col(out, hd, k, m), copy_col(out, hd, m + SCREEN_W + k, m + SCREEN_W - 1);
+        return;
+    }
     if (margin_bg(e, bg)) {
         const uint16_t *f = e->frame_bg[bg];
         bg_text_cols(e, bg, y, dispcnt, f[0], f[1], f[2], -m, 0, out, hd);
@@ -1388,6 +1395,7 @@ static void engine_frame_start(Engine *e) {
             e->obj_origin = ws_sprite_origin(); /* sprites placed from the left margin (widened view) */
             e->obj_rows = ws_sprite_rows();
             e->obj_stretch = e->margin && ss_in_warp();
+            e->edge_bgs = e->margin && ss_in_epoch_ride() ? 1 : 0; /* BG0: the cockpit */
             e->repeat_256 = e->margin && ss_in_race();
             e->shown_bgs = e->shown_now, e->shown_now = 0;
             e->void_col = e->void_now == 1 ? e->void_now_col : 0xFF000000u, e->void_now = 0;

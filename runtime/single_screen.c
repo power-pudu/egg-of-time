@@ -105,7 +105,7 @@
 #include "ui_font.h"
 #include "video.h"
 
-enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP, SCENE_ARENA_BATTLE, SCENE_ARENA_RESULT };
+enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_EPOCH_RIDE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP, SCENE_ARENA_BATTLE, SCENE_ARENA_RESULT };
 typedef struct Scene { int kind; uint32_t obj; } Scene;
 static uint32_t title_held; /* keys held since before the title started: not a press */
 #define TITLE_STATE 0x4a  /* title scene: current state (halfword); +0x48 holds the requested one */
@@ -176,6 +176,7 @@ static Scene current(void) {
     if (vt == 0x0212535cu && rt_overlay_resident(10)) sc.kind = SCENE_WARP;  /* ov010: travel through a time gate */
     if (vt == 0x02120a68u && rt_overlay_resident(2)) sc.kind = SCENE_OVERWORLD; /* ov002: the world map */
     if (vt == 0x02148574u && rt_overlay_resident(11)) sc.kind = SCENE_RACE; /* ov011: the race against Johnny (Lab 32) */
+    if (vt == 0x02148d3cu && rt_overlay_resident(11)) sc.kind = SCENE_EPOCH_RIDE; /* ov011: the Epoch's cockpit over the lava */
     if (vt == GAME_ADDR(0x02158290u, 0x021582f0u) && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
     if (vt == ARENA_PREP && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_PREP;
     if (vt == ARENA_BATTLE && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_BATTLE;
@@ -1453,6 +1454,7 @@ int ss_in_field(void) { return current().kind == SCENE_FIELD; }
 int ss_in_warp(void) { return current().kind == SCENE_WARP; }
 int ss_in_overworld(void) { return current().kind == SCENE_OVERWORLD; }
 int ss_in_race(void) { return current().kind == SCENE_RACE; }
+int ss_in_epoch_ride(void) { return current().kind == SCENE_EPOCH_RIDE; }
 int ss_bottom_shift(int *rows) {
     *rows = AGES_SELECTOR_ROWS;
     return ss_enabled() && current().kind == SCENE_AGES ? AGES_SHIFT : 0;
@@ -1504,7 +1506,8 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
     int map_ok = ss_enabled() && (sc.kind == SCENE_FIELD || sc.kind == SCENE_OVERWORLD) &&
                  !rt_overlay_resident(3) /* a battle */ && map_panel_shown(bottom);
     SDL_SetAtomicInt(&minimap_rows, map_ok ? video_box_top() : 0);
-    if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE) { /* widescreen: the top screen with its margins (also with single screen mode off: the second window) */
+    if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE ||
+        sc.kind == SCENE_EPOCH_RIDE) { /* widescreen: the top screen with its margins (also with single screen mode off: the second window) */
         memcpy(main, wide, (size_t)wide_w * wide_h * 4);
         *from = SS_FROM_WIDE;
         if (paused) pause_hint(main, wide_w, wide_h);

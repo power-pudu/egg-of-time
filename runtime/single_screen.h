@@ -23,6 +23,7 @@ uint32_t ss_game_keys(uint32_t keys); /* keys as the game reads them */
 int ss_in_field(void);                /* the field (towns, maps) is running: widescreen applies */
 int ss_in_warp(void);                 /* the warp through a time gate is running (widescreen, stretched sprites) */
 int ss_in_overworld(void);            /* the world map is running (widescreen) */
+int ss_in_epoch_ride(void);           /* the Epoch's cockpit over the lava (widescreen, dashboard widened) */
 int ss_in_race(void);                 /* the race against Johnny is running (widescreen, sky layers repeated) */
 /* Columns the bottom screen's sprites starting above row *rows move left in a second picture for the main
  * screen (the age selector; 0: none). */

@@ -93,7 +93,8 @@ original bytes, and caches the result per region until the region is written.
   their slope, or drawn from the two straight edges fitted to the window where it is a ray shape; their bolts, a
   256-wide SNES picture, reflected at the screen sides; only unscrolled: the ice of Ice II, one picture on such a
   map slid onto the enemy by the scroll, landed at scroll 0, 464 and was reflected beside itself) across them. Single screen mode uses the wide picture in
-  the field (current scene: ov000 vtable 0x02115558), the warp (ov010), the world map (ov002) and the race (ov011);
+  the field (current scene: ov000 vtable 0x02115558), the warp (ov010), the world map (ov002), the race (ov011) and the Epoch's cockpit over the lava (ov011,
+  vtable 0x02148d3c);
   other scenes stay 4:3, centred.
   - A 256x256 text BG whose on-screen map is one fully opaque tile throughout (`solid_256`) is a flash of colour:
     the field's red flash when the party takes damage switches BG0 to such a map (BG0CNT 0x0e00) blended over the
@@ -248,6 +249,12 @@ original bytes, and caches the result per region until the region is written.
     tile seamlessly; in the race they repeat into the margins (`repeat_256`) instead of staying empty. Sprites
     (bikes, HUD) keep their 4:3 place, centred: logged OAM showed the game keeps Crono's bike at X >= 5 and
     Johnny well inside the screen, so no cull needed widening.
+  - The Epoch's cockpit over the lava (ov011, scene vtable 0x02148d3c, location 0x1da): mode 1, the sky and lava an
+    affine BG3 (512x512, wraparound) set line by line by the software HDMA (pa..pd and the reference point, BLDY for
+    the white horizon), so its margins are drawn as they are, the top-down tunnel phases too. BG0 is the cockpit, a
+    256-wide text map; under its dashboard the game zeroes the lava's perspective (pa 0: one colour a line), which the
+    margins showed beside it in flat white, grey, red or olive. The cockpit's side columns go on across the margins
+    instead (`edge_bgs`): transparent above the dashboard (the sky shows), the rail and the dark cockpit beside it.
   - **Zoom out** (System Settings, Off / 90% / 85% / 77%; `video_set_zoom`): the field and the world map draw more rows and
     columns into the same place in the window: 214 (89.7%, the nearest to 90%), 226 or 248 rows at the aspect ratio's
     shape, in the layouts that show the wide picture; other scenes keep 192 rows.
