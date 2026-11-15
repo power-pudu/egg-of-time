@@ -387,7 +387,11 @@ original bytes, and caches the result per region until the region is written.
       world map's labels (year, place name) are in the world's sprites, so they zoom. The UI layer's windows are
       its own line's and column's (the HDMA table's spans, `win_lines`), not those of the line the view's shift or
       an effect's band draws the row as: in Lavos's room (view 16 rows down) the battle panel's line 146 took line
-      130's windows, and his lasers cut holes in the panel's top rows.
+      130's windows, and his lasers cut holes in the panel's top rows. Moved with that shift, the battle's numbers
+      fall onto the bottom menu's rows (146 on), where the menu's sprites cover them in the UI layer; taken to the
+      view's bottom (`ui_to_edges`), the menu left the numbers cut off at the characters' waists. So each line keeps
+      its placed sprites' pixels whatever covers them (`ObjLine.placed`), and those covered (`ui_placed`) are laid
+      over the moved boxes in their own place.
     - The world map's sprites: the game's tests of Y go as those of X (`rt_ws_snes_cmp`): a piece's Y + 15 below 0xef
       (return address ov005 0x0212c178), an object's on-screen flag at Y - camera + 16, wrapped at 0x400, below 0x110
       (ov002 0x0210ce80). Widened by the rows, the Epoch and the birds go on to the view's edge. Y stays 8 bits in the SNES

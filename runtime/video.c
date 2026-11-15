@@ -188,6 +188,10 @@ static int present_shifted_on;
 static int present_main_w, present_main_h;
 static uint32_t ui_frame[VIDEO_LINE_MAX * SCREEN_H], present_ui[VIDEO_LINE_MAX * VIDEO_ROWS_MAX]; /* see Engine.rows */
 static uint8_t ui_stays[VIDEO_LINE_MAX * SCREEN_H]; /* the UI pixel is a number placed at an actor (WS_OAM_PLACED) */
+/* Those numbers' pixels where something covers them in the UI layer: a battle's numbers, placed at the actor and moved
+ * with the view's shift at a room's end, can fall onto the bottom menu's rows. With the boxes taken to the view's
+ * edges (ui_to_edges) the menu leaves those rows, so the numbers are laid over it there. */
+static uint32_t ui_placed[VIDEO_LINE_MAX * SCREEN_H];
 static int present_ui_on, present_ui_h;
 static SDL_AtomicInt ui_edges; /* video_set_ui_edges */
 static SDL_Mutex *present_lock;
@@ -518,6 +522,7 @@ typedef struct ObjLine { /* from column -margin, like the layer buffers */
     uint8_t win[VIDEO_LINE_MAX];    /* OBJ window mask */
     uint8_t party[VIDEO_LINE_MAX];  /* the pixel's sprite moves with the camera */
     uint8_t ui[VIDEO_LINE_MAX];     /* the pixel's sprite is in screen coordinates (ws_tag_oam); 2: placed at an actor */
+    uint16_t placed[VIDEO_LINE_MAX]; /* the first sprite placed at an actor here, whatever covers it (OPAQUE set) */
     HdLine hd;                      /* while hd_on */
 } ObjLine;
 
@@ -662,6 +667,7 @@ static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, i
                     spal |= (uint8_t)(bpp8 ? 0 : pal);
                 }
             }
+            if (ui == 2 && !(ol->placed[sx] & OPAQUE)) ol->placed[sx] = color | OPAQUE;
             if (!(ol->color[sx] & OPAQUE) || prio < ol->prio[sx]) {
                 ol->color[sx] = color | OPAQUE;
                 ol->prio[sx] = (uint8_t)prio;
@@ -689,6 +695,7 @@ static void stretch_objs(const Engine *e, ObjLine *ol) {
         ol->win[x] = src.win[s];
         ol->party[x] = src.party[s];
         ol->ui[x] = src.ui[s];
+        ol->placed[x] = src.placed[s];
         ol->hd.src[x] = src.hd.src[s];
         ol->hd.pal[x] = src.hd.pal[s];
     }
@@ -1349,7 +1356,7 @@ static void engine_frame_start(Engine *e) {
             e->ref_x[i] -= e->rows * (int16_t)reg16(e, 0x22 + 0x10 * i);
             e->ref_y[i] -= e->rows * (int16_t)reg16(e, 0x26 + 0x10 * i);
         }
-        if (e->rows) memset(ui_frame, 0, sizeof ui_frame), memset(ui_stays, 0, sizeof ui_stays);
+        if (e->rows) memset(ui_frame, 0, sizeof ui_frame), memset(ui_stays, 0, sizeof ui_stays), memset(ui_placed, 0, sizeof ui_placed);
         e->band_rows = e->ring = e->rays = 0;
         e->lines_top[1] = e->lines_top[0], e->lines_bottom[1] = e->lines_bottom[0];
         e->lines_top[0] = SCREEN_H, e->lines_bottom[0] = -1; /* none yet */
@@ -1714,6 +1721,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             }
             dst[x] = pass && !e->sel_shift && !(sprite_shows && (pass == 2 ? o->ui[x] : o->party[x])) && !still ? 0 : to_rgba(c);
             if (pass == 2) ui_stays[y * VIDEO_LINE_MAX + x] = dst[x] && !still && o->ui[x] == 2;
+            if (pass == 2 && (o->placed[x] & OPAQUE) && (ctl & 0x10) && !ui_stays[y * VIDEO_LINE_MAX + x]) /* covered */
+                ui_placed[y * VIDEO_LINE_MAX + x] = to_rgba(o->placed[x] & 0x7FFF);
             if (!pass && !side && !margin_kept && (wx < SIDE_COLS || wx >= SCREEN_W - SIDE_COLS)) { /* what the screen shows of each BG (repeat_bgs) */
                 if (layer[0] < 4) e->shown_now |= (uint8_t)(1 << layer[0]);
                 if (layer[1] < 4 && blended) e->shown_now |= (uint8_t)(1 << layer[1]);
@@ -1776,6 +1785,8 @@ advance:
         for (int x = 0; e->rows && on_screen && x < width; x++) { /* the UI layer */
             uint32_t p = ui_frame[y * VIDEO_LINE_MAX + x];
             if (p) ui_frame[y * VIDEO_LINE_MAX + x] = master_bright(p, f, mmode);
+            p = ui_placed[y * VIDEO_LINE_MAX + x];
+            if (p) ui_placed[y * VIDEO_LINE_MAX + x] = master_bright(p, f, mmode);
         }
     }
     if (e->track_top) {
@@ -1846,6 +1857,11 @@ static void ui_to_edges(int w, int rows, int shown) {
                 if (src[x]) (stays[x] ? at : to)[x] = src[x];
             }
         }
+    }
+    for (int y = 0; y < SCREEN_H; y++) {
+        const uint32_t *placed = &ui_placed[y * VIDEO_LINE_MAX];
+        uint32_t *at = &present_ui[(y + rows) * w];
+        for (int x = 0; x < w; x++) if (placed[x]) at[x] = placed[x];
     }
 }
 
