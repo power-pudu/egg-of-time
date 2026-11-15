@@ -166,6 +166,9 @@ typedef struct Engine {
     uint64_t solid_key[4];   /* solid_256's last answer by BG this frame, and the registers it was for */
     uint8_t solid_val[4];
     uint8_t frame_solid;     /* widescreen: BG0/BG1 one-tile overlays (solid_256) as the frame started */
+    uint8_t half_rows[4];    /* zoom out, this line: by BG, its 512x512 map's 256-row halves drawn 256 wide (half_256) */
+    uint64_t half_key[4];    /* half_256's last answer by BG this frame, and the registers it was for */
+    uint8_t half_val[4];
 } Engine;
 
 static Engine engines[2];
@@ -345,8 +348,9 @@ static void bg_text_cols(const Engine *e, int bg, int y, uint32_t dispcnt, uint1
     int ext = bpp8 && (dispcnt & (1u << 30));
     uint8_t *slot = e->bg_ext[(bg < 2 && (cnt & 0x2000)) ? bg + 2 : bg];
     uint32_t yy = (uint32_t)(y + (int)vofs) & (h - 1);
+    uint32_t wrap = e->half_rows[bg] >> (yy >> 8) & 1 ? 255 : w - 1; /* see half_256 */
     for (int x = x0; x < x1; x++) {
-        uint32_t xx = (uint32_t)(x + (int)hofs) & (w - 1);
+        uint32_t xx = (uint32_t)(x + (int)hofs) & wrap;
         uint32_t block = (xx >> 8) + (yy >> 8) * (w >> 8);
         uint16_t ent = vr16(e->bg, e->bg_mask, scr + block * 0x800 + ((yy & 255) >> 3) * 64 + ((xx & 255) >> 3) * 2);
         uint32_t tile = ent & 0x3FF, px = (xx & 7) ^ ((ent & 0x400) ? 7 : 0), py = (yy & 7) ^ ((ent & 0x800) ? 7 : 0);
@@ -414,6 +418,58 @@ static int solid_256(Engine *e, int bg, uint32_t dispcnt) {
         if ((cnt & 0x80) ? !b : !(b & 0xF) || !(b >> 4)) return 0;
     }
     return e->solid_val[bg] = 1;
+}
+
+/* Whether tile `tile` of a BG draws nothing: every pixel transparent. */
+static int tile_blank(const Engine *e, uint32_t chr, uint32_t tile, int bpp8) {
+    uint32_t bytes = bpp8 ? 64 : 32;
+    for (uint32_t k = 0; k < bytes; k++) if (vr8(e->bg, e->bg_mask, chr + tile * bytes + k)) return 0;
+    return 1;
+}
+
+/* A 256x256 block of a map: 0 when it draws nothing, 2 when each of its rows of tiles draws in every tile or in none
+ * (a fill, not a figure), else 1. */
+static int block_drawn(const Engine *e, uint32_t base, uint32_t chr, int bpp8) {
+    int8_t blank[1024];
+    memset(blank, -1, sizeof blank);
+    int drawn = 0, fill = 1;
+    for (uint32_t row = 0; row < 32; row++) {
+        int n = 0;
+        for (uint32_t col = 0; col < 32; col++) {
+            uint16_t tile = vr16(e->bg, e->bg_mask, base + row * 64 + col * 2) & 0x3FF;
+            if (blank[tile] < 0) blank[tile] = (int8_t)tile_blank(e, chr, tile, bpp8);
+            n += !blank[tile];
+        }
+        drawn |= n > 0, fill &= n == 0 || n == 32;
+    }
+    return drawn ? 1 + fill : 0;
+}
+
+/* Zoom out: a battle effect on a 512x512 map that holds its picture 256 wide in one 256-row half (its right 256
+ * columns drawing nothing there) and 512 wide in the other: a SNES layer 256 wide and 512 tall, the rows the screen
+ * shows widened for their scroll. Lavos's flames: the rows above the screen are the map's last ones, and the margins
+ * there and on the screen's top 16 lines, in the empty right half, were black beside the yellow over the screen's
+ * columns, which had black notches too where a line's scroll reached that half. In that half the columns wrap at 256
+ * (bg_text_cols), going on with the picture's own columns. A half whose left block is a fill and whose right one
+ * draws nothing is drawn so too, whatever the other half holds: the yellow wall that rises as the flames begin, the
+ * map's right half not drawn yet (a figure there, Frog Squash's frog alone in its block, stays one). The halves drawn
+ * so (bit by half, top first), kept by frame for the registers they were found with. */
+static int half_256(Engine *e, int bg, uint32_t dispcnt) {
+    uint16_t cnt = reg16(e, 0x08 + 2 * bg);
+    if ((cnt & 0xC000) != 0xC000) return 0;
+    uint32_t chr = ((cnt >> 2) & 0xF) * 0x4000u, scr = ((cnt >> 8) & 0x1F) * 0x800u;
+    if (e->id == 0) {
+        chr += ((dispcnt >> 24) & 7) * 0x10000u;
+        scr += ((dispcnt >> 27) & 7) * 0x10000u;
+    }
+    uint64_t key = (uint64_t)cnt << 48 | (uint64_t)chr << 24 | scr;
+    if (e->half_key[bg] == key) return e->half_val[bg];
+    int bpp8 = cnt & 0x80, drawn[4], val = 0;
+    for (int b = 0; b < 4; b++) drawn[b] = block_drawn(e, scr + (uint32_t)b * 0x800, chr, bpp8);
+    for (int r = 0; r < 2; r++) /* blocks: top-left, top-right, bottom-left, bottom-right */
+        if (!drawn[2 * r + 1] && drawn[2 * r] && (drawn[2 * (1 - r) + 1] || drawn[2 * r] == 2)) val |= 1 << r;
+    e->half_key[bg] = key, e->half_val[bg] = (uint8_t)val;
+    return val;
 }
 
 /* Column `from` of a line copied to column `to`, with its source. */
@@ -1467,6 +1523,7 @@ static void engine_frame_start(Engine *e) {
         e->frame_win[0] = (uint16_t)(dispcnt & 0xE000);
         for (int k = 0; k < 6; k++) e->frame_win[1 + k] = reg16(e, k < 2 ? 0x48 + 2 * k : 0x40 + 2 * (k - 2));
         memset(e->solid_key, 0xFF, sizeof e->solid_key);
+        memset(e->half_key, 0xFF, sizeof e->half_key);
         e->frame_solid = 0;
         for (int bg = 0; bg < 2 && e->margin; bg++) e->frame_solid |= (uint8_t)(solid_256(e, bg, dispcnt) << bg);
         if (e->id == !a_top) {
@@ -1600,6 +1657,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             if (affine || (reg16(e, 0x08 + 2 * bg) & 0xC000) == 0xC000 || (e->hdma_bgs >> bg & 1) || (e->wide_bgs >> bg & 1))
                 own_bgs |= 1 << bg;
             e->solid_bgs = (uint8_t)(e->solid_bgs & ~(1u << bg));
+            e->half_rows[bg] = (uint8_t)(e->rows && !affine ? half_256(e, bg, dispcnt) : 0);
             if (m && !affine && solid_256(e, bg, dispcnt)) own_bgs |= 1 << bg, e->solid_bgs |= (uint8_t)(1u << bg);
             if (mode == 6 && e->id == 0) {
                 if (bg == 2) bg_affine(e, 2, dispcnt, 1, bgline[2]);
