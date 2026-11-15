@@ -346,6 +346,14 @@ original bytes, and caches the result per region until the region is written.
       menu's line 46, or rising from the text box's 165, that ends short of the other is unstretched the same way from
       its first frame: the pillar, before its rounded end fit as rays, was stretched from lines 46-165 and reached
       lower than its end.
+      A window with no rays of its own goes on there along its sides' slopes on its last lines, until they meet
+      (`window_tail`). An end whose windows' outer sides together lie on half an upright oval (`fit_oval`: least
+      squares of the half width squared by line, an eighth of the lines at most left out) goes on as that oval instead:
+      Luminaire's orb is an egg cut at the top by the battle menu, and carried on along its sides its top came to a
+      point. The orb opens from the top as the effect ends, Lavos's head showing through, its two horns then WIN0 and
+      WIN1: fitted window by window, neither was an oval, and each horn went up to a point (one beside the menu, a
+      green bar in the right margin). Only the sides on the outer edge take the oval (`tail_oval`); the opening's
+      sides are carried on.
       Where the effect ends on its lines, a row beyond them is drawn as its own screen line, with what the HDMA
       writes for it (`row_line`): Lavos's room (location 0x1a7) lights Schala with WIN0 from line 97 down, and the
       text box above took line 97's BG0 scroll, its text sliding out of the box in a zig-zag, and BG0's glow lit a

@@ -899,15 +899,93 @@ static EdgeLine ray_a[2], ray_b[2];
  * repeated down to the picture's bottom, a column under it). A side cut by a screen side keeps its margin. */
 static int tail_y[2][2];                 /* by window, end (top, bottom): the line it goes on from (-1: none) */
 static float tail_x[2][2][2], tail_dx[2][2][2]; /* and by side: the column there (screen), its change per line */
+/* An effect whose end is half an upright oval (Luminaire's orb, an egg cut by the battle menu at the top: carried on
+ * along its sides, its top came to a point) goes on as that oval instead, its outer sides those of the windows
+ * together: the orb opens from the top, Lavos's head showing through, its two horns then WIN0 and WIN1, whose sides
+ * at the opening are carried on. By end (top, bottom): the oval's centre column and its half width squared along the
+ * lines, a + b y + c y^2 (oval_on: it fits); by window, end and side: that side is on the oval. */
+static int oval_on[2], tail_oval[2][2][2];
+static double oval_cx[2], oval_q[2][3];
+
+enum { OVAL_LINES = 16 }; /* the fewest lines with both sides on screen an oval is fitted from */
+
+/* The windows' outer columns on line y (the first column in either, the first after both), or 0 if neither is on it. */
+static int outer_span(int y, int x[2]) {
+    int n = 0, xw[2];
+    for (int w = 0; w < 2; w++) {
+        if (win_span(y, w, &xw[0], &xw[1]) <= 0) continue;
+        if (!n++ || xw[0] < x[0]) x[0] = xw[0];
+        if (n == 1 || xw[1] > x[1]) x[1] = xw[1];
+    }
+    return n;
+}
+
+/* The windows' outer spans from the effect's end `end` to its widest line, with both sides on screen, fit half an
+ * oval, its axes upright and horizontal: least squares of the half width squared by line, then every line within a
+ * pixel and a half of it, and of the centre column. The two halves are fitted apart: the orb is an egg, its top half's
+ * oval not its bottom's. A few lines off it (an eighth at most) are left out and the rest fitted again. */
+static void fit_oval(int end) {
+    int x[2], first = -1, last = -1, widest = -1, most = -1;
+    oval_on[end] = 0;
+    for (int y = win_top; y < SCREEN_H; y++) {
+        if (!outer_span(y, x)) continue;
+        if (first < 0) first = y;
+        last = y;
+        if (x[1] - x[0] > most) most = x[1] - x[0], widest = y;
+    }
+    if (widest < 0) return;
+    int y0 = end ? widest : first, y1 = end ? last : widest;
+    uint8_t off[SCREEN_H] = {0}; /* the lines left out */
+    for (int pass = 0; pass < 2; pass++) {
+        double s[5] = {0}, t[3] = {0}, sc = 0;
+        int n = 0;
+        for (int y = y0; y <= y1; y++) {
+            if (off[y] || !outer_span(y, x) || x[0] < 0 || x[1] >= SCREEN_W) continue;
+            double h = (x[1] - x[0]) / 2.0, h2 = h * h, p = 1;
+            for (int k = 0; k < 5; k++) s[k] += p, p *= y;
+            t[0] += h2, t[1] += h2 * y, t[2] += h2 * y * y;
+            sc += (x[0] + x[1]) / 2.0, n++;
+        }
+        if (n < OVAL_LINES) return;
+        /* The normal equations of h^2 = a + b y + c y^2, solved by Cramer's rule. */
+        double m[3][3] = {{s[0], s[1], s[2]}, {s[1], s[2], s[3]}, {s[2], s[3], s[4]}}, q[3];
+#define DET3(a) ((a)[0][0] * ((a)[1][1] * (a)[2][2] - (a)[1][2] * (a)[2][1]) - (a)[0][1] * ((a)[1][0] * (a)[2][2] - (a)[1][2] * (a)[2][0]) + (a)[0][2] * ((a)[1][0] * (a)[2][1] - (a)[1][1] * (a)[2][0]))
+        double d = DET3(m);
+        if (SDL_fabs(d) < 1e-9) return;
+        for (int k = 0; k < 3; k++) {
+            double mk[3][3];
+            SDL_memcpy(mk, m, sizeof mk);
+            for (int r = 0; r < 3; r++) mk[r][k] = t[r];
+            q[k] = DET3(mk) / d;
+        }
+#undef DET3
+        if (q[2] >= 0) return; /* not closing: no oval */
+        double cx = sc / n;
+        int bad = 0;
+        for (int y = y0; y <= y1; y++) {
+            if (off[y] || !outer_span(y, x) || x[0] < 0 || x[1] >= SCREEN_W) continue;
+            double h2 = q[0] + q[1] * y + q[2] * y * y, h = h2 > 0 ? SDL_sqrt(h2) : 0;
+            if (SDL_fabs((x[1] - x[0]) / 2.0 - h) > 1.5 || SDL_fabs((x[0] + x[1]) / 2.0 - cx) > 1.5) off[y] = 1, bad++;
+        }
+        if (!bad) {
+            oval_on[end] = 1, oval_cx[end] = cx;
+            for (int k = 0; k < 3; k++) oval_q[end][k] = q[k];
+            return;
+        }
+        if (pass || bad * 8 > n) return;
+    }
+}
 
 static void window_tail(int w, int end, int from, int dir) {
-    int x[2], y = from, k = 0;
+    int x[2], y = from, k = 0, xo[2];
     tail_y[w][end] = -1;
     while (y >= win_top && y < SCREEN_H && win_span(y, w, &x[0], &x[1]) <= 0 && k++ < EDGE_RUN) y += dir;
     if (y < win_top || y >= SCREEN_H || win_span(y, w, &x[0], &x[1]) <= 0) return;
     tail_y[w][end] = y;
+    outer_span(y, xo);
     for (int s = 0; s < 2; s++) {
         tail_x[w][end][s] = win_ext[y][w][s], tail_dx[w][end][s] = 0;
+        tail_oval[w][end][s] = oval_on[end] && SDL_abs(x[s] - xo[s]) <= 1;
         if (x[s] < 0 || x[s] >= SCREEN_W) continue;
         tail_x[w][end][s] = (float)x[s];
         int far = y, xf[2];
@@ -918,11 +996,20 @@ static void window_tail(int w, int end, int from, int dir) {
     }
 }
 
-/* Column x of row y (beyond the band's end `end`) in window w's carried sides. */
+/* Column x of row y (beyond the band's end `end`) in window w's carried sides, or its oval. */
 static int in_tail(int w, int end, int y, int x) {
     if (tail_y[w][end] < 0) return 0;
-    float d = (float)(y - tail_y[w][end]);
-    return x >= tail_x[w][end][0] + tail_dx[w][end][0] * d && x < tail_x[w][end][1] + tail_dx[w][end][1] * d;
+    float d = (float)(y - tail_y[w][end]), lo = tail_x[w][end][0] + tail_dx[w][end][0] * d,
+          hi = tail_x[w][end][1] + tail_dx[w][end][1] * d;
+    if (tail_oval[w][end][0] || tail_oval[w][end][1]) {
+        const double *q = oval_q[end];
+        double h2 = q[0] + q[1] * y + q[2] * (double)y * y;
+        if (h2 <= 0) return 0;
+        double h = SDL_sqrt(h2);
+        if (tail_oval[w][end][0]) lo = (float)(oval_cx[end] - h);
+        if (tail_oval[w][end][1]) hi = (float)(oval_cx[end] + h);
+    }
+    return x >= lo && x < hi;
 }
 
 static int fit_rays(int w, int below_menu) {
@@ -1285,6 +1372,7 @@ static void effect_rows(Engine *e) {
     if (top >= BATTLE_TOP && bottom < BATTLE_BOTTOM && (top == BATTLE_TOP) != (bottom == BATTLE_BOTTOM - 1)) e->rays_seen = 1;
     if (e->rays_seen) {
         e->rays = rays | RAYS_KEPT, e->band_top = top, e->band_rows = bottom - top + 1;
+        fit_oval(0), fit_oval(1);
         for (int w = 0; w < 2; w++) window_tail(w, 0, top, 1), window_tail(w, 1, bottom, -1);
         /* They go on only where the game blanks them, under a menu or the text box, or past the screen's edge;
          * elsewhere the effect ends on its own lines (Azala's red pillar, a WIN0 column from under the top menu down
@@ -1650,7 +1738,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                          : e->ring_wins == 1 && in_w1y && in_window(vx, vwx, w1h, ext1) ? (winin >> 8) & 0x3F
                          : winobj && o->win[x] ? (winout >> 8) & 0x3F
                                                : winout & 0x3F;
-            } else if (ray_row && (win0 || win1 || winobj) && !(y < e->band_top ? e->rays_up : e->rays_down)) {
+            } else if (ray_row && (win0 || win1 || winobj) && !(vy < e->band_top ? e->rays_up : e->rays_down)) {
                 ctl = winobj && o->win[x] ? (winout >> 8) & 0x3F : winout & 0x3F; /* the effect ended above, below */
             } else if (ray_row && (win0 || win1 || winobj)) {
                 int end = vy >= e->band_top;
