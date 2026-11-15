@@ -38,7 +38,7 @@ void display_capture(const char *path);
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
  * Setting one applies it at once and saves eggoftime.ini. The cheats (cheats.c), from SET_CHEATS on, are listed on
  * the menu's Cheats page instead. */
-enum { SET_LANGUAGE, SET_LANGUAGE_JP, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_ZOOM, SET_ZOOM_UI, SET_FILL, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND,
+enum { SET_LANGUAGE, SET_LANGUAGE_JP, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_ZOOM, SET_ZOOM_UI, SET_FILL, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND, SET_SKIP_LOGOS, SET_SKIP_MOVIE,
        SET_CHEAT_EXP, SET_CHEAT_TP, SET_CHEAT_HP, SET_CHEAT_MP, SET_CHEAT_GOLD,
        SET_COUNT };
 #define SET_CHEATS SET_CHEAT_EXP /* the first cheat */

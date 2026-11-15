@@ -22,6 +22,13 @@ ov007 0212a3f0 rt_ct_settings_defaults wrap jp=0212a2c8
 # (runtime/cheats.c).
 ov000 021111f4 rt_ct_battle_rewards wrap jp=02111214
 
+# Front end (the save check, logos, intro movie and title in turn), its intro movie and the scenes' result
+# (the next state): Skip intro logos / Skip intro movie
+# (runtime/patches.c).
+main 0204bfcc rt_ct_front_end wrap jp=0204bffc
+main 0204c668 rt_ct_intro wrap jp=0204c698
+ov007 02121704 rt_ct_scene_result wrap
+
 # Title idle timeout (30 s to the intro movie): held off while System Settings is open (runtime/patches.c).
 ov007 02127618 rt_ct_title_idle wrap jp=021274f0
 

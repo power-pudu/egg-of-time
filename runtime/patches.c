@@ -2,6 +2,7 @@
 #include <SDL3/SDL.h>
 
 #include "dispatch.h"
+#include "display.h"
 #include "rt.h"
 #include "single_screen.h"
 #include "system_menu.h"
@@ -32,6 +33,35 @@ void rt_ct_settings_defaults(CPU *cpu) {
 void rt_ct_title_idle(CPU *cpu) {
     if (sysmenu_is_open()) rt_w16(R[0] + 0x3a44, 0);
     else rt_call_wrapped(cpu, "ov007", GAME_ADDR(0x02127618u, 0x021274f0u));
+}
+
+/* The front end (main 0x0204bfcc) runs its scenes by state, from r0: 0 the save check (ov007, nothing shown
+ * unless the save needs a question: it reads the save, its system settings and whether a game was saved, which the
+ * title's Continue needs), 1 the logos ("Licensed by Nintendo", then Square Enix and Mobiclip), 2 the intro movie
+ * (main 0x0204c668, which returns the next state: 3, the title), 3 the title. Power-on enters at 0. Each scene's
+ * result, its first byte the next state, is read by ov007 0x02121704 (r0 the scene's result bytes) after it ends.
+ * Skip intro logos turns the save check's next state 1 into 2; Skip intro movie leaves out the first intro of each
+ * entry, returning 3 at once (the title idling into the intro still plays it). */
+static int intro_first; /* the front end's first intro is still to come */
+static int check_result; /* the front end entered at the save check, whose result is the next one read */
+
+void rt_ct_front_end(CPU *cpu) {
+    check_result = R[0] == 0;
+    intro_first = 1;
+    rt_call_wrapped(cpu, "main", GAME_ADDR(0x0204bfccu, 0x0204bffcu));
+}
+
+void rt_ct_scene_result(CPU *cpu) {
+    rt_call_wrapped(cpu, "ov007", 0x02121704u);
+    if (check_result && (R[0] & 0xFFu) == 1 && display_setting_get(SET_SKIP_LOGOS)) R[0] = (R[0] & ~0xFFu) | 2;
+    check_result = 0;
+}
+
+void rt_ct_intro(CPU *cpu) {
+    int first = intro_first;
+    intro_first = 0;
+    if (first && display_setting_get(SET_SKIP_MOVIE)) R[0] = 3;
+    else rt_call_wrapped(cpu, "main", GAME_ADDR(0x0204c668u, 0x0204c698u));
 }
 
 /* The game's cursor sound (sound effect 0, as its menus play it when the cursor moves) for the runtime's menus

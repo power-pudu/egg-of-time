@@ -140,6 +140,9 @@ static Setting settings[SET_COUNT] = {
     [SET_FF_MUSIC] = {"ffmusic", "Fast forward music", 2, FF_MUSIC_FAST, ff_music_names, ff_music_labels},
     /* Music only mutes every channel but the BGM players' while fast forwarding (snd.c). */
     [SET_FF_SOUND] = {"ffsound", "Fast forward sound", 2, FF_SOUND_ALL, ff_sound_names, ff_sound_labels},
+    /* At power-on, the "Licensed by Nintendo" and Square Enix logos left out, and the intro movie (patches.c). */
+    [SET_SKIP_LOGOS] = {"skiplogos", "Skip intro logos", 2, 0, onoff_names, onoff_labels},
+    [SET_SKIP_MOVIE] = {"skipintro", "Skip intro movie", 2, 0, onoff_names, onoff_labels},
     /* Cheats (cheats.c): EXP and TP won in battle multiplied, the party's HP and MP kept full, the gold at its most. */
     [SET_CHEAT_EXP] = {"cheatexp", "EXP multiplier", 5, 0, multiplier_names, multiplier_labels},
     [SET_CHEAT_TP] = {"cheattp", "TP multiplier", 5, 0, multiplier_names, multiplier_labels},

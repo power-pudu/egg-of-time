@@ -564,6 +564,13 @@ original bytes, and caches the result per region until the region is written.
     SELECT, pause hint) follow the language in RAM (`rt_french`), so a save state keeps its own; the System
     Settings menu stays English. `ui_font.c` reads UTF-8 and has è and é for them.
   - Mods: replacement cutscenes on (the default) or off (movie mods, below).
+  - Skip intro logos / Skip intro movie (both Off by default; `patches.c`): the front end (main 0x0204bfcc, JP
+    0x0204bffc) runs its scenes by a state in r0: 0 the save check (ov007, nothing shown unless the save needs a
+    question; it reads the save, so without it the title offers New Game only), 1 the logos, 2 the intro movie
+    (main 0x0204c668, JP 0x0204c698, returning the next state, 3), 3 the title; power-on enters at 0. A scene's
+    result (first byte: the next state) is read by ov007 0x02121704. Skip intro logos turns the save check's 1
+    into 2; Skip intro movie returns 3 from the front end's first intro without playing it. The title idling
+    into the intro still plays it.
 - **Fast forward**: holding Left Shift or the gamepad's right trigger (autokey `FF`) runs emulated time at 2x the
   host clock (`rt_set_speed`; the game thread rebases `sched_now` when it sees the change). Everything on emulated
   time speeds up; the window keeps presenting at its own rate. The sound driver's frames halve in host time and
