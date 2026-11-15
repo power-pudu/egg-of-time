@@ -1606,6 +1606,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h);
             ext0 = ext ? win_ext[wy][0] : NULL, ext1 = ext ? win_ext[wy][1] : NULL;
         }
+        int ui_own = pass == 2 && on_screen; /* the UI layer: its own line's windows (see ctl below) */
+        uint32_t ui_h = win_ext_on ? win_lines[y] : (uint32_t)w1h << 16 | w0h;
         const ObjLine *o = pass == 2 ? &ol_ui : pass ? &ol_all : &ol;
         uint32_t *dst = pass == 2 ? &ui_frame[y * VIDEO_LINE_MAX] : !pass ? out : e->sel_shift ? &shifted_frame[y * VIDEO_LINE_MAX] : &party_frame[FROW(e, y)];
         VideoHd *hd = !hd_on || pass == 2 ? NULL : !pass ? hd_row : e->sel_shift ? NULL : &hd_party[FROW(e, y)];
@@ -1624,7 +1626,17 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             /* The game's screen column the windows are tested at: the view's shift at a room's end moves the picture,
              * and the windows the game placed on it with it (Frog's Water falls in WIN0, on the enemy). */
             int vx = x - m + e->view_x, vwx = SDL_clamp(vx, 0, SCREEN_W - 1);
-            if (e->ring && (ring_row || vx != vwx)) {
+            /* The UI layer (a menu, the text box) is not moved by the view's shift at a room's end, nor drawn as
+             * another line: its windows are its own line's and column's, as the game's HDMA table has them
+             * (ui_own). With the windows of the line the shift puts there, Lavos's lasers cut the battle panel's
+             * top rows (his room's view 16 rows down, its line 146 took line 130's rays). */
+            if (ui_own) {
+                int uy0 = win0 && in_range(y, w0v >> 8, w0v & 0xFF), uy1 = win1 && in_range(y, w1v >> 8, w1v & 0xFF);
+                if (uy0 && in_range(wx, (uint16_t)ui_h >> 8, ui_h & 0xFF)) ctl = winin & 0x3F;
+                else if (uy1 && in_range(wx, ui_h >> 24, (ui_h >> 16) & 0xFF)) ctl = (winin >> 8) & 0x3F;
+                else if (winobj && o->win[x]) ctl = (winout >> 8) & 0x3F;
+                else if (win0 || win1 || winobj) ctl = winout & 0x3F;
+            } else if (e->ring && (ring_row || vx != vwx)) {
                 int in = 0;
                 for (int k = 0; k < ring_n; k++) in |= vx >= ring_sp[k][0] && vx < ring_sp[k][1];
                 ctl = in ? winin & 0x3F
