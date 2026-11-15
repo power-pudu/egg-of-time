@@ -815,6 +815,28 @@ void rt_ws_draw_cell(CPU *cpu) {
     cell_known = cell_world = 0;
 }
 
+/* A battle effect's sprite object placed each frame (ov000 0x0210efe4, r0 = the effect: its screen Y at +0x1ca4, which
+ * the call then moves on) is shown only while its Y is within -63..191, the DS screen and the 64 rows above it;
+ * elsewhere it is hidden. The view drawn here reaches further (zoom out's rows, the view's shift at a room's ends):
+ * Frog Squash's eyes went at the top of each bounce, leaving holes in the frog shown above the screen, whose BG had
+ * stopped rising there (its VOFS held at 66, the eyes going on 20 rows higher, hidden). An object leaving the range
+ * from where it was shown, within the view's reach, stays shown at the range's edge: the call goes as with its Y
+ * there. One coming from beyond (the frog dropping in from above) is left hidden. */
+void rt_ws_effect_sprite(CPU *cpu) {
+    static uint32_t held; /* the effect whose object was shown last frame, at its Y or the edge */
+    uint32_t effect = R[0], at = effect + 0x1ca4;
+    int y = (int16_t)rt_r16(at), up = field_rows - next_y, down = field_rows + next_y;
+    int edge = y <= -64 && y > -64 - up ? -63 : y >= 192 && y < 192 + down ? 191 : 0;
+    if (!edge || held != effect || cpu->resume_pc) {
+        held = !edge && y > -64 && y < 192 ? effect : 0;
+        rt_call_wrapped(cpu, "ov000", GAME_ADDR(0x0210efe4u, 0x0210f004u));
+        return;
+    }
+    rt_w16(at, (uint16_t)edge);
+    rt_call_wrapped(cpu, "ov000", GAME_ADDR(0x0210efe4u, 0x0210f004u));
+    rt_w16(at, (uint16_t)(y + (int16_t)rt_r16(at) - edge)); /* with the move the call made */
+}
+
 static void game_enter_oam(CPU *cpu) { rt_call_wrapped(cpu, "main", GAME_ADDR(0x02048098u, 0x020480c8u)); } /* the original */
 void rt_ws_enter_oam(CPU *cpu) {
     uint32_t e0 = rt_r16(R[0]), e1 = rt_r16(R[0] + 2);
@@ -1018,9 +1040,13 @@ static void measure_rates(uint32_t scroll, uint32_t room, int free) {
     for (int bg = 0; bg < 4; bg++) rates.cnt[bg] = io_get16(0x08 + 2 * bg);
 }
 
-/* The share of the view's shift v that BG bg moves by along axis a. */
+/* The share of the view's shift v that BG bg moves by along axis a. A battle effect on a 512x512 map (view_bgs) moves
+ * by all of it, with its target: Frog Squash's frog, its scroll bouncing while the room's shook, was measured at a
+ * rate near 0, and at Lavos's room's end it stood up to 16 rows off its eyes (sprites), the room showing through
+ * their holes. */
 static int bg_shift(int bg, int a, int v) {
-    int r = rates.room && !world_margin ? rates.rate[bg][a] : 256, p = v * r; /* the world map's: all of it */
+    int effect = (io_get16(0x08 + 2 * bg) >> 14) == 3;
+    int r = rates.room && !world_margin && !effect ? rates.rate[bg][a] : 256, p = v * r; /* the world map's: all of it */
     return (p + (p >= 0 ? 128 : -128)) / 256;
 }
 

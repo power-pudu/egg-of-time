@@ -431,7 +431,13 @@ original bytes, and caches the result per region until the region is written.
       picture at the ends. A battle effect on a 512x512 map (the room's BGs are 512x256 rings) moves with it too, and
       the windows are tested at the game's screen column the shifted picture shows: Frog's Water (BG0, blended, shown
       in WIN0 only) is placed on its target in the game's screen, and at a forest's east end, with the shift left out,
-      it fell 85 px left of the enemy, on Marle. Screen coordinates stay: the text box and the UI; the battle HUD, in
+      it fell 85 px left of the enemy, on Marle. It moves by the whole shift, never by a measured share: Frog Squash's
+      frog (BG0, its scroll bouncing while the room's shook) was measured at a rate near 0 and stood up to 16 rows off
+      its eyes (sprites), the room showing through their holes. Those eyes are a battle effect's sprite object, which
+      the game shows only while its Y is within the DS screen and the 64 rows above (ov000 0x0210efe4,
+      `rt_ws_effect_sprite`); at the top of each bounce they went, the frog's BG held 20 rows lower, and its holes
+      showed in the rows above the screen. One leaving that range from where it was shown, within the view's reach,
+      stays shown at the range's edge, which keeps the eyes within a few rows of the holes. Screen coordinates stay: the text box and the UI; the battle HUD, in
       the G2D view, has the shift taken out as it enters OAM (`rt_ws_enter_oam`).
     - Rooms: with Fill screen sides off, the rows beyond the room are black (`ws_room_rows`: bounds +0x18 top, +0x19
       bottom). Bounds can hold several rooms one above the other (the prison towers, location 0x1d: metatile rows
