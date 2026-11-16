@@ -38,12 +38,15 @@ void display_capture(const char *path);
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
  * Setting one applies it at once and saves eggoftime.ini. The cheats (cheats.c), from SET_CHEATS on, are listed on
  * the menu's Cheats page instead. */
-enum { SET_LANGUAGE, SET_LANGUAGE_JP, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_ZOOM, SET_ZOOM_UI, SET_FILL, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FF_MUSIC, SET_FF_SOUND, SET_SKIP_LOGOS, SET_SKIP_MOVIE,
+enum { SET_LANGUAGE, SET_LANGUAGE_JP, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_ZOOM, SET_ZOOM_UI, SET_FILL, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FONT_SIZE, SET_FF_MUSIC, SET_FF_SOUND, SET_SKIP_LOGOS, SET_SKIP_MOVIE,
        SET_CHEAT_EXP, SET_CHEAT_TP, SET_CHEAT_HP, SET_CHEAT_MP, SET_CHEAT_GOLD,
        SET_COUNT };
 #define SET_CHEATS SET_CHEAT_EXP /* the first cheat */
 enum { LANGUAGE_ENGLISH, LANGUAGE_FRENCH }; /* SET_LANGUAGE values: the USA and European games' languages */
 enum { LANGUAGE_JP_JAPANESE, LANGUAGE_JP_ENGLISH }; /* SET_LANGUAGE_JP values: the Japanese game's */
+/* SET_FONT_SIZE: FONT_SIZE_MIN + FONT_SIZE_STEP * value, in percent (gfx_font.c). */
+#define FONT_SIZE_MIN 50
+#define FONT_SIZE_STEP 5
 enum { FF_MUSIC_FAST, FF_MUSIC_NORMAL };    /* SET_FF_MUSIC values */
 enum { FF_SOUND_ALL, FF_SOUND_MUSIC };      /* SET_FF_SOUND values */
 /* The language chosen for this ROM's game, by its DS firmware id (LANGUAGE_ID_*, ui_text.h). */
@@ -53,7 +56,8 @@ int display_setting_count(int id);
 int display_setting_get(int id);
 /* The menu lists it: Fill screen sides only with a wide aspect ratio, Minimap only where the main screen of single
  * screen mode is shown, Minimap size and background only with Minimap on, Shader only with shaders in mods/shaders,
- * Internal resolution and Graphics filter only without a shader. */
+ * Internal resolution and Graphics filter only without a shader, Font size only with a font file in mods/graphics/fonts
+ * and Mods on. */
 int display_setting_shown(int id);
 /* Any thread: the main window shows the main screen alone (layout Top screen only, screens not swapped, no second
  * screen window): the screen single screen mode lays out for one. */

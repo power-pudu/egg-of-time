@@ -13,7 +13,7 @@ typedef struct GfxHdTile { int scale, indexed, bpp8; const void *px; } GfxHdTile
 
 /* The scale HD frames are drawn at: the largest of the HD tiles (0: none loaded). Any thread. */
 int gfxmod_hd_scale(void);
-/* The HD tile replacing the native tile with these bytes (32, or 64 at 8 bits per pixel); 0 if none. Any thread
- * (the table does not change after gfxmod_load). */
+/* The HD tile replacing the native tile with these bytes (32, or 64 at 8 bits per pixel); 0 if none: the HD images'
+ * (their table does not change after gfxmod_load), else letters a font mod drew (gfx_font.c: game thread). */
 uint32_t gfxmod_find(const uint8_t *tile, int bpp8);
 const GfxHdTile *gfxmod_tile(uint32_t n);

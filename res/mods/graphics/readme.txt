@@ -90,13 +90,28 @@ glyph, its number, its advance width (how far the next letter starts, in pixels;
 glyph the font does not have) and the ASCII characters drawn with it.
 
 Copy either or both to fonts\msg\big\ (or small\) and edit them:
-- The .png at its original size only (no HD: text is drawn into tiles as the game runs).
-  Colour 0 is transparent, 1 the letter (white) and 3 its shadow (black); 2 is unused. In an
-  RGBA PNG each colour becomes the nearest of these. A letter can use its whole cell.
-- The .txt: change the widths (the second column). The third column is not read.
+- The .png at its original size changes the letters everywhere. Colour 0 is transparent, 1
+  the letter (white) and 3 its shadow (black); 2 is unused. In an RGBA PNG each colour
+  becomes the nearest of these. A letter can use its whole cell.
+- The .png 2 to 8 times larger (both sides by the same whole number: 384x460 at 2x for the
+  big font) holds HD letters instead, in the same colours, drawn wherever HD art is (see HD
+  above). Their shapes at the original size stay the game's: draw the HD letters over them.
+- The .txt: change the widths (the second column). The third column lists the characters
+  drawn with each glyph, for a font file (below); add others there (any Unicode character,
+  "space" for a space).
 A glyph the font does not have becomes a new one when you draw in its cell, as wide as the
 cell until the .txt gives it a width. Glyphs keep their numbers: the game's text refers to
 them by number, so a translation's letters stay where its patch put them.
+
+Font files: a .ttf or .otf font in fonts\msg\big\ (or small\) replaces the letters it has,
+for the characters the font's .txt lists (without a .txt: the ASCII letters, digits and
+signs). It is drawn in the game's style: no smoothing, a one-pixel shadow right and below,
+its own letter widths. HD shows it sharp; at the original size (the one-screen menus, a
+shader) it is drawn in the game's few pixels, so pick a font that stays clear when small.
+System Settings > Font size (shown while a font file is loaded) scales it from 50% to 150%,
+at once: 100% fits the font's tallest and lowest letters in the line. The lines are 10
+pixels apart (8 for the small font), so larger letters are cut off at the top and bottom.
+Glyphs the font has no character for (symbols, icons) stay the game's.
 
 Sharing
 -------

@@ -61,3 +61,8 @@ ov002 0211cc20 rt_ws_world_sprite wrap jp=0211cc40
 # (runtime/movie.c). 0x02198da0 is the variant that also draws on the bottom screen.
 ov017 02198d20 rt_movie_play wrap
 ov017 02198da0 rt_movie_play_scene wrap
+
+# Message font glyphs drawn into text tile buffers, and their advance widths: with a font mod (HD .png, .ttf / .otf
+# in mods/graphics/fonts), drawn from it and kept for HD art (runtime/gfx_font.c).
+main 0203d518 rt_font_draw_glyph wrap jp=0203d548
+main 0203d4fc rt_font_advance wrap jp=0203d52c

@@ -28,7 +28,7 @@ typedef struct VideoHd {
     uint16_t below;    /* BGR555 under it: shown where the HD art is transparent */
 } VideoHd;
 /* The shown screens' sources (as video_copy_frame's buffers) and the palette RAM of the frame. */
-typedef struct VideoHdFrame { VideoHd *top, *bottom, *main, *party, *still; uint16_t *palette; int on; } VideoHdFrame;
+typedef struct VideoHdFrame { VideoHd *top, *bottom, *main, *party, *still, *ui; uint16_t *palette; int on; } VideoHdFrame;
 
 /* VRAM as seen by the CPU (0x06000000-0x06FFFFFF); NULL where no bank is mapped. */
 uint8_t *video_vram_ptr(uint32_t addr);

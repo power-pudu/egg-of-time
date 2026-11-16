@@ -228,9 +228,10 @@ static int hd_on;                 /* this frame records sources */
 static uint32_t hd_stamp = 1;     /* the frame, for hd_cache */
 static HdCache hd_cache[2][2][2]; /* by engine, sprite, 8 bits per pixel: VRAM address / 32 -> gfxmod tile */
 static VideoHd hd_frame[2][VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
+static VideoHd hd_ui[VIDEO_LINE_MAX * SCREEN_H]; /* the UI layer's (ui_frame) */
 static VideoHd present_hd[2][SCREEN_W * SCREEN_H], present_hd_wide[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
 static VideoHd present_hd_main[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], present_hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX],
-    present_hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
+    present_hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], present_hd_ui[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
 static uint16_t present_palette[RT_PALETTE_SIZE / 2];
 static int present_hd_on;
 
@@ -579,6 +580,8 @@ typedef struct ObjLine { /* from column -margin, like the layer buffers */
     uint8_t party[VIDEO_LINE_MAX];  /* the pixel's sprite moves with the camera */
     uint8_t ui[VIDEO_LINE_MAX];     /* the pixel's sprite is in screen coordinates (ws_tag_oam); 2: placed at an actor */
     uint16_t placed[VIDEO_LINE_MAX]; /* the first sprite placed at an actor here, whatever covers it (OPAQUE set) */
+    uint16_t under[VIDEO_LINE_MAX];  /* the sprite pixel the top one covers (OPAQUE set; HD art's transparent texels) */
+    uint8_t under_prio[VIDEO_LINE_MAX];
     HdLine hd;                      /* while hd_on */
 } ObjLine;
 
@@ -724,6 +727,11 @@ static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, i
                 }
             }
             if (ui == 2 && !(ol->placed[sx] & OPAQUE)) ol->placed[sx] = color | OPAQUE;
+            if ((ol->color[sx] & OPAQUE) && prio < ol->prio[sx]) { /* the top one goes under this one */
+                ol->under[sx] = ol->color[sx], ol->under_prio[sx] = ol->prio[sx];
+            } else if ((ol->color[sx] & OPAQUE) && (!(ol->under[sx] & OPAQUE) || prio < ol->under_prio[sx])) {
+                ol->under[sx] = color | OPAQUE, ol->under_prio[sx] = (uint8_t)prio;
+            }
             if (!(ol->color[sx] & OPAQUE) || prio < ol->prio[sx]) {
                 ol->color[sx] = color | OPAQUE;
                 ol->prio[sx] = (uint8_t)prio;
@@ -752,6 +760,8 @@ static void stretch_objs(const Engine *e, ObjLine *ol) {
         ol->party[x] = src.party[s];
         ol->ui[x] = src.ui[s];
         ol->placed[x] = src.placed[s];
+        ol->under[x] = src.under[s];
+        ol->under_prio[x] = src.under_prio[s];
         ol->hd.src[x] = src.hd.src[s];
         ol->hd.pal[x] = src.hd.pal[s];
     }
@@ -1501,6 +1511,7 @@ static void engine_frame_start(Engine *e) {
             e->ref_y[i] -= e->rows * (int16_t)reg16(e, 0x26 + 0x10 * i);
         }
         if (e->rows) memset(ui_frame, 0, sizeof ui_frame), memset(ui_stays, 0, sizeof ui_stays), memset(ui_placed, 0, sizeof ui_placed);
+        if (e->rows && hd_on) memset(hd_ui, 0, sizeof hd_ui);
         e->band_rows = e->ring = e->rays = 0;
         e->lines_top[1] = e->lines_top[0], e->lines_bottom[1] = e->lines_bottom[0];
         e->lines_top[0] = SCREEN_H, e->lines_bottom[0] = -1; /* none yet */
@@ -1763,7 +1774,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         uint32_t ui_h = win_ext_on ? win_lines[y] : (uint32_t)w1h << 16 | w0h;
         const ObjLine *o = pass == 2 ? &ol_ui : pass ? &ol_all : &ol;
         uint32_t *dst = pass == 2 ? &ui_frame[y * VIDEO_LINE_MAX] : !pass ? out : e->sel_shift ? &shifted_frame[y * VIDEO_LINE_MAX] : &party_frame[FROW(e, y)];
-        VideoHd *hd = !hd_on || pass == 2 ? NULL : !pass ? hd_row : e->sel_shift ? NULL : &hd_party[FROW(e, y)];
+        VideoHd *hd = !hd_on ? NULL : pass == 2 ? &hd_ui[y * VIDEO_LINE_MAX] : !pass ? hd_row : e->sel_shift ? NULL : &hd_party[FROW(e, y)];
         const uint16_t *src[4] = {bgline[0], bgline[1], bgline[2], bgline[3]};
         for (int bg = 0; bg < 2; bg++) if (!pass && (box >> bg & 1)) src[bg] = under[bg];
         for (int x = 0; x < width; x++) { /* buffer column; windows extend their edge columns into the margins */
@@ -1892,7 +1903,12 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             if (hd) {
                 const HdLine *h = layer[0] == 4 ? &o->hd : layer[0] < 4 && src[layer[0]] == bgline[layer[0]] ? &bghd[layer[0]] : NULL;
                 uint32_t s = h && (dst[x] || to_still) && !cut ? h->src[x] : 0;
-                VideoHd r = s ? (VideoHd){s, h->pal[x], (uint8_t)weight, added, found > 1 ? col[1] : backdrop} : (VideoHd){0};
+                uint16_t below = found > 1 ? col[1] : backdrop;
+                /* Under a sprite: the sprite it covers, when that one is in front of the layer below (a text sprite
+                 * on a panel sprite). */
+                if (layer[0] == 4 && (o->under[x] & OPAQUE) && (layer[1] > 3 || o->under_prio[x] <= pr[layer[1]]))
+                    below = o->under[x] & 0x7FFF;
+                VideoHd r = s ? (VideoHd){s, h->pal[x], (uint8_t)weight, added, below} : (VideoHd){0};
                 if (to_still) hd_still[FROW(e, y) + x] = r, hd[x] = (VideoHd){0};
                 else hd[x] = r;
             }
@@ -1929,6 +1945,12 @@ advance:
             }
         }
         for (int x = 0; e->rows && on_screen && x < width; x++) { /* the UI layer */
+            VideoHd *r = &hd_ui[y * VIDEO_LINE_MAX + x];
+            if (hd_on && r->tile) {
+                r->weight = (uint8_t)(r->weight * (16 - f) >> 4);
+                r->added = (uint16_t)(blend(r->added, mmode == 1 ? 0x7FFF : 0, 16 - f, f));
+                r->below = brighten(r->below, f, mmode == 1);
+            }
             uint32_t p = ui_frame[y * VIDEO_LINE_MAX + x];
             if (p) ui_frame[y * VIDEO_LINE_MAX + x] = master_bright(p, f, mmode);
             p = ui_placed[y * VIDEO_LINE_MAX + x];
@@ -1992,6 +2014,7 @@ static void ui_to_edges(int w, int rows, int shown) {
         for (int x = 0; x < w && !moves[y]; x++) moves[y] = ui_frame[y * VIDEO_LINE_MAX + x] && !ui_stays[y * VIDEO_LINE_MAX + x];
     }
     memset(present_ui, 0, (size_t)w * (SCREEN_H + 2 * rows) * 4);
+    if (hd_on) memset(present_hd_ui, 0, (size_t)w * (SCREEN_H + 2 * rows) * sizeof *present_hd_ui);
     for (int y0 = 0, y1; y0 < SCREEN_H; y0 = y1) {
         for (y1 = y0 + 1; y1 < SCREEN_H && moves[y1] == moves[y0]; y1++) {}
         int dy = !moves[y0] ? 0 : y1 <= SCREEN_H / 2 ? -shown : y0 >= SCREEN_H / 2 ? shown : 0; /* the band y0..y1-1 */
@@ -1999,15 +2022,23 @@ static void ui_to_edges(int w, int rows, int shown) {
             const uint32_t *src = &ui_frame[y * VIDEO_LINE_MAX];
             const uint8_t *stays = &ui_stays[y * VIDEO_LINE_MAX];
             uint32_t *to = &present_ui[(y + rows + dy) * w], *at = &present_ui[(y + rows) * w];
+            const VideoHd *hd = &hd_ui[y * VIDEO_LINE_MAX];
+            VideoHd *hd_to = &present_hd_ui[(y + rows + dy) * w], *hd_at = &present_hd_ui[(y + rows) * w];
             for (int x = 0; x < w; x++) {
-                if (src[x]) (stays[x] ? at : to)[x] = src[x];
+                if (!src[x]) continue;
+                (stays[x] ? at : to)[x] = src[x];
+                if (hd_on) (stays[x] ? hd_at : hd_to)[x] = hd[x];
             }
         }
     }
     for (int y = 0; y < SCREEN_H; y++) {
         const uint32_t *placed = &ui_placed[y * VIDEO_LINE_MAX];
         uint32_t *at = &present_ui[(y + rows) * w];
-        for (int x = 0; x < w; x++) if (placed[x]) at[x] = placed[x];
+        for (int x = 0; x < w; x++) {
+            if (!placed[x]) continue;
+            at[x] = placed[x];
+            if (hd_on) present_hd_ui[(y + rows) * w + x] = (VideoHd){0};
+        }
     }
 }
 
@@ -2047,6 +2078,7 @@ void video_end_frame(void) {
     if (present_ui_h == SCREEN_H) {
         for (int y = 0; present_ui_on && y < SCREEN_H; y++) {
             memcpy(&present_ui[y * w], &ui_frame[y * VIDEO_LINE_MAX], (size_t)w * 4);
+            if (hd_on) memcpy(&present_hd_ui[y * w], &hd_ui[y * VIDEO_LINE_MAX], (size_t)w * sizeof *hd_ui);
         }
     } else {
         ui_to_edges(w, rows, SDL_max(rows - (SDL_GetAtomicInt(&party_wanted) ? VIDEO_SLIDE_ROWS : 0), 0));
@@ -2112,6 +2144,7 @@ int video_copy_frame(uint32_t *top, uint32_t *bottom, uint32_t *main, int *main_
         memcpy(hd->main, present_hd_main, (size_t)w * h * sizeof *present_hd_main);
         if (present_party_on) memcpy(hd->party, present_hd_party, (size_t)w * h * sizeof *present_hd_party);
         if (present_still_on) memcpy(hd->still, present_hd_still, (size_t)w * h * sizeof *present_hd_still);
+        if (present_ui_on) memcpy(hd->ui, present_hd_ui, (size_t)w * present_ui_h * sizeof *present_hd_ui);
         memcpy(hd->palette, present_palette, sizeof present_palette);
     }
     SDL_UnlockMutex(present_lock);

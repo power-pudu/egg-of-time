@@ -36,6 +36,7 @@
 #include <SDL3/SDL.h>
 
 #include "display.h"
+#include "gfx_font.h"
 #include "gfx_mod.h"
 #include "minimap.h"
 #include "movie.h"
@@ -108,6 +109,10 @@ static const float minimap_scales[] = {1.0f / 2, 3.0f / 8, 1.0f / 4}; /* of the 
 static const char *const multiplier_names[] = {"off", "2", "4", "8", "10"};
 static const char *const multiplier_labels[] = {"Disabled", "x2", "x4", "x8", "x10"};
 static const char *const off_names[] = {"off"};
+static const char *const font_size_names[] = {"50", "55", "60", "65", "70", "75", "80", "85", "90", "95", "100", "105",
+                                              "110", "115", "120", "125", "130", "135", "140", "145", "150"};
+static const char *const font_size_labels[] = {"50%", "55%", "60%", "65%", "70%", "75%", "80%", "85%", "90%", "95%", "100%",
+                                               "105%", "110%", "115%", "120%", "125%", "130%", "135%", "140%", "145%", "150%"};
 static const char **shader_names; /* "off", then shader_key() of each listed shader */
 
 static Setting settings[SET_COUNT] = {
@@ -136,6 +141,8 @@ static Setting settings[SET_COUNT] = {
     [SET_SHADER] = {"shader", "Shader", 1, 0, off_names, NULL}, /* the list: list_shaders */
     [SET_COLOR] = {"color", "Color", 4, 1, color_names, color_labels},
     [SET_MODS] = {"mods", "Mods", 2, 1, onoff_names, onoff_labels}, /* replacement cutscenes and music (movie.c, music.c) */
+    /* The letters of a font file in mods/graphics/fonts: 100% fits the font's line (gfx_font.c). */
+    [SET_FONT_SIZE] = {"fontsize", "Font size", 21, (100 - FONT_SIZE_MIN) / FONT_SIZE_STEP, font_size_names, font_size_labels},
     /* Fast forward (main.c, sched.c); Normal speed keeps the music sequences on the host's clock (snd.c). */
     [SET_FF_MUSIC] = {"ffmusic", "Fast forward music", 2, FF_MUSIC_FAST, ff_music_names, ff_music_labels},
     /* Music only mutes every channel but the BGM players' while fast forwarding (snd.c). */
@@ -685,7 +692,7 @@ static void compose_hd(const HdJob *job) {
 static const VideoHd *hd_source(const View *v, int tex) {
     if (!hd_frame || !hd_frame->on || view_shader(v) || !SETTING(SET_MODS) || !gfxmod_hd_scale()) return NULL;
     return tex == 0 ? hd_frame->top : tex == 1 ? hd_frame->bottom : tex == 2 ? hd_frame->main
-           : tex == 3 ? hd_frame->party : hd_frame->still;
+           : tex == 3 ? hd_frame->party : tex == 4 ? hd_frame->still : hd_frame->ui;
 }
 
 /* Draws and uploads screen `tex` (its pixels px with the Color setting applied) from HD art at k times its size,
@@ -723,6 +730,7 @@ static void upload(View *v, int tex, const uint32_t *px, int shown) {
     const VideoHd *src = shown ? hd_source(v, tex) : NULL;
     SDL_FRect dest = dest_rect(v);
     int k = src ? SDL_min(gfxmod_hd_scale(), internal_scale(v, &dest)) : 0;
+    if (k && v == &primary) gfxfont_view_scale(k); /* letters are drawn for the main window's scale */
     v->hd_k[tex] = k > 1 && upload_hd(v, tex, px, src, k) ? k : 0;
     SDL_UpdateTexture(v->native[tex], &(SDL_Rect){0, 0, w, h}, px, w * 4);
     if (SETTING(SET_FILTER) == FILTER_SMOOTH) {
@@ -813,8 +821,8 @@ static int draw_shaded(const SDL_FRect *shown, const int *screens, int nshown, i
  * whole height (between the picture's pixels: the text scales less evenly, the more so at 77%). */
 static void draw_ui(const View *v, int x, int y, int n, int cw, int ch) {
     if (!ui_on) return;
-    int k = !view_shader(v) && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
-    SDL_Texture *t = k > 1 ? v->smooth[5] : v->native[5];
+    int k = v->hd_k[5] ? v->hd_k[5] : !view_shader(v) && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
+    SDL_Texture *t = v->hd_k[5] ? v->hd_tex[5] : k > 1 ? v->smooth[5] : v->native[5];
     if (SETTING(SET_ZOOM_UI)) {
         float columns = (float)cw * SCREEN_H / ch;
         SDL_RenderTexture(v->ren, t, &(SDL_FRect){((float)main_w - columns) / 2 * k, 0, columns * k, (float)SCREEN_H * k},
@@ -1097,7 +1105,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
         if (minimap_shown(&primary)) upload_minimap();
         if (party_on) upload(&primary, 3, party, shown[2]);
         if (still_on) upload(&primary, 4, still, shown[2]);
-        if (ui_on) upload(&primary, 5, ui, 0);
+        if (ui_on) upload(&primary, 5, ui, shown[2]);
         hd_frame = NULL;
         reupload = 0;
     }
@@ -1184,6 +1192,7 @@ int display_setting_shown(int id) {
     case SET_MINIMAP_SIZE:
     case SET_MINIMAP_BG: return SETTING(SET_MINIMAP) && minimap_allowed(&primary);
     case SET_SHADER: return settings[SET_SHADER].count > 1;
+    case SET_FONT_SIZE: return SETTING(SET_MODS) && gfxfont_has_ttf();
     case SET_RESOLUTION:
     case SET_FILTER: return !SETTING(SET_SHADER); /* a shader replaces them */
     default: return 1;

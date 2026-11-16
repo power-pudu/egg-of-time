@@ -170,9 +170,9 @@ static uint32_t still_px[VIDEO_LINE_MAX * VIDEO_ROWS_MAX]; /* main screen's stil
 static uint32_t ui_px[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];     /* main screen's UI layer (zoom out) */
 /* The screens' sources for HD graphics mods (gfx_mod.c). */
 static VideoHd hd_top[SCREEN_W * SCREEN_H], hd_bottom[SCREEN_W * SCREEN_H], hd_main[VIDEO_LINE_MAX * VIDEO_ROWS_MAX],
-    hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
+    hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_ui[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
 static uint16_t hd_palette[RT_PALETTE_SIZE / 2];
-static VideoHdFrame hd = {hd_top, hd_bottom, hd_main, hd_party, hd_still, hd_palette, 0};
+static VideoHdFrame hd = {hd_top, hd_bottom, hd_main, hd_party, hd_still, hd_ui, hd_palette, 0};
 static int party_on, still_on, ui_on;
 
 

@@ -332,7 +332,8 @@ their own licenses. See [LICENSE.md](LICENSE.md).
   by AetiasHax, for the analysis the recompiler builds on.
 - [SDL3](https://libsdl.org), [FFmpeg](https://ffmpeg.org) (LGPL, linked dynamically),
   [rcheevos](https://github.com/RetroAchievements/rcheevos) (MIT) and [curl](https://curl.se) for RetroAchievements,
-  [minicoro](https://github.com/edubart/minicoro) (bundled in `runtime/third_party/`, under its own license),
+  [minicoro](https://github.com/edubart/minicoro) and [stb_truetype](https://github.com/nothings/stb) (font mods)
+  (bundled in `runtime/third_party/`, under their own licenses),
   [xdelta3](https://github.com/jmacd/xdelta) (Apache 2.0, bundled in release kits for xdelta translation
   patches), [Capstone](https://www.capstone-engine.org), and [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
   and Python in the Windows release.

@@ -69,6 +69,7 @@ set(RUNTIME_SOURCES
     runtime/display.c
     runtime/game_build.c
     runtime/gfx_dump.c
+    runtime/gfx_font.c
     runtime/gfx_mod.c
     runtime/minimap.c
     runtime/gfx_rom.c

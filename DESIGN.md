@@ -743,11 +743,28 @@ original bytes, and caches the result per region until the region is written.
   palettes have none. `runtime/display.c` then draws each shown screen at min(HD scale, internal scale) from
   those records on worker threads: indexed art through the frame's palette RAM, RGBA as painted, both through
   the recorded blend and the Color setting. Not with a shader; the one-screen menus (built by
-  `runtime/single_screen.c`) keep native tiles, the field, warp, world map and race passing their sources on.
-  Fonts (`fonts/<ROM path>.png` and `.txt`, first pass) rebuild the font file: glyph pixels at 1x only (text is
-  drawn into tiles at run time), advance widths, new glyphs where none were; each glyph keeps its bytes per row
-  unless its pixels need more (some originals are wider than their pixels), so unchanged files rebuild byte for
-  byte.
+  `runtime/single_screen.c`) keep native tiles, the field, warp, world map and race passing their sources on, and
+  so does the zoom out's UI layer (text boxes, battle panels: `hd_ui`, moved with its pixels by `ui_to_edges`).
+  Fonts (`fonts/<ROM path>.png` and `.txt`, first pass) rebuild the font file: glyph pixels at 1x, advance widths,
+  new glyphs where none were; each glyph keeps its bytes per row unless its pixels need more (some originals are
+  wider than their pixels), so unchanged files rebuild byte for byte. A font .png at 2x to 8x, a `.ttf` / `.otf` in
+  a font's folder and the `.txt`'s third column (characters by glyph) go to the font mods.
+- **Font mods** (`runtime/gfx_font.c`): text is drawn letter by letter into 4 bpp tile buffers in RAM, copied to
+  VRAM later: main 0x0203d518 (JP 0x0203d548; font object, buffer, width in tiles, glyph, then x, y, colour on the
+  stack) draws one 2 bpp glyph row by row over the 3 tiles from x / 8, 0 kept, 1 and 2 to 2c + 2 and 2c + 3, 3 ORed
+  with 1 (c = 6: 0x000F000F by tile row word); main 0x0203d4fc (JP 0x0203d52c) gives the advance width, the only
+  way the game reads it. Both are wrapped (`overrides.txt`) while Mods is on and a font mod loaded; the font is
+  told by its file's height and glyph count (big 10 / 366, small 8 / 359). A `.ttf` / `.otf` (stb_truetype) gives
+  the glyphs whose character it has: pixels at least half covered (a quarter at 1x), the shadow as the letter moved
+  0 to 1 pixel right and down, the advance its own + 1, scaled by System Settings > Font size (100%: ascent to
+  descent in rows 1 to height - 2); where the HD glyph has pixels the 1x one lacks, the 1x pixel is shadow, so every
+  tile the HD letter covers changes and gets its art. The draw is redone in C from those glyphs, word for word the game's. For HD,
+  each buffer tile's pixels before the first draw and the draws since are kept by RAM address (started again when
+  the tile no longer holds what the last draw left); after each draw the touched tiles' HD art is composed by the
+  same rules from the HD glyphs (TrueType at the main window's HD scale, the HD .png, or the ROM's upscaled) into
+  a table keyed on the tile's bytes (4096 tiles; those unshown for a second, else the older half, are dropped,
+  their pixels kept for the renderer) that `gfxmod_find` looks in after the HD images', tile numbers from
+  0x400000. The one-screen menus and shaders show the 1x letters.
 - **Translation mods** (`runtime/translation.c`, `runtime/rompatch.c`): every `.ips`, `.bps`, `.xdelta`,
   `.vcdiff`, `.xdelta3` or `.delta` file in `mods/translation/` patches the verified ROM before it is extracted, in
   file-name order (a split translation, or a base patch and a fix). IPS and BPS are decoded here; BPS checks its

@@ -15,9 +15,10 @@
  * of its own: see palettes.txt in the dump) changes that palette file's colours. Where images overlap, the one
  * read later (in path order) wins.
  *
- * Fonts (fonts/<file>.png and .txt, the dump's) change the message font files: glyph pixels at the same size only
- * (text draws glyphs into tiles at run time, so there are no font tiles to give HD art), advance widths, and new
- * glyphs where the font has none. The font file is rebuilt.
+ * Fonts (fonts/<file>.png and .txt, the dump's) change the message font files: glyph pixels at the same size,
+ * advance widths, and new glyphs where the font has none; the font file is rebuilt. A .png 2 to 8 times larger is
+ * the font's HD glyphs, and a .ttf or .otf in the font's folder replaces its letters; both are drawn as the game
+ * draws text (gfx_font.c), which also reads the characters the .txt's third column gives each glyph.
  *
  * Images are read in two passes: palettes and same-size images first, then the HD ones, keyed by the tiles as the
  * first pass left them. */
@@ -27,6 +28,7 @@
 
 #include <SDL3/SDL.h>
 
+#include "gfx_font.h"
 #include "gfx_mod.h"
 #include "gfx_rom.h"
 #include "rt.h"
@@ -95,11 +97,17 @@ static int add_hd(const uint8_t *t, int bpp8, int scale, int indexed, void *px) 
     return 1;
 }
 
-int gfxmod_hd_scale(void) { return hd_scale; }
+int gfxmod_hd_scale(void) { return SDL_max(hd_scale, gfxfont_hd_scale()); }
 
-uint32_t gfxmod_find(const uint8_t *t, int bpp8) { return entry_count > 1 ? lookup(t, bpp8, tile_hash(t, bpp8)) : 0; }
+uint32_t gfxmod_find(const uint8_t *t, int bpp8) {
+    uint32_t n = entry_count > 1 ? lookup(t, bpp8, tile_hash(t, bpp8)) : 0;
+    return n || bpp8 ? n : gfxfont_find(t);
+}
 
-const GfxHdTile *gfxmod_tile(uint32_t n) { return n && n < entry_count ? &entries[n].hd : NULL; }
+const GfxHdTile *gfxmod_tile(uint32_t n) {
+    if (n >= GFXFONT_TILES) return gfxfont_tile(n);
+    return n && n < entry_count ? &entries[n].hd : NULL;
+}
 
 /* ---- the images ---- */
 
@@ -451,8 +459,20 @@ static int font_end(Edit *e, FontEdit *fe) {
     return 1;
 }
 
-/* fonts/<file>.png: the glyphs' pixels, at the dump's size. Indexed: pixel values as they are (others: the nearest
- * colour of the font's); RGBA: the nearest colour. Returns the glyphs changed. */
+/* A pixel of a font .png as a pixel value of the font (0 to top). Indexed: the value as it is (others: the nearest
+ * colour of the font's); RGBA: the nearest colour. */
+static int font_value(const Png *png, int i, const GfxPalette *pal, int top) {
+    if (png->indexed) {
+        int v = png->idx[i];
+        SDL_Color c = v < png->colors ? png->pal[v] : (SDL_Color){0, 0, 0, 255};
+        return v <= top ? v : c.a < 128 ? 0 : nearest(pal, 1, top + 1, c.r, c.g, c.b);
+    }
+    uint32_t c = png->rgba[i];
+    return (c >> 24) < 128 ? 0 : nearest(pal, 1, top + 1, c & 0xFF, c >> 8 & 0xFF, c >> 16 & 0xFF);
+}
+
+/* fonts/<file>.png: the glyphs' pixels, at the dump's size, or 2 to 8 times it (HD glyphs: gfx_font.c). Returns
+ * the glyphs changed (HD: drawn). */
 static int font_png(const char *rel, const char *path, const GfxFile *f) {
     Edit *e;
     FontEdit fe;
@@ -463,8 +483,15 @@ static int font_png(const char *rel, const char *path, const GfxFile *f) {
     Png png;
     if (!png_load(path, &png)) {
         rt_log("gfxmod: %s: cannot read: %s", rel, SDL_GetError());
-    } else if (png.w != w || png.h != h) {
-        rt_log("gfxmod: %s: %dx%d, not %dx%d", rel, png.w, png.h, w, h);
+    } else if (png.w % w || png.w / w < 1 || png.w / w > SCALE_MAX || png.h != h * (png.w / w)) {
+        rt_log("gfxmod: %s: %dx%d, not %dx%d times 1 to %d", rel, png.w, png.h, w, h, SCALE_MAX);
+    } else if (png.w > w) {
+        GfxPalette pal;
+        gfx_font_palette(f->path, &pal);
+        uint8_t *px = malloc((size_t)png.w * png.h);
+        for (int i = 0; i < png.w * png.h; i++) changed += (px[i] = (uint8_t)font_value(&png, i, &pal, top)) != 0;
+        gfxfont_set_hd(f->path, png.w / w, px);
+        changed = changed ? font->count : 0;
     } else {
         GfxPalette pal;
         gfx_font_palette(f->path, &pal);
@@ -472,15 +499,7 @@ static int font_png(const char *rel, const char *path, const GfxFile *f) {
             int x0 = g % GFX_FONT_COLUMNS * font->cell_w, y0 = g / GFX_FONT_COLUMNS * font->height, was = 0, any = 0;
             for (int y = 0; y < font->height; y++) {
                 for (int x = 0; x < font->cell_w; x++) {
-                    int i = (y0 + y) * w + x0 + x, v;
-                    if (png.indexed) {
-                        v = png.idx[i];
-                        SDL_Color c = v < png.colors ? png.pal[v] : (SDL_Color){0, 0, 0, 255};
-                        if (v > top) v = c.a < 128 ? 0 : nearest(&pal, 1, top + 1, c.r, c.g, c.b);
-                    } else {
-                        uint32_t c = png.rgba[i];
-                        v = (c >> 24) < 128 ? 0 : nearest(&pal, 1, top + 1, c & 0xFF, c >> 8 & 0xFF, c >> 16 & 0xFF);
-                    }
+                    int v = font_value(&png, (y0 + y) * w + x0 + x, &pal, top);
                     uint8_t *p = &fe.px[(g * font->height + y) * font->cell_w + x];
                     was |= *p != v, any |= v;
                     *p = (uint8_t)v;
@@ -495,8 +514,9 @@ static int font_png(const char *rel, const char *path, const GfxFile *f) {
     return changed;
 }
 
-/* fonts/<file>.txt: lines of glyph number and advance width (- : unchanged), as the dump writes them. Returns the
- * widths changed. */
+/* fonts/<file>.txt: lines of glyph number, advance width (- : unchanged) and the characters drawn with the glyph,
+ * as the dump writes them ("space" for a space); the characters are for a .ttf or .otf font (gfx_font.c). Returns
+ * the widths changed. */
 static int font_txt(const char *rel, const char *path, const GfxFile *f) {
     size_t n;
     char *text = SDL_LoadFile(path, &n);
@@ -514,14 +534,32 @@ static int font_txt(const char *rel, const char *path, const GfxFile *f) {
             char *end;
             long g = strtol(line, &end, 10), wd;
             if (end == line || *line == '#') continue;
-            wd = strtol(end, &line, 10);
-            if (line == end) continue;
-            if (g < 0 || g >= fe.font.count || wd < 0 || wd > 255) {
-                rt_log("gfxmod: %s: glyph %ld width %ld: out of range", rel, g, wd);
+            if (g < 0 || g >= fe.font.count) {
+                rt_log("gfxmod: %s: glyph %ld: out of range", rel, g);
                 continue;
             }
-            changed += fe.width[g] != wd;
-            fe.width[g] = (int)wd;
+            wd = strtol(end, &line, 10);
+            if (line == end) {
+                while (*line == ' ' || *line == '\t') line++;
+                if (*line != '-') continue;
+                line++;
+            } else if (wd < 0 || wd > 255) {
+                rt_log("gfxmod: %s: glyph %ld width %ld: out of range", rel, g, wd);
+                continue;
+            } else {
+                changed += fe.width[g] != wd;
+                fe.width[g] = (int)wd;
+            }
+            for (char *c = line; *c;) { /* the characters, each a word */
+                while (*c == ' ' || *c == '\t' || *c == '\r') c++;
+                if (!*c) break;
+                char *word = c;
+                while (*c && *c != ' ' && *c != '\t' && *c != '\r') c++;
+                const char *u = word;
+                size_t left = (size_t)(c - word);
+                uint32_t cp = !strncmp(word, "space", 5) && c - word == 5 ? ' ' : SDL_StepUTF8(&u, &left);
+                if (cp && cp != SDL_INVALID_UNICODE_CODEPOINT) gfxfont_set_char(f->path, (int)g, cp);
+            }
         }
         font_end(e, &fe);
     }
@@ -531,7 +569,24 @@ static int font_txt(const char *rel, const char *path, const GfxFile *f) {
 
 /* ---- loading ---- */
 
-typedef struct List { char **paths; int count, cap, fonts; } List; /* fonts: the .txt files too */
+typedef struct List { char **paths; int count, cap, fonts; } List; /* fonts: the .txt and font files too */
+
+/* A TrueType or OpenType font file, by its name. */
+static int font_file(const char *name) {
+    size_t n = strlen(name);
+    return n > 4 && (!SDL_strcasecmp(name + n - 4, ".ttf") || !SDL_strcasecmp(name + n - 4, ".otf"));
+}
+
+/* The font file (.fnt) in the folder of fonts/<folder>/<name>; NULL if none. */
+static const GfxFile *folder_font(const char *rel) {
+    const char *dir = rel + 6, *slash = strrchr(dir, '/');
+    size_t n = slash ? (size_t)(slash - dir) + 1 : 0;
+    for (int i = 0; n && gfx_file(i); i++) {
+        const GfxFile *f = gfx_file(i);
+        if (!strncmp(f->path, dir, n) && !strchr(f->path + n, '/') && gfx_ends_with(f->path, ".fnt")) return f;
+    }
+    return NULL;
+}
 
 static SDL_EnumerationResult SDLCALL collect(void *ctx, const char *dir, const char *name) {
     List *list = ctx;
@@ -541,7 +596,8 @@ static SDL_EnumerationResult SDLCALL collect(void *ctx, const char *dir, const c
     if (!SDL_GetPathInfo(path, &info)) return SDL_ENUM_CONTINUE;
     if (info.type == SDL_PATHTYPE_DIRECTORY) {
         SDL_EnumerateDirectory(path, collect, list);
-    } else if (gfx_ends_with(name, ".png") || gfx_ends_with(name, ".PNG") || (list->fonts && gfx_ends_with(name, ".txt"))) {
+    } else if (gfx_ends_with(name, ".png") || gfx_ends_with(name, ".PNG") ||
+               (list->fonts && (gfx_ends_with(name, ".txt") || font_file(name)))) {
         if (list->count == list->cap) {
             list->cap = list->cap ? list->cap * 2 : 256;
             list->paths = realloc(list->paths, (size_t)list->cap * sizeof *list->paths);
@@ -588,6 +644,13 @@ void gfxmod_load(void) {
             const char *rel = relative(list.paths[i], root);
             if (!strncmp(rel, "fonts/", 6)) {
                 if (pass) continue;
+                if (font_file(rel)) {
+                    const GfxFile *f = folder_font(rel);
+                    if (!f) rt_log("gfxmod: %s: no font in that folder of the dump", rel);
+                    else if (!gfxfont_set_ttf(f->path, list.paths[i])) rt_log("gfxmod: %s: cannot read the font", rel);
+                    else images++, rt_log("gfxmod: %s: letters of %s", rel, f->path);
+                    continue;
+                }
                 char path[512];
                 snprintf(path, sizeof path, "%.*s", (int)strlen(rel) - 4 - 6, rel + 6);
                 const GfxFile *f = gfx_ends_with(path, ".fnt") ? gfx_find(path) : NULL;
