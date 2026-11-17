@@ -62,7 +62,6 @@ static void find_dirs(void) {
     snprintf(data_dir, sizeof data_dir, "%s", pref);
     SDL_free(pref);
     make_mod_folders();
-    rt_log("data folder: %s", data_dir);
 }
 
 const char *rt_install_dir(void) {
@@ -73,6 +72,38 @@ const char *rt_install_dir(void) {
 const char *rt_data_dir(void) {
     if (!install_dir[0]) find_dirs();
     return data_dir;
+}
+
+/* The log also goes to eggoftime.log in the data folder, new each start: a program started from a desktop or
+ * file manager has no terminal to show stderr. */
+static FILE *log_file;
+static SDL_LogOutputFunction default_log_output;
+static void *default_log_userdata;
+
+static void SDLCALL log_output(void *userdata, int category, SDL_LogPriority priority, const char *message) {
+    (void)userdata;
+    default_log_output(default_log_userdata, category, priority, message);
+    static const char *const prefix[SDL_LOG_PRIORITY_COUNT] = {
+        [SDL_LOG_PRIORITY_TRACE] = "TRACE: ", [SDL_LOG_PRIORITY_VERBOSE] = "VERBOSE: ", [SDL_LOG_PRIORITY_DEBUG] = "DEBUG: ",
+        [SDL_LOG_PRIORITY_WARN] = "WARN: ", [SDL_LOG_PRIORITY_ERROR] = "ERROR: ", [SDL_LOG_PRIORITY_CRITICAL] = "CRITICAL: ",
+    };
+    char line[4096];
+    snprintf(line, sizeof line, "%s%s\n", priority > 0 && priority < SDL_LOG_PRIORITY_COUNT && prefix[priority] ? prefix[priority] : "", message);
+    fputs(line, log_file); /* one call per line: stdio locks the stream, so threads' lines do not interleave */
+    fflush(log_file);
+}
+
+static void open_log(void) {
+    char path[1100];
+    snprintf(path, sizeof path, "%seggoftime.log", rt_data_dir());
+    log_file = fopen(path, "w");
+    if (log_file) {
+        SDL_GetLogOutputFunction(&default_log_output, &default_log_userdata);
+        SDL_SetLogOutputFunction(log_output, NULL);
+    } else {
+        rt_log("cannot write %s", path);
+    }
+    if (strcmp(rt_data_dir(), rt_install_dir()) != 0) rt_log("data folder: %s", rt_data_dir());
 }
 
 _Noreturn void rt_fatal(CPU *cpu, const char *fmt, ...) {
@@ -230,8 +261,9 @@ static void save_shot(const char *dir, int n) {
 }
 
 int main(int argc, char **argv) {
+    open_log();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
-        fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL_Init: %s", SDL_GetError());
         return 1;
     }
     if (!display_init()) return 1;
@@ -249,7 +281,7 @@ int main(int argc, char **argv) {
     SDL_Thread *t = SDL_CreateThreadWithProperties(props);
     SDL_DestroyProperties(props);
     if (!t) {
-        fprintf(stderr, "SDL_CreateThread: %s\n", SDL_GetError());
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL_CreateThread: %s", SDL_GetError());
         return 1;
     }
     SDL_DetachThread(t);

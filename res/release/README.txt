@@ -18,6 +18,7 @@ Getting started
 
 The build uses the tools in kit\ (dsd, Python, LLVM/clang); nothing is installed and nothing is
 downloaded. What it makes stays in game\. If it fails, game\build.log has the details.
+Messages and errors (shaders, mods) go to eggoftime.log.
 
 Your saves (rom\CT.sav), save states (rom\CT.state, F5 / F7) and settings (eggoftime.ini) stay in
 this folder. To update, unzip the new version over this one.
