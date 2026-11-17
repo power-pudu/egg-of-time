@@ -85,6 +85,8 @@ static const char *const fps_names[] = {"30", "60", "90", "120", "144", "unlimit
 static const char *const fps_labels[] = {"30", "60", "90", "120", "144", "Unlimited"};
 static const int fps_values[] = {30, 60, 90, 120, 144, 0};
 static const char *const onoff_names[] = {"off", "on"};
+static const char *const minimap_bg_names[] = {"off", "on", "shadow"}; /* "on": the parchment (as when it was on / off) */
+static const char *const minimap_bg_labels[] = {"Off", "Parchment", "Shadow"};
 static const char *const onoff_labels[] = {"Off", "On"};
 static const char *const yesno_names[] = {"no", "yes"};
 static const char *const yesno_labels[] = {"No", "Yes"};
@@ -132,7 +134,8 @@ static Setting settings[SET_COUNT] = {
     /* The bottom screen's map, small, over the main screen (single_screen.c). */
     [SET_MINIMAP] = {"minimap", "Minimap", 2, 1, onoff_names, onoff_labels},
     [SET_MINIMAP_SIZE] = {"minimapsize", "Minimap size", 3, 1, minimap_size_names, minimap_size_labels},
-    [SET_MINIMAP_BG] = {"minimapbg", "Minimap background", 2, 0, onoff_names, onoff_labels}, /* off: the map alone (minimap.c) */
+    /* Off: the map alone (minimap.c); Shadow: the map alone on a translucent black rounded square. */
+    [SET_MINIMAP_BG] = {"minimapbg", "Minimap background", 3, MINIMAP_BG_OFF, minimap_bg_names, minimap_bg_labels},
     [SET_FRAMERATE] = {"framerate", "Framerate", 6, 1, fps_names, fps_labels},
     [SET_VSYNC] = {"vsync", "V-Sync", 2, 1, onoff_names, onoff_labels},
     [SET_FILTER] = {"filter", "Graphics filter", 4, FILTER_SHARP, filter_names, filter_labels},
@@ -550,10 +553,17 @@ static int minimap_shown(const View *v) {
 }
 
 /* The map alone is asked for: the renderer tells which pixels are the parchment. */
-static int minimap_cut(void) { return SETTING(SET_MINIMAP) && !SETTING(SET_MINIMAP_BG) && minimap_allowed(&primary); }
+static int minimap_cut(void) {
+    return SETTING(SET_MINIMAP) && SETTING(SET_MINIMAP_BG) != MINIMAP_BG_PARCHMENT && minimap_allowed(&primary);
+}
+
+#define MINIMAP_SHADOW_ALPHA 0.55f
+#define MINIMAP_SHADOW_MARGIN 6    /* around the map's pixels, in the panel's pixels */
+#define MINIMAP_SHADOW_RADIUS 8.0f /* the corners' radius, in the panel's pixels */
+static SDL_Rect minimap_box; /* Minimap background Shadow: where its square goes on the panel */
 
 /* The map panel of the bottom screen, with the Color setting, its rounded corners (black beside it) transparent;
- * with Minimap background off, its parchment too. */
+ * with Minimap background Off or Shadow, its parchment too. */
 static void upload_minimap(void) {
     if (!minimap_tex) {
         minimap_tex = SDL_CreateTexture(primary.ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, SS_MAP_W, SS_MAP_H);
@@ -574,7 +584,51 @@ static void upload_minimap(void) {
     if (minimap_cut() && minimap_cutout(video_bottom_top(), keep)) {
         for (int i = 0; i < SS_MAP_W * SS_MAP_H; i++) px[i] = keep[i] ? px[i] : 0;
     }
+    int x0 = SS_MAP_W, y0 = SS_MAP_H, x1 = -1, y1 = -1; /* the map's pixels, and a margin */
+    for (int y = 0; y < SS_MAP_H; y++) {
+        for (int x = 0; x < SS_MAP_W; x++) {
+            if (!px[y * SS_MAP_W + x]) continue;
+            x0 = SDL_min(x0, x), x1 = SDL_max(x1, x), y0 = SDL_min(y0, y), y1 = SDL_max(y1, y);
+        }
+    }
+    if (x1 < 0) {
+        minimap_box = (SDL_Rect){0};
+    } else {
+        x0 = SDL_max(x0 - MINIMAP_SHADOW_MARGIN, 0), y0 = SDL_max(y0 - MINIMAP_SHADOW_MARGIN, 0);
+        x1 = SDL_min(x1 + MINIMAP_SHADOW_MARGIN, SS_MAP_W - 1), y1 = SDL_min(y1 + MINIMAP_SHADOW_MARGIN, SS_MAP_H - 1);
+        minimap_box = (SDL_Rect){x0, y0, x1 - x0 + 1, y1 - y0 + 1};
+    }
     SDL_UpdateTexture(minimap_tex, NULL, px, SS_MAP_W * 4);
+}
+
+/* Minimap background Shadow: a black square of w x h with rounded corners (radius r), translucent, its edges
+ * smoothed over a pixel; made again when its size changes. */
+static SDL_Texture *minimap_shadow(SDL_Renderer *ren, int w, int h, float r) {
+    static SDL_Texture *tex;
+    static int tw, th;
+    if (tex && tw == w && th == h) return tex;
+    SDL_DestroyTexture(tex);
+    tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, w, h);
+    uint32_t *px = tex ? SDL_malloc((size_t)w * h * 4) : NULL;
+    if (!px) {
+        SDL_DestroyTexture(tex);
+        return tex = NULL;
+    }
+    tw = w, th = h;
+    r = SDL_min(r, SDL_min(w, h) / 2.0f);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            /* distance outside the square shrunk by r, at the pixel's centre */
+            float dx = SDL_max(r - (x + 0.5f), (x + 0.5f) - (w - r)), dy = SDL_max(r - (y + 0.5f), (y + 0.5f) - (h - r));
+            dx = SDL_max(dx, 0), dy = SDL_max(dy, 0);
+            float cover = SDL_clamp(r + 0.5f - SDL_sqrtf(dx * dx + dy * dy), 0.0f, 1.0f);
+            px[y * w + x] = (uint32_t)SDL_lroundf(255 * MINIMAP_SHADOW_ALPHA * cover) << 24;
+        }
+    }
+    SDL_UpdateTexture(tex, NULL, px, w * 4);
+    SDL_free(px);
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    return tex;
 }
 
 /* Into the internal target (n x native), at the view's top left. Nearest at a whole multiple of the panel's pixels;
@@ -582,8 +636,16 @@ static void upload_minimap(void) {
 static void draw_minimap(SDL_Renderer *ren, float n) {
     if (!minimap_tex) return;
     float k = minimap_scale() * n, at = MINIMAP_MARGIN * n;
+    int w = (int)SDL_roundf(SS_MAP_W * k), h = (int)SDL_roundf(SS_MAP_H * k);
+    const SDL_Rect *b = &minimap_box;
+    if (SETTING(SET_MINIMAP_BG) == MINIMAP_BG_SHADOW && b->w > 0) {
+        float bx = SDL_roundf(b->x * k), by = SDL_roundf(b->y * k);
+        int bw = (int)SDL_roundf((b->x + b->w) * k - bx), bh = (int)SDL_roundf((b->y + b->h) * k - by);
+        SDL_Texture *shadow = minimap_shadow(ren, bw, bh, MINIMAP_SHADOW_RADIUS * k);
+        if (shadow) SDL_RenderTexture(ren, shadow, NULL, &(SDL_FRect){at + bx, at + by, (float)bw, (float)bh});
+    }
     SDL_SetTextureScaleMode(minimap_tex, k >= 1 && k == SDL_floorf(k) ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
-    SDL_RenderTexture(ren, minimap_tex, NULL, &(SDL_FRect){at, at, SDL_roundf(SS_MAP_W * k), SDL_roundf(SS_MAP_H * k)});
+    SDL_RenderTexture(ren, minimap_tex, NULL, &(SDL_FRect){at, at, (float)w, (float)h});
 }
 
 /* ---- HD graphics mods ---- */

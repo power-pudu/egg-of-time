@@ -47,6 +47,7 @@ enum { LANGUAGE_JP_JAPANESE, LANGUAGE_JP_ENGLISH }; /* SET_LANGUAGE_JP values: t
 /* SET_FONT_BIG / SET_FONT_SMALL: 0 the font's default (its font.ini, else what fits the line), else the letters'
  * height in half pixels, FONT_SIZE_MIN2 + value - 1 (gfx_font.c). */
 #define FONT_SIZE_MIN2 6
+enum { MINIMAP_BG_OFF, MINIMAP_BG_PARCHMENT, MINIMAP_BG_SHADOW }; /* SET_MINIMAP_BG values */
 enum { FF_MUSIC_FAST, FF_MUSIC_NORMAL };    /* SET_FF_MUSIC values */
 enum { FF_SOUND_ALL, FF_SOUND_MUSIC };      /* SET_FF_SOUND values */
 /* The language chosen for this ROM's game, by its DS firmware id (LANGUAGE_ID_*, ui_text.h). */

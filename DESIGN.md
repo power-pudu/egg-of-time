@@ -467,7 +467,8 @@ original bytes, and caches the result per region until the region is written.
   size). `runtime/display.c`
   draws it into the internal target after the picture, not into the main screen: the picture slides with camera
   smoothing and the map must not, and with enough internal resolution no pixel of the map is lost (nearest at a whole
-  multiple of its pixels, else linear). Minimap background (off by default) keeps the map's parchment; off,
+  multiple of its pixels, else linear). Minimap background (Off by default) keeps the map's parchment, or (Shadow) puts the map alone on a black
+  rounded square at 55% around its pixels, 6 of the panel's pixels beyond them (`minimap_shadow`); Off and Shadow:
   `runtime/minimap.c` cuts it out with what the renderer says is on top at each pixel (`video_bottom_top`): the game has
   the parchment baked into BG3, so it goes by BG1 and by BG3's pixels in the plain parchment's colour (`minimap_000`). `ss_compose` decides whether it may show: the field or world map, no battle
   (ov003) and the panel on the bottom screen (by its pixels); the display also needs its rows free of the text box
