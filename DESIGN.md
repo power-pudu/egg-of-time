@@ -740,9 +740,10 @@ original bytes, and caches the result per region until the region is written.
   hash table keyed on the native tile's bytes and bpp. The renderer (`runtime/video.c`) records each pixel's
   source (`VideoHd`: tile number from that hash, cached per frame by VRAM address, texel, flips, palette row,
   blend weight, added colour and the colour under it for transparent HD texels); affine layers and extended
-  palettes have none. `runtime/display.c` then draws each shown screen at min(HD scale, internal scale) from
-  those records on worker threads: indexed art through the frame's palette RAM, RGBA as painted, both through
-  the recorded blend and the Color setting. Not with a shader; the one-screen menus (built by
+  palettes have none. `runtime/display.c` then draws each shown screen's HD art at min(HD scale, internal scale)
+  from those records on worker threads, over the screen as it is: only the rectangle around the pixels that have
+  it (and, cleared, last frame's), transparent elsewhere in a premultiplied texture; indexed art through the
+  frame's palette RAM, RGBA as painted, both through the recorded blend and the Color setting. Not with a shader; the one-screen menus (built by
   `runtime/single_screen.c`) keep native tiles, the field, warp, world map and race passing their sources on, and
   so does the zoom out's UI layer (text boxes, battle panels: `hd_ui`, moved with its pixels by `ui_to_edges`).
   Fonts (`fonts/<ROM path>.png` and `.txt`, first pass) rebuild the font file: glyph pixels at 1x, advance widths,
@@ -761,7 +762,7 @@ original bytes, and caches the result per region until the region is written.
   tile the HD letter covers changes and gets its art. The draw is redone in C from those glyphs, word for word the game's. For HD,
   each buffer tile's pixels before the first draw and the draws since are kept by RAM address (started again when
   the tile no longer holds what the last draw left); after each draw the touched tiles' HD art is composed by the
-  same rules from the HD glyphs (TrueType at the main window's HD scale, the HD .png, or the ROM's upscaled) into
+  same rules from the HD glyphs (TrueType at the main window's HD scale up to 4x, the HD .png, or the ROM's upscaled) into
   a table keyed on the tile's bytes (4096 tiles; those unshown for a second, else the older half, are dropped,
   their pixels kept for the renderer) that `gfxmod_find` looks in after the HD images', tile numbers from
   0x400000. The one-screen menus and shaders show the 1x letters.

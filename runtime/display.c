@@ -165,8 +165,9 @@ typedef struct View {
     SDL_Window *win;
     SDL_Renderer *ren;
     SDL_Texture *native[6], *smooth[6], *internal; /* top, bottom, main, party, still, UI (zoom out) */
-    SDL_Texture *hd_tex[6]; /* the screens drawn from HD art (graphics mods) */
-    int hd_k[6];            /* their scale; 0: not drawn this way */
+    SDL_Texture *hd_tex[6]; /* the screens' HD art (graphics mods), drawn over them: transparent where they have none */
+    int hd_k[6];            /* its scale; 0: not drawn */
+    SDL_Rect hd_rect[6];    /* the part of hd_tex last drawn (native pixels); the rest is transparent */
     SDL_Texture *lcd_mask;  /* LCD filter: one pixel's grid at lcd_mask_n */
     int lcd_mask_n;
 } View;
@@ -605,21 +606,22 @@ static inline uint32_t hd_mix(uint32_t c, int weight, uint32_t add, const uint8_
     return out;
 }
 
-/* Rows y0..y1-1 of a screen (w columns) drawn at k times its size (job of compose_hd). */
-typedef struct HdJob { const uint32_t *px; const VideoHd *src; const uint16_t *palette; const uint8_t *lut; uint32_t *out; int w, k, y0, y1; } HdJob;
+/* Rows y0..y1-1, columns x0..x1-1 of a screen (w columns) drawn at k times its size into out, which holds the
+ * rectangle from column x0, row top (job of compose_hd). Pixels without HD art are transparent (0: the texture is
+ * premultiplied, so its linear filtering fades the HD art's edges into what is under it). */
+typedef struct HdJob { const VideoHd *src; const uint16_t *palette; const uint8_t *lut; uint32_t *out; int w, k, x0, x1, top, y0, y1; } HdJob;
 
 static void compose_rows(const HdJob *j) {
-    int w = j->w, k = j->k, ow = w * k;
+    int w = j->w, k = j->k, ow = (j->x1 - j->x0) * k;
     uint8_t at[SCALE_MAX + 1][RES_MAX]; /* by HD scale: the HD texel under each of a pixel's k columns */
     for (int es = 1; es <= SCALE_MAX; es++) for (int sx = 0; sx < k; sx++) at[es][sx] = (uint8_t)(sx * es / k);
     for (int y = j->y0; y < j->y1; y++) {
-        for (int x = 0; x < w; x++) {
+        for (int x = j->x0; x < j->x1; x++) {
             const VideoHd *r = &j->src[y * w + x];
             const GfxHdTile *t = r->tile ? gfxmod_tile(r->tile >> 8) : NULL;
-            uint32_t *o = j->out + (size_t)y * k * ow + (size_t)x * k;
+            uint32_t *o = j->out + (size_t)(y - j->top) * k * ow + (size_t)(x - j->x0) * k;
             if (!t) {
-                uint32_t c = j->px[y * w + x];
-                for (int sy = 0; sy < k; sy++) for (int sx = 0; sx < k; sx++) o[sy * ow + sx] = c;
+                for (int sy = 0; sy < k; sy++) memset(o + sy * ow, 0, (size_t)k * 4);
                 continue;
             }
             int es = t->scale, n = 8 * es, tx = (r->tile >> 5) & 7, ty = (r->tile >> 2) & 7;
@@ -650,7 +652,7 @@ static void compose_rows(const HdJob *j) {
     }
 }
 
-/* compose_rows over the whole screen, in bands on worker threads (up to HD_WORKERS, leaving the game's and this
+/* compose_rows over the job's rectangle, in bands on worker threads (up to HD_WORKERS, leaving the game's and this
  * thread's cores) and this one. */
 #define HD_WORKERS 6
 static HdJob hd_jobs[HD_WORKERS + 1];
@@ -681,7 +683,8 @@ static void compose_hd(const HdJob *job) {
     int bands = hd_workers + 1;
     for (int i = 0; i < bands; i++) {
         hd_jobs[i] = *job;
-        hd_jobs[i].y0 = job->y1 * i / bands, hd_jobs[i].y1 = job->y1 * (i + 1) / bands;
+        int rows = job->y1 - job->y0;
+        hd_jobs[i].y0 = job->y0 + rows * i / bands, hd_jobs[i].y1 = job->y0 + rows * (i + 1) / bands;
     }
     for (int i = 0; i < hd_workers; i++) SDL_SignalSemaphore(hd_go[i]);
     compose_rows(&hd_jobs[hd_workers]);
@@ -695,10 +698,11 @@ static const VideoHd *hd_source(const View *v, int tex) {
            : tex == 3 ? hd_frame->party : tex == 4 ? hd_frame->still : hd_frame->ui;
 }
 
-/* Draws and uploads screen `tex` (its pixels px with the Color setting applied) from HD art at k times its size,
- * to the view; 0 if it cannot. */
-static int upload_hd(View *v, int tex, const uint32_t *px, const VideoHd *src, int k) {
-    int w = screen_width(tex), h = screen_height(tex), ow = w * k, oh = h * k;
+/* Draws and uploads the HD art of screen `tex` (through the Color setting's curve) at k times its size,
+ * to the view: the part `r` (native pixels) that has it, and what was drawn last time outside it (made transparent
+ * again); 0 if it cannot. */
+static int upload_hd(View *v, int tex, const VideoHd *src, int k, SDL_Rect r) {
+    int w = screen_width(tex), h = screen_height(tex);
     float tw = 0, th = 0;
     SDL_Texture **hd_tex = v->hd_tex;
     if (hd_tex[tex]) SDL_GetTextureSize(hd_tex[tex], &tw, &th);
@@ -708,8 +712,14 @@ static int upload_hd(View *v, int tex, const uint32_t *px, const VideoHd *src, i
         hd_tex[tex] = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, full_w, full_h);
         if (!hd_tex[tex]) return 0;
         SDL_SetTextureScaleMode(hd_tex[tex], SDL_SCALEMODE_LINEAR);
-        SDL_SetTextureBlendMode(hd_tex[tex], tex >= 2 ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE); /* see create_textures */
+        SDL_SetTextureBlendMode(hd_tex[tex], SDL_BLENDMODE_BLEND_PREMULTIPLIED); /* its pixels are opaque or 0 */
+        v->hd_rect[tex] = (SDL_Rect){0, 0, VIDEO_LINE_MAX, VIDEO_ROWS_MAX}; /* all of it, the first time */
     }
+    SDL_Rect all = {0, 0, w, h}, at = r;
+    SDL_GetRectUnion(&at, &v->hd_rect[tex], &at);
+    if (!SDL_GetRectIntersection(&at, &all, &at)) return 0;
+    v->hd_rect[tex] = r;
+    int ow = at.w * k;
     static size_t have;
     size_t need = (size_t)VIDEO_LINE_MAX * VIDEO_ROWS_MAX * k * k;
     if (have < need) {
@@ -718,8 +728,29 @@ static int upload_hd(View *v, int tex, const uint32_t *px, const VideoHd *src, i
         have = hd_px ? need : 0;
         if (!hd_px) return 0;
     }
-    compose_hd(&(HdJob){px, src, hd_frame->palette, SETTING(SET_COLOR) ? gamma_lut : NULL, hd_px, w, k, 0, h});
-    SDL_UpdateTexture(hd_tex[tex], &(SDL_Rect){0, 0, ow, oh}, hd_px, ow * 4);
+    compose_hd(&(HdJob){src, hd_frame->palette, SETTING(SET_COLOR) ? gamma_lut : NULL, hd_px, w, k, at.x, at.x + at.w,
+                        at.y, at.y, at.y + at.h});
+    SDL_UpdateTexture(hd_tex[tex], &(SDL_Rect){at.x * k, at.y * k, ow, at.h * k}, hd_px, ow * 4);
+    return 1;
+}
+
+/* The part of a screen (w x h) whose sources have HD art, and a pixel around it (for linear filtering); 0 if none. */
+static int hd_part(const VideoHd *src, int w, int h, SDL_Rect *r) {
+    int x0 = w, x1 = -1, y0 = -1, y1 = -1;
+    for (int y = 0; y < h; y++) {
+        const VideoHd *row = &src[y * w];
+        int first = 0;
+        while (first < w && !row[first].tile) first++;
+        if (first == w) continue;
+        int last = w - 1;
+        while (!row[last].tile) last--;
+        x0 = SDL_min(x0, first), x1 = SDL_max(x1, last);
+        if (y0 < 0) y0 = y;
+        y1 = y;
+    }
+    if (y0 < 0) return 0;
+    x0 = SDL_max(x0 - 1, 0), y0 = SDL_max(y0 - 1, 0), x1 = SDL_min(x1 + 1, w - 1), y1 = SDL_min(y1 + 1, h - 1);
+    *r = (SDL_Rect){x0, y0, x1 - x0 + 1, y1 - y0 + 1};
     return 1;
 }
 
@@ -731,7 +762,8 @@ static void upload(View *v, int tex, const uint32_t *px, int shown) {
     SDL_FRect dest = dest_rect(v);
     int k = src ? SDL_min(gfxmod_hd_scale(), internal_scale(v, &dest)) : 0;
     if (k && v == &primary) gfxfont_view_scale(k); /* letters are drawn for the main window's scale */
-    v->hd_k[tex] = k > 1 && upload_hd(v, tex, px, src, k) ? k : 0;
+    SDL_Rect part; /* only where it has HD art: that is drawn over the screen */
+    v->hd_k[tex] = k > 1 && hd_part(src, w, h, &part) && upload_hd(v, tex, src, k, part) ? k : 0;
     SDL_UpdateTexture(v->native[tex], &(SDL_Rect){0, 0, w, h}, px, w * 4);
     if (SETTING(SET_FILTER) == FILTER_SMOOTH) {
         scale2x(px, w, h, scale2x_tmp);
@@ -815,36 +847,39 @@ static int draw_shaded(const SDL_FRect *shown, const int *screens, int nshown, i
     return 1;
 }
 
+/* Draws part s (native pixels) of screen `tex` at d: the screen, then its HD art over it. */
+static void draw_tex(const View *v, int tex, SDL_FRect s, SDL_FRect d) {
+    int k = !view_shader(v) && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1, hk = v->hd_k[tex];
+    SDL_RenderTexture(v->ren, k > 1 ? v->smooth[tex] : v->native[tex], &(SDL_FRect){s.x * k, s.y * k, s.w * k, s.h * k}, &d);
+    if (hk) SDL_RenderTexture(v->ren, v->hd_tex[tex], &(SDL_FRect){s.x * hk, s.y * hk, s.w * hk, s.h * hk}, &d);
+}
+
 /* Zoomed out, the UI layer over the main screen (at x, y, cw x ch native pixels), not slid with camera smoothing.
  * Smaller: at the picture's scale, on the screen's own 192 rows in its middle (on the picture's pixels, so its text
  * scales as evenly). Original size: at the scale and in the place it has when not zoomed out, its 192 rows over the
  * whole height (between the picture's pixels: the text scales less evenly, the more so at 77%). */
 static void draw_ui(const View *v, int x, int y, int n, int cw, int ch) {
     if (!ui_on) return;
-    int k = v->hd_k[5] ? v->hd_k[5] : !view_shader(v) && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
-    SDL_Texture *t = v->hd_k[5] ? v->hd_tex[5] : k > 1 ? v->smooth[5] : v->native[5];
     if (SETTING(SET_ZOOM_UI)) {
         float columns = (float)cw * SCREEN_H / ch;
-        SDL_RenderTexture(v->ren, t, &(SDL_FRect){((float)main_w - columns) / 2 * k, 0, columns * k, (float)SCREEN_H * k},
-                          &(SDL_FRect){(float)x * n, (float)y * n, (float)cw * n, (float)ch * n});
+        draw_tex(v, 5, (SDL_FRect){((float)main_w - columns) / 2, 0, columns, (float)SCREEN_H},
+                 (SDL_FRect){(float)x * n, (float)y * n, (float)cw * n, (float)ch * n});
         return;
     }
     if (ui_tall()) { /* the picture's rows, its boxes at the view's top and bottom (video.c ui_to_edges) */
-        SDL_RenderTexture(v->ren, t, &(SDL_FRect){(float)main_guard * k, (float)main_guard_rows * k, (float)cw * k, (float)ch * k},
-                          &(SDL_FRect){(float)x * n, (float)y * n, (float)cw * n, (float)ch * n});
+        draw_tex(v, 5, (SDL_FRect){(float)main_guard, (float)main_guard_rows, (float)cw, (float)ch},
+                 (SDL_FRect){(float)x * n, (float)y * n, (float)cw * n, (float)ch * n});
         return;
     }
     float top = (float)(ch - SCREEN_H) / 2;
-    SDL_RenderTexture(v->ren, t, &(SDL_FRect){(float)main_guard * k, 0, (float)cw * k, (float)SCREEN_H * k},
-                      &(SDL_FRect){(float)x * n, ((float)y + top) * n, (float)cw * n, (float)SCREEN_H * n});
+    draw_tex(v, 5, (SDL_FRect){(float)main_guard, 0, (float)cw, (float)SCREEN_H},
+             (SDL_FRect){(float)x * n, ((float)y + top) * n, (float)cw * n, (float)SCREEN_H * n});
 }
 
 /* Draws the view's shown screens into its internal target, then the target into its window (through the shader
  * if one is chosen: then the target is the native size). */
 static void draw_screens(View *v) {
     SDL_Renderer *ren = v->ren;
-    SDL_Texture **native = v->native, **smooth = v->smooth, **hd_tex = v->hd_tex;
-    const int *hd_k = v->hd_k;
     int cw, ch;
     content_size(v, &cw, &ch);
     SDL_FRect dest = dest_rect(v);
@@ -861,40 +896,31 @@ static void draw_screens(View *v) {
         int x, y;
         if (!screen_slot(v, screen, &x, &y)) continue;
         int tex = screen == 0 && main_shown(v) ? 2 : screen; /* the main screen alone */
-        int k = hd_k[tex] ? hd_k[tex] : !shader && SETTING(SET_FILTER) == FILTER_SMOOTH ? SMOOTH_SCALE : 1;
-        SDL_Texture *t = hd_k[tex] ? hd_tex[tex] : k > 1 ? smooth[tex] : native[tex];
         if (tex != 2 || !main_guard) {
             int w = screen_width(tex), h = screen_height(tex);
-            SDL_FRect src = {0, 0, (float)w * k, (float)h * k};
             SDL_FRect r = {(float)x * n, (float)y * n, (float)w * n, (float)h * n};
-            SDL_RenderTexture(ren, t, &src, &r);
+            draw_tex(v, tex, (SDL_FRect){0, 0, (float)w, (float)h}, r);
             screens[nshown] = screen;
             shown[nshown++] = r;
             if (tex == 2) draw_ui(v, x, y, n, cw, ch);
             continue;
         }
         /* The field with its hidden columns and rows, slid (camera smoothing); rows beyond the picture repeat its edge. */
-        float vw = (float)(main_w - 2 * main_guard), sx = ((float)main_guard + slide_x) * k, vh = (float)ch, gy = (float)main_guard_rows;
+        float vw = (float)(main_w - 2 * main_guard), sx = (float)main_guard + slide_x, vh = (float)ch, gy = (float)main_guard_rows;
         float hidden = SDL_clamp(slide_y, -gy, gy), o = slide_y - hidden; /* the slide from the hidden rows, and beyond them */
         screens[nshown] = screen;
         shown[nshown++] = (SDL_FRect){(float)x * n, (float)y * n, vw * n, vh * n};
         if (still_on) { /* what holds still on screen (the prison bridge's sky): under the slid picture, not slid */
-            SDL_RenderTexture(ren, hd_k[2] ? (hd_k[4] == k ? hd_tex[4] : native[4]) : k > 1 ? smooth[4] : native[4],
-                              &(SDL_FRect){(float)main_guard * k, gy * k, vw * k, vh * k},
-                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, vh * n});
+            draw_tex(v, 4, (SDL_FRect){(float)main_guard, gy, vw, vh}, (SDL_FRect){(float)x * n, (float)y * n, vw * n, vh * n});
         }
         float rows = vh - SDL_fabsf(o), top = o < 0 ? -o : 0;
-        SDL_RenderTexture(ren, t, &(SDL_FRect){sx, (gy + hidden + (o > 0 ? o : 0)) * k, vw * k, rows * k},
-                          &(SDL_FRect){(float)x * n, (top + y) * n, vw * n, rows * n});
+        draw_tex(v, 2, (SDL_FRect){sx, gy + hidden + (o > 0 ? o : 0), vw, rows}, (SDL_FRect){(float)x * n, (top + y) * n, vw * n, rows * n});
         if (o != 0) {
             float edge = o > 0 ? main_h - 1 : 0, at = o > 0 ? rows : 0;
-            SDL_RenderTexture(ren, t, &(SDL_FRect){sx, edge * k, vw * k, (float)k},
-                              &(SDL_FRect){(float)x * n, (at + y) * n, vw * n, SDL_fabsf(o) * n});
+            draw_tex(v, 2, (SDL_FRect){sx, edge, vw, 1}, (SDL_FRect){(float)x * n, (at + y) * n, vw * n, SDL_fabsf(o) * n});
         }
         if (party_on) { /* the sprites the camera follows: not slid (drawn at the main screen's scale) */
-            SDL_RenderTexture(ren, hd_k[2] ? (hd_k[3] == k ? hd_tex[3] : native[3]) : k > 1 ? smooth[3] : native[3],
-                              &(SDL_FRect){(float)main_guard * k, gy * k, vw * k, vh * k},
-                              &(SDL_FRect){(float)x * n, (float)y * n, vw * n, vh * n});
+            draw_tex(v, 3, (SDL_FRect){(float)main_guard, gy, vw, vh}, (SDL_FRect){(float)x * n, (float)y * n, vw * n, vh * n});
         }
         draw_ui(v, x, y, n, cw, ch);
     }

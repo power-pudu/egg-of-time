@@ -55,6 +55,7 @@
 #define GLYPH_W 16 /* pixels of a glyph row the game draws */
 #define HEIGHT_MAX 16
 #define SCALE_MAX 8
+#define TTF_SCALE_MAX 4 /* TrueType letters: sharp enough, and the frames drawn from HD art stay cheap */
 
 /* ---- the fonts ---- */
 
@@ -148,7 +149,7 @@ int gfxfont_has_ttf(void) { return any_ttf; }
 
 int gfxfont_hd_scale(void) {
     int s = 0;
-    for (int i = 0; i < font_count; i++) s = SDL_max(s, fonts[i].ttf ? SCALE_MAX : fonts[i].png_scale);
+    for (int i = 0; i < font_count; i++) s = SDL_max(s, fonts[i].ttf ? TTF_SCALE_MAX : fonts[i].png_scale);
     return s;
 }
 
@@ -160,7 +161,7 @@ static int size_percent(void) { return FONT_SIZE_MIN + FONT_SIZE_STEP * display_
 static int font_scale(const Font *f) {
     if (f->ttf) {
         int s = SDL_GetAtomicInt(&view_scale);
-        return s ? s : 2;
+        return s ? SDL_min(s, TTF_SCALE_MAX) : 2;
     }
     return f->png_scale;
 }
