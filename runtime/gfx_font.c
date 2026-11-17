@@ -12,9 +12,9 @@
  * A .ttf / .otf in a font's folder replaces its glyphs that show a character it has: the font's ASCII table, and
  * characters the .txt's third column gives (gfxfont_set_char). Its letters are drawn in the game's style: pixels
  * at least half covered (a quarter at the original size) are the letter, the shadow follows it one pixel right
- * and down, the advance is the font's own plus that pixel. Font size (System Settings) scales them: 100% fits the
- * font's ascent and descent in the line (rows 1 to height - 2), centred there at other sizes. Glyphs it does not
- * replace stay the ROM's.
+ * and down, the advance is the font's own plus that pixel. Their height is the font's ascent to descent: System
+ * Settings' Big / Small font size in half pixels, else its folder's font.ini (gfxfont_set_size), else the line's
+ * rows 1 to height - 2; centred there. Glyphs it does not replace stay the ROM's.
  *
  * HD letters: what each draw puts in each tile is kept, by the tile's RAM address: the tile's pixels before the
  * first draw and the draws since (glyph, place, colour), started again when the tile no longer holds what the last
@@ -79,10 +79,12 @@ typedef struct Font {
     int ascent, descent;
     Glyph *glyphs;
     uint32_t gen, key, data;       /* key: what the glyphs were built for; data: the font file in RAM */
+    int small;                     /* the small font (msg/small): its own size setting */
+    int size;                      /* font.ini's height of the letters, in half pixels; 0 none */
 } Font;
 
 static Font fonts[FONTS];
-static int font_count, any_ttf;
+static int font_count, any_ttf[2];
 static SDL_AtomicInt view_scale;
 
 static Font *font_for(const char *path) {
@@ -98,6 +100,7 @@ static Font *font_for(const char *path) {
         f = &fonts[font_count++];
         memset(f, 0, sizeof *f);
         snprintf(f->path, sizeof f->path, "%s", path);
+        f->small = strstr(path, "/small/") != NULL;
         f->height = gf.height, f->count = gf.count, f->cell_w = gf.cell_w;
         f->chars = calloc((size_t)gf.count, sizeof *f->chars);
         f->glyphs = calloc((size_t)gf.count, sizeof *f->glyphs);
@@ -136,7 +139,7 @@ int gfxfont_set_ttf(const char *path, const char *file) {
     int gap;
     stbtt_GetFontVMetrics(&info, &f->ascent, &f->descent, &gap);
     if (f->ascent <= f->descent) f->ascent = f->descent + 1;
-    any_ttf = 1;
+    any_ttf[f->small] = 1;
     return 1;
 }
 
@@ -145,7 +148,12 @@ void gfxfont_set_char(const char *path, int g, uint32_t c) {
     if (f && g >= 0 && g < f->count) f->chars[g] = c;
 }
 
-int gfxfont_has_ttf(void) { return any_ttf; }
+void gfxfont_set_size(const char *path, int half_px) {
+    Font *f = font_for(path);
+    if (f && half_px > 0) f->size = half_px;
+}
+
+int gfxfont_has_ttf(int small) { return any_ttf[!!small]; }
 
 int gfxfont_hd_scale(void) {
     int s = 0;
@@ -155,7 +163,11 @@ int gfxfont_hd_scale(void) {
 
 void gfxfont_view_scale(int scale) { SDL_SetAtomicInt(&view_scale, SDL_clamp(scale, 1, SCALE_MAX)); }
 
-static int size_percent(void) { return FONT_SIZE_MIN + FONT_SIZE_STEP * display_setting_get(SET_FONT_SIZE); }
+/* The height of a font file's letters (ascent to descent), in half pixels. */
+static int size_half_px(const Font *f) {
+    int v = display_setting_get(f->small ? SET_FONT_SMALL : SET_FONT_BIG);
+    return v ? FONT_SIZE_MIN2 + v - 1 : f->size ? f->size : 2 * (f->height - 2);
+}
 
 /* The scale a font's HD glyphs are drawn at (0: none). */
 static int font_scale(const Font *f) {
@@ -169,7 +181,7 @@ static int font_scale(const Font *f) {
 /* A TrueType glyph at `scale`, drawn into px (GLYPH_W * scale x height * scale, values 0-3); its advance. */
 static int ttf_glyph(const Font *f, int gi, int scale, uint8_t *px) {
     int h = f->height, w = GLYPH_W * scale, rows = h * scale;
-    float k = (float)(h - 2) * (float)size_percent() / 100.0f / (float)(f->ascent - f->descent); /* pixels per unit */
+    float k = (float)size_half_px(f) / 2.0f / (float)(f->ascent - f->descent); /* pixels per unit */
     float base = (1 + (float)(h - 2) / 2 + (float)(f->ascent + f->descent) / 2 * k) * (float)scale; /* the baseline */
     float sc = k * (float)scale, shift = base - floorf(base);
     int x0, y0, x1, y1;
@@ -438,7 +450,7 @@ static Font *font_at(uint32_t data) {
     for (int i = 0; i < font_count; i++) {
         Font *f = &fonts[i];
         if (f->height != height || f->count != count) continue;
-        uint32_t key = (uint32_t)display_setting_get(SET_FONT_SIZE) << 8 | (uint32_t)font_scale(f);
+        uint32_t key = (uint32_t)size_half_px(f) << 8 | (uint32_t)font_scale(f);
         f->data = data; /* the game may hold more than one copy of a font: the same file */
         if (f->key != key) {
             f->key = key;

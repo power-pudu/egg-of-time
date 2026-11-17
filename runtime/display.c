@@ -109,10 +109,8 @@ static const float minimap_scales[] = {1.0f / 2, 3.0f / 8, 1.0f / 4}; /* of the 
 static const char *const multiplier_names[] = {"off", "2", "4", "8", "10"};
 static const char *const multiplier_labels[] = {"Disabled", "x2", "x4", "x8", "x10"};
 static const char *const off_names[] = {"off"};
-static const char *const font_size_names[] = {"50", "55", "60", "65", "70", "75", "80", "85", "90", "95", "100", "105",
-                                              "110", "115", "120", "125", "130", "135", "140", "145", "150"};
-static const char *const font_size_labels[] = {"50%", "55%", "60%", "65%", "70%", "75%", "80%", "85%", "90%", "95%", "100%",
-                                               "105%", "110%", "115%", "120%", "125%", "130%", "135%", "140%", "145%", "150%"};
+static const char *const font_size_names[] = {"default", "3", "3.5", "4", "4.5", "5", "5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12", "12.5", "13", "13.5", "14"};
+static const char *const font_size_labels[] = {"Default", "3 px", "3.5 px", "4 px", "4.5 px", "5 px", "5.5 px", "6 px", "6.5 px", "7 px", "7.5 px", "8 px", "8.5 px", "9 px", "9.5 px", "10 px", "10.5 px", "11 px", "11.5 px", "12 px", "12.5 px", "13 px", "13.5 px", "14 px"};
 static const char **shader_names; /* "off", then shader_key() of each listed shader */
 
 static Setting settings[SET_COUNT] = {
@@ -142,7 +140,8 @@ static Setting settings[SET_COUNT] = {
     [SET_COLOR] = {"color", "Color", 4, 1, color_names, color_labels},
     [SET_MODS] = {"mods", "Mods", 2, 1, onoff_names, onoff_labels}, /* replacement cutscenes and music (movie.c, music.c) */
     /* The letters of a font file in mods/graphics/fonts: 100% fits the font's line (gfx_font.c). */
-    [SET_FONT_SIZE] = {"fontsize", "Font size", 21, (100 - FONT_SIZE_MIN) / FONT_SIZE_STEP, font_size_names, font_size_labels},
+    [SET_FONT_BIG] = {"fontbig", "Big font size", 24, 0, font_size_names, font_size_labels},
+    [SET_FONT_SMALL] = {"fontsmall", "Small font size", 24, 0, font_size_names, font_size_labels},
     /* Fast forward (main.c, sched.c); Normal speed keeps the music sequences on the host's clock (snd.c). */
     [SET_FF_MUSIC] = {"ffmusic", "Fast forward music", 2, FF_MUSIC_FAST, ff_music_names, ff_music_labels},
     /* Music only mutes every channel but the BGM players' while fast forwarding (snd.c). */
@@ -1218,7 +1217,8 @@ int display_setting_shown(int id) {
     case SET_MINIMAP_SIZE:
     case SET_MINIMAP_BG: return SETTING(SET_MINIMAP) && minimap_allowed(&primary);
     case SET_SHADER: return settings[SET_SHADER].count > 1;
-    case SET_FONT_SIZE: return SETTING(SET_MODS) && gfxfont_has_ttf();
+    case SET_FONT_BIG: return SETTING(SET_MODS) && gfxfont_has_ttf(0);
+    case SET_FONT_SMALL: return SETTING(SET_MODS) && gfxfont_has_ttf(1);
     case SET_RESOLUTION:
     case SET_FILTER: return !SETTING(SET_SHADER); /* a shader replaces them */
     default: return 1;

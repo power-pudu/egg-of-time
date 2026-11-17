@@ -108,9 +108,14 @@ for the characters the font's .txt lists (without a .txt: the ASCII letters, dig
 signs). It is drawn in the game's style: no smoothing, a one-pixel shadow right and below,
 its own letter widths. HD shows it sharp; at the original size (the one-screen menus, a
 shader) it is drawn in the game's few pixels, so pick a font that stays clear when small.
-System Settings > Font size (shown while a font file is loaded) scales it from 50% to 150%,
-at once: 100% fits the font's tallest and lowest letters in the line. The lines are 10
-pixels apart (8 for the small font), so larger letters are cut off at the top and bottom.
+Its size is the height from its tallest letters to its lowest (the bottom of g or y), in
+pixels. By default it fits the line: 8 pixels for the big font, 6 for the small one. To
+choose another, put a font.ini next to the font file with a line like:
+  size = 9
+(halves too: size = 8.5). Players can change it in System Settings > Big font size and
+Small font size (shown while that font has a font file), from 3 to 14 pixels; Default is
+the font.ini's size. The lines are 10 pixels apart (8 for the small font), so larger
+letters are cut off at the top and bottom.
 Glyphs the font has no character for (symbols, icons) stay the game's.
 
 Sharing

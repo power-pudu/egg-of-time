@@ -567,6 +567,37 @@ static int font_txt(const char *rel, const char *path, const GfxFile *f) {
     return changed;
 }
 
+/* fonts/<folder>/font.ini: settings of the font file in that folder, lines of `key = value` (# or ; starts a
+ * comment). size: the height of its letters (ascent to descent) in pixels, by halves. */
+static void font_ini(const char *rel, const char *path, const GfxFile *f) {
+    size_t n;
+    char *text = SDL_LoadFile(path, &n);
+    if (!text) {
+        rt_log("gfxmod: %s: cannot read: %s", rel, SDL_GetError());
+        return;
+    }
+    for (char *line = text, *next; line; line = next) {
+        next = strchr(line, '\n');
+        if (next) *next++ = 0;
+        char *eq = strchr(line, '=');
+        while (*line == ' ' || *line == '\t') line++;
+        if (!eq || *line == '#' || *line == ';') continue;
+        char *key_end = eq;
+        while (key_end > line && (key_end[-1] == ' ' || key_end[-1] == '\t')) key_end--;
+        *key_end = 0;
+        if (SDL_strcasecmp(line, "size")) {
+            rt_log("gfxmod: %s: %s: unknown setting", rel, line);
+            continue;
+        }
+        char *end;
+        double px = SDL_strtod(eq + 1, &end);
+        int half = (int)SDL_lround(px * 2);
+        if (end == eq + 1 || half < 1 || half > 64) rt_log("gfxmod: %s: size %s: not 0.5 to 32 pixels", rel, eq + 1);
+        else gfxfont_set_size(f->path, half);
+    }
+    SDL_free(text);
+}
+
 /* ---- loading ---- */
 
 typedef struct List { char **paths; int count, cap, fonts; } List; /* fonts: the .txt and font files too */
@@ -575,6 +606,12 @@ typedef struct List { char **paths; int count, cap, fonts; } List; /* fonts: the
 static int font_file(const char *name) {
     size_t n = strlen(name);
     return n > 4 && (!SDL_strcasecmp(name + n - 4, ".ttf") || !SDL_strcasecmp(name + n - 4, ".otf"));
+}
+
+/* A font folder's settings (font.ini), by its path. */
+static int font_ini_file(const char *path) {
+    const char *name = SDL_strrchr(path, '/');
+    return !SDL_strcasecmp(name ? name + 1 : path, "font.ini");
 }
 
 /* The font file (.fnt) in the folder of fonts/<folder>/<name>; NULL if none. */
@@ -597,7 +634,7 @@ static SDL_EnumerationResult SDLCALL collect(void *ctx, const char *dir, const c
     if (info.type == SDL_PATHTYPE_DIRECTORY) {
         SDL_EnumerateDirectory(path, collect, list);
     } else if (gfx_ends_with(name, ".png") || gfx_ends_with(name, ".PNG") ||
-               (list->fonts && (gfx_ends_with(name, ".txt") || font_file(name)))) {
+               (list->fonts && (gfx_ends_with(name, ".txt") || font_file(name) || font_ini_file(name)))) {
         if (list->count == list->cap) {
             list->cap = list->cap ? list->cap * 2 : 256;
             list->paths = realloc(list->paths, (size_t)list->cap * sizeof *list->paths);
@@ -644,6 +681,12 @@ void gfxmod_load(void) {
             const char *rel = relative(list.paths[i], root);
             if (!strncmp(rel, "fonts/", 6)) {
                 if (pass) continue;
+                if (font_ini_file(rel)) {
+                    const GfxFile *f = folder_font(rel);
+                    if (!f) rt_log("gfxmod: %s: no font in that folder of the dump", rel);
+                    else font_ini(rel, list.paths[i], f);
+                    continue;
+                }
                 if (font_file(rel)) {
                     const GfxFile *f = folder_font(rel);
                     if (!f) rt_log("gfxmod: %s: no font in that folder of the dump", rel);

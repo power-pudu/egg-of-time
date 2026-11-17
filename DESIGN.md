@@ -757,8 +757,9 @@ original bytes, and caches the result per region until the region is written.
   way the game reads it. Both are wrapped (`overrides.txt`) while Mods is on and a font mod loaded; the font is
   told by its file's height and glyph count (big 10 / 366, small 8 / 359). A `.ttf` / `.otf` (stb_truetype) gives
   the glyphs whose character it has: pixels at least half covered (a quarter at 1x), the shadow as the letter moved
-  0 to 1 pixel right and down, the advance its own + 1, scaled by System Settings > Font size (100%: ascent to
-  descent in rows 1 to height - 2); where the HD glyph has pixels the 1x one lacks, the 1x pixel is shadow, so every
+  0 to 1 pixel right and down, the advance its own + 1, at the height (ascent to descent) System Settings > Big /
+  Small font size gives in half pixels, else its folder's `font.ini` (`size = 9`), else rows 1 to height - 2;
+  where the HD glyph has pixels the 1x one lacks, the 1x pixel is shadow, so every
   tile the HD letter covers changes and gets its art. The draw is redone in C from those glyphs, word for word the game's. For HD,
   each buffer tile's pixels before the first draw and the draws since are kept by RAM address (started again when
   the tile no longer holds what the last draw left); after each draw the touched tiles' HD art is composed by the

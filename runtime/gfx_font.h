@@ -13,9 +13,11 @@ void gfxfont_set_hd(const char *path, int scale, uint8_t *px);
 int gfxfont_set_ttf(const char *path, const char *file);
 /* a character drawn with glyph g of the font at `path` (the .txt's third column; Unicode code point). */
 void gfxfont_set_char(const char *path, int g, uint32_t c);
+/* the default height of the font file's letters for the font at `path` (its folder's font.ini), in half pixels. */
+void gfxfont_set_size(const char *path, int half_px);
 
-/* A font file is loaded (System Settings shows Font size). Any thread. */
-int gfxfont_has_ttf(void);
+/* A font file is loaded for the big font (small: the small one; System Settings shows its size). Any thread. */
+int gfxfont_has_ttf(int small);
 /* The scale HD letters are drawn at (0: none). Any thread. */
 int gfxfont_hd_scale(void);
 /* The scale the screens are drawn at now: TrueType letters are drawn for it. Host thread. */
