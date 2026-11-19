@@ -13,6 +13,7 @@
 
 #include "cheevos.h"
 #include <stdlib.h>
+#include <string.h>
 
 #include "rt.h"
 #include "widescreen.h"
@@ -142,9 +143,37 @@ void rt_state_poll(CPU *cpu) {
     }
 }
 
+/* The ROM archive keeps the ROM's file tables in main RAM (FS_LoadTable): a state holds the tables of the ROM it was
+ * saved with. Mods change the ROM as it is built (gfx_mod.c moves a grown file after the ROM's end, translation.c
+ * patches it), so a state saved with other mods would read moved files where they no longer are: with the font mods
+ * removed, the game Clear screen read its messages (msg/big/start.msg...) from the empty space past the files, all
+ * 0xFF, and showed rows of one letter. Copied again from this ROM, the tables match the files it holds.
+ * The archive (NitroSDK FSArchive) is found by its name "rom" and the ROM offsets of its tables. */
+static void refresh_rom_tables(void) {
+    uint32_t fat_off = (uint32_t)rt_rom.data[0x48] | (uint32_t)rt_rom.data[0x49] << 8 | (uint32_t)rt_rom.data[0x4A] << 16 |
+                       (uint32_t)rt_rom.data[0x4B] << 24;
+    uint32_t fnt_off = (uint32_t)rt_rom.data[0x40] | (uint32_t)rt_rom.data[0x41] << 8 | (uint32_t)rt_rom.data[0x42] << 16 |
+                       (uint32_t)rt_rom.data[0x43] << 24;
+    enum { NAME = 0, FAT = 0x2c, FAT_SIZE = 0x30, FNT = 0x34, FNT_SIZE = 0x38, FAT_ROM = 0x3c, FNT_ROM = 0x40 };
+    for (uint32_t o = 0; o + FNT_ROM + 4 <= RT_MAIN_RAM_SIZE; o += 4) {
+        uint32_t a = 0x02000000u + o;
+        if (rt_r32(a + NAME) != 0x006d6f72u || rt_r32(a + FAT_ROM) != fat_off || rt_r32(a + FNT_ROM) != fnt_off) continue;
+        const uint32_t tables[2][3] = {{FAT, FAT_SIZE, fat_off}, {FNT, FNT_SIZE, fnt_off}};
+        for (int t = 0; t < 2; t++) {
+            uint32_t at = rt_r32(a + tables[t][0]), size = rt_r32(a + tables[t][1]), from = tables[t][2];
+            if (!RT_IS_MAIN(at) || (at & (RT_MAIN_RAM_SIZE - 1)) + (uint64_t)size > RT_MAIN_RAM_SIZE ||
+                (uint64_t)from + size > rt_rom.size)
+                continue; /* not loaded into RAM: read from the card, as it is now */
+            memcpy(&rt_main_ram[at & (RT_MAIN_RAM_SIZE - 1)], rt_rom.data + from, size);
+        }
+        return;
+    }
+}
+
 /* Scheduler, with every game thread stopped: apply the state checked by rt_state_poll. */
 void rt_state_apply_requested(void) {
     if (!run(rt_state_load_path, MODE_APPLY)) rt_fatal(NULL, "state: loading %s failed after checking it", rt_state_load_path);
+    refresh_rom_tables();
     rt_log("state: loaded %s (frame %llu)", rt_state_load_path, (unsigned long long)rt_frame_count);
     cheevos_reset();
 }
