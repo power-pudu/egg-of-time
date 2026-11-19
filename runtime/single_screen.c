@@ -78,6 +78,9 @@
  *     narrowed without the count, then the text box or, while an item is chosen, the help bar with its count.
  *   - After an Arena battle won (ov013): the monster in a spotlight on the top screen; the prize in a box and
  *     "Return to the stables." on the bottom one. The main screen shows the spotlight over the box and the button.
+ *   - Staff credits (ov006): the logo, then a slideshow of artwork, on the top screen; the names scrolling up over a
+ *     backdrop of gears on the bottom one, each line as wide as the screen (role at the left, name at the right).
+ *     The main screen shows the artwork darkened, with the names over it in a black outline (compose_credits).
  *   - Age selector (ov012, time travel): the chosen age's map on the top screen, the ring of ages with the age's
  *     name, A Warp and B on the bottom one. The main screen shows the bottom screen with the ring and name moved
  *     left (a second picture of the bottom screen, swirl and buttons in place) and the map at half size beside the
@@ -105,7 +108,7 @@
 #include "ui_font.h"
 #include "video.h"
 
-enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_EPOCH_RIDE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP, SCENE_ARENA_BATTLE, SCENE_ARENA_RESULT };
+enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_EPOCH_RIDE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP, SCENE_ARENA_BATTLE, SCENE_ARENA_RESULT, SCENE_CREDITS };
 typedef struct Scene { int kind; uint32_t obj; } Scene;
 static uint32_t title_held; /* keys held since before the title started: not a press */
 #define TITLE_STATE 0x4a  /* title scene: current state (halfword); +0x48 holds the requested one */
@@ -178,6 +181,7 @@ static Scene current(void) {
     if (vt == 0x02148574u && rt_overlay_resident(11)) sc.kind = SCENE_RACE; /* ov011: the race against Johnny (Lab 32) */
     if (vt == 0x02148d3cu && rt_overlay_resident(11)) sc.kind = SCENE_EPOCH_RIDE; /* ov011: the Epoch's cockpit over the lava */
     if (vt == GAME_ADDR(0x02158290u, 0x021582f0u) && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
+    if (vt == 0x02127c40u && rt_overlay_resident(6)) sc.kind = SCENE_CREDITS; /* ov006: the staff credits */
     if (vt == ARENA_PREP && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_PREP;
     if (vt == ARENA_BATTLE && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_BATTLE;
     if (vt == ARENA_RESULT && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_RESULT;
@@ -1225,6 +1229,37 @@ static void compose_arena_battle(uint32_t *main, const uint32_t *top, const uint
 #define RESULT_BOX_AT 78
 #define RESULT_BUTTON_AT 162
 
+/* A letter of the credits: light and nearly neutral (the gears behind them are dark blue). */
+static int credits_px(uint32_t p) {
+    int r = p & 0xFF, g = p >> 8 & 0xFF, b = p >> 16 & 0xFF;
+    int lo = r < g ? (r < b ? r : b) : (g < b ? g : b), hi = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    return lo >= 0x70 && hi - lo < 0x40;
+}
+
+/* Staff credits: the top screen darkened to 5/8, with the names of the bottom screen over it (its gears left out),
+ * each letter outlined in black so it reads on light artwork. */
+static void compose_credits(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
+        uint32_t p = top[i];
+        main[i] = BLACK | ((p & 0xFF) * 5 / 8) | (((p >> 8 & 0xFF) * 5 / 8) << 8) | (((p >> 16 & 0xFF) * 5 / 8) << 16);
+    }
+    for (int y = 0; y < SCREEN_H; y++) {
+        for (int x = 0; x < SCREEN_W; x++) {
+            if (!credits_px(bottom[y * SCREEN_W + x])) continue;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int yy = y + dy, xx = x + dx;
+                    if (yy >= 0 && yy < SCREEN_H && xx >= 0 && xx < SCREEN_W && !credits_px(bottom[yy * SCREEN_W + xx]))
+                        main[yy * SCREEN_W + xx] = BLACK;
+                }
+            }
+        }
+    }
+    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
+        if (credits_px(bottom[i])) main[i] = bottom[i];
+    }
+}
+
 static void compose_arena_result(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     memcpy(main, &top[RESULT_SPOT_Y * SCREEN_W], RESULT_SPOT_H * SCREEN_W * 4);
     for (int y = RESULT_SPOT_H; y < SCREEN_H; y++) memcpy(&main[y * SCREEN_W], &bottom[(y % 20) * SCREEN_W], SCREEN_W * 4);
@@ -1593,6 +1628,9 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
         break;
     case SCENE_ARENA_RESULT:
         compose_arena_result(main, top, bottom);
+        break;
+    case SCENE_CREDITS:
+        compose_credits(main, top, bottom);
         break;
     case SCENE_ARENA_PREP:
         memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
