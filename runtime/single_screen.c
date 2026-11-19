@@ -81,6 +81,10 @@
  *   - Staff credits (ov006): the logo, then a slideshow of artwork, on the top screen; the names scrolling up over a
  *     backdrop of gears on the bottom one, each line as wide as the screen (role at the left, name at the right).
  *     The main screen shows the artwork darkened, with the names over it in a black outline (compose_credits).
+ *   - The game Clear screen (ov006, after the credits): "You've completed the game!", the party and the clear count on
+ *     the top screen; a notice in a box ("You can now visit the Dimensional Vortex!", A) on the bottom one. The main
+ *     screen shows the top screen's three lines packed closer over the box, made smaller, and the Yes / No buttons
+ *     when shown (compose_clear), or the top screen alone without a box.
  *   - Age selector (ov012, time travel): the chosen age's map on the top screen, the ring of ages with the age's
  *     name, A Warp and B on the bottom one. The main screen shows the bottom screen with the ring and name moved
  *     left (a second picture of the bottom screen, swirl and buttons in place) and the map at half size beside the
@@ -108,7 +112,7 @@
 #include "ui_font.h"
 #include "video.h"
 
-enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_EPOCH_RIDE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP, SCENE_ARENA_BATTLE, SCENE_ARENA_RESULT, SCENE_CREDITS };
+enum { SCENE_OTHER, SCENE_LOGOS, SCENE_TITLE, SCENE_SETTINGS, SCENE_NAMING, SCENE_FIELD, SCENE_WARP, SCENE_OVERWORLD, SCENE_MENU, SCENE_EQUIP, SCENE_ITEMS, SCENE_TECHS, SCENE_BESTIARY, SCENE_OPTIONS, SCENE_PARTY, SCENE_SAVE, SCENE_SHOP, SCENE_RACE, SCENE_EPOCH_RIDE, SCENE_AGES, SCENE_ARENA, SCENE_TRAIN, SCENE_TRAIN_ITEMS, SCENE_TRAIN_ERA, SCENE_ARENA_SHOP, SCENE_ARENA_PREP, SCENE_ARENA_BATTLE, SCENE_ARENA_RESULT, SCENE_CREDITS, SCENE_CLEAR };
 typedef struct Scene { int kind; uint32_t obj; } Scene;
 static uint32_t title_held; /* keys held since before the title started: not a press */
 #define TITLE_STATE 0x4a  /* title scene: current state (halfword); +0x48 holds the requested one */
@@ -182,6 +186,7 @@ static Scene current(void) {
     if (vt == 0x02148d3cu && rt_overlay_resident(11)) sc.kind = SCENE_EPOCH_RIDE; /* ov011: the Epoch's cockpit over the lava */
     if (vt == GAME_ADDR(0x02158290u, 0x021582f0u) && rt_overlay_resident(12)) sc.kind = SCENE_AGES; /* ov012: the age selector (time travel) */
     if (vt == 0x02127c40u && rt_overlay_resident(6)) sc.kind = SCENE_CREDITS; /* ov006: the staff credits */
+    if (vt == 0x0212792cu && rt_overlay_resident(6)) sc.kind = SCENE_CLEAR;   /* ov006: the game Clear screen */
     if (vt == ARENA_PREP && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_PREP;
     if (vt == ARENA_BATTLE && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_BATTLE;
     if (vt == ARENA_RESULT && rt_overlay_resident(13)) sc.kind = SCENE_ARENA_RESULT;
@@ -1477,6 +1482,69 @@ static int blank(const uint32_t *px) {
     return 1;
 }
 
+/* The game Clear screen: rows of the top screen (title 34-45, party 79-118, clear count 159-168) packed over the
+ * bottom screen's box (rows 32-126) made smaller, then its Yes / No buttons (rows 136-159) when shown. The box is
+ * mostly empty stone around one or two lines of text (rows 42-105 inside its edges, the A icon in its bottom edge),
+ * so it keeps its top edge, the rows of its text (lighter than any stone) with a little stone around them and its
+ * bottom edge. While the text fades in or out (too dim to find) the rows found last are kept, so the box keeps its
+ * size. */
+#define CLEAR_TEXT_Y0 42
+#define CLEAR_TEXT_Y1 105
+static uint8_t clear_rows[CLEAR_TEXT_Y1 + 1]; /* rows of the box's text, with their margin */
+
+static int clear_text_row(const uint32_t *bottom, int y) {
+    for (int x = 24; x < SCREEN_W - 48; x++) { /* left of the A icon */
+        uint32_t p = bottom[y * SCREEN_W + x];
+        if ((p & 0xFF) > 0x90 && (p >> 8 & 0xFF) > 0x90 && (p >> 16 & 0xFF) > 0x90) return 1;
+    }
+    return 0;
+}
+
+typedef struct ClearPart { const uint32_t *src; int y0, y1, gap; } ClearPart;
+
+static void compose_clear(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
+    if (blank(bottom)) {
+        memcpy(main, top, SCREEN_W * SCREEN_H * 4);
+        return;
+    }
+    uint8_t rows[CLEAR_TEXT_Y1 + 1] = {0};
+    int found = 0;
+    for (int y = CLEAR_TEXT_Y0; y <= CLEAR_TEXT_Y1; y++) {
+        if (!clear_text_row(bottom, y)) continue;
+        found = 1;
+        for (int m = y - 4; m <= y + 4; m++)
+            if (m >= CLEAR_TEXT_Y0 && m <= CLEAR_TEXT_Y1) rows[m] = 1;
+    }
+    if (found) memcpy(clear_rows, rows, sizeof rows);
+    ClearPart parts[16];
+    int n = 0;
+    parts[n++] = (ClearPart){top, 34, 45, 0};
+    parts[n++] = (ClearPart){top, 79, 118, 6};
+    parts[n++] = (ClearPart){top, 159, 168, 4};
+    parts[n++] = (ClearPart){bottom, 32, CLEAR_TEXT_Y0 - 1, 8}; /* the box's top edge */
+    for (int y = CLEAR_TEXT_Y0; y <= CLEAR_TEXT_Y1 && n < 14; y++) {
+        if (!clear_rows[y] || (y > CLEAR_TEXT_Y0 && clear_rows[y - 1])) continue;
+        int end = y;
+        while (end < CLEAR_TEXT_Y1 && clear_rows[end + 1]) end++;
+        parts[n++] = (ClearPart){bottom, y, end, 0};
+    }
+    parts[n++] = (ClearPart){bottom, CLEAR_TEXT_Y1 + 1, 126, 0}; /* its bottom edge with the A icon */
+    int buttons = 0;
+    for (int i = 136 * SCREEN_W; i < 160 * SCREEN_W && !buttons; i++) buttons = bottom[i] != bottom[0];
+    if (buttons) parts[n++] = (ClearPart){bottom, 134, 161, 6};
+    int h = 0;
+    for (int k = 0; k < n; k++) h += parts[k].gap + parts[k].y1 - parts[k].y0 + 1;
+    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) main[i] = top[0];
+    for (int k = 0, y = h < SCREEN_H ? (SCREEN_H - h) / 2 : 0; k < n; k++) {
+        y += parts[k].gap;
+        int rows_n = parts[k].y1 - parts[k].y0 + 1;
+        if (y + rows_n > SCREEN_H) rows_n = SCREEN_H - y;
+        if (rows_n <= 0) break;
+        memcpy(&main[y * SCREEN_W], &parts[k].src[parts[k].y0 * SCREEN_W], (size_t)rows_n * SCREEN_W * 4);
+        y += rows_n;
+    }
+}
+
 /* The field's pause (ov000 func 0x0210155c, START): dims both screens and loops until START, with the byte
  * at *(0x0207b520) + 0x407 set to 0xff meanwhile. */
 static int field_paused(void) {
@@ -1631,6 +1699,9 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
         break;
     case SCENE_CREDITS:
         compose_credits(main, top, bottom);
+        break;
+    case SCENE_CLEAR:
+        compose_clear(main, top, bottom);
         break;
     case SCENE_ARENA_PREP:
         memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
