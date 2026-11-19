@@ -120,6 +120,10 @@ _Noreturn void rt_fatal(CPU *cpu, const char *fmt, ...) {
         }
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "  call depth %u, innermost return 0x%08x", cpu->ret_depth,
                      cpu->ret_depth ? cpu->ret_stack[cpu->ret_depth - 1] : 0);
+        for (uint32_t i = 0; i < cpu->ret_depth; i++) { /* the outermost and innermost returns */
+            if (i == 12 && cpu->ret_depth > 24) i = cpu->ret_depth - 12;
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "  return %4u: 0x%08x", i, cpu->ret_stack[i]);
+        }
     }
     /* EGG_DUMP_RAM=<file>: also dump main RAM (<file>) and ITCM (<file>.itcm) at a fatal error. */
     const char *dump = getenv("EGG_DUMP_RAM");

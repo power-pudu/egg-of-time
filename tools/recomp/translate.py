@@ -875,6 +875,10 @@ class FunctionTranslator:
             covered_end = nxt
         if self.has_dispatch:
             out.append("L__dispatch:")
+            if self.any_name:
+                # Hand-written code returns with jumps such as `mov pc, r6` (Mobiclip's 0x01ffa45c): a jump to the
+                # return address is a return, even when that address is also code of this module (as rt_jump).
+                out.append("    if (((tgt ^ cpu->ret_stack[cpu->ret_depth - 1]) & ~1u) == 0) return;")
             out.append("    switch (tgt & ~1u) {")
             out += [f"    case {h(t)}: goto L_{t:08x};" for t in cases]
             out.append("    default: rt_jump(cpu, tgt); return;")
