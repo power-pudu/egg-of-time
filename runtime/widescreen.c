@@ -568,10 +568,15 @@ int ws_wide_picture_bgs(void) {
 static int picture_bgs;
 int ws_picture_bgs(void) { return picture_bgs; }
 
+/* The BG is within a tile of the ring origin (column, row), both ways. */
+static int bg_near_at(int bg, int col, int row) {
+    int dc = (io_get16(0x10 + 4 * bg) >> 3) - col, dr = (io_get16(0x12 + 4 * bg) >> 3) - row;
+    return ((dc + 1) & 63) <= 2 && ((dr + 1) & 31) <= 2;
+}
+
 /* The BG is within a tile of layer L's ring origin, both ways. */
 static int bg_near(int bg, uint32_t scroll, int L) {
-    int dc = (io_get16(0x10 + 4 * bg) >> 3) - rt_r8(scroll + 0x8e + 2 * L), dr = (io_get16(0x12 + 4 * bg) >> 3) - rt_r8(scroll + 0x8f + 2 * L);
-    return ((dc + 1) & 63) <= 2 && ((dr + 1) & 31) <= 2;
+    return bg_near_at(bg, rt_r8(scroll + 0x8e + 2 * L), rt_r8(scroll + 0x8f + 2 * L));
 }
 
 /* The BG is a 512x256 text map within a tile of layer L's ring origin. */
@@ -1066,8 +1071,25 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     if (!field_margin) return;
     uint32_t scroll = rt_r32(SCROLL), room = rt_r32(ROOM), tilesets = rt_r32(TILESETS);
     if (!ram_ptr(scroll) || !ram_ptr(room) || !ram_ptr(tilesets)) return;
-    /* A BG on its layer's ring origin, or a tile off it for a frame at each step, shows the room. */
-    view_bgs = bg_near(2, scroll, 0) << 2 | bg_near(3, scroll, 1) << 3 | bg_near(0, scroll, 2) | bg_near(1, scroll, 0) << 1;
+    /* A BG on its layer's ring origin, or a tile off it for a frame at each step, shows the room. So does one on the
+     * origin the layer had last frame, in the same room: the game lays its rings out anew (a door opening in a castle,
+     * location 0x1a: every origin to row 0 with the camera still), the origins in RAM a frame ahead of
+     * the BGs' scroll. Taken for layers off the room for that frame, BG1-3 lost the view's shift at the room's end
+     * and the whole map jumped 40 px to the left and back. */
+    static uint16_t last_origin[3];
+    static uint32_t last_origin_room;
+    uint16_t origin[3];
+    for (int L = 0; L < 3; L++) origin[L] = (uint16_t)(rt_r8(scroll + 0x8e + 2 * L) | rt_r8(scroll + 0x8f + 2 * L) << 8);
+    uint32_t this_room = room ^ room_bounds(scroll);
+    int same_room = last_origin_room == this_room;
+    static const int layer_of_bg[4] = {2, 0, 0, 1};
+    for (int bg = 0; bg < 4; bg++) {
+        int L = layer_of_bg[bg];
+        int was = same_room && bg_near_at(bg, last_origin[L] & 0xFF, last_origin[L] >> 8);
+        view_bgs |= (bg_near_at(bg, origin[L] & 0xFF, origin[L] >> 8) || was) << bg;
+    }
+    memcpy(last_origin, origin, sizeof origin);
+    last_origin_room = this_room;
     /* So does a battle effect on a 512x512 map (the room's are 512x256 rings), drawn where the game's screen has its
      * target: Frog's Water at a room's end fell beside the enemy, on the party. */
     for (int bg = 0; bg < 4; bg++) view_bgs |= ((io_get16(0x08 + 2 * bg) >> 14) == 3) << bg;
