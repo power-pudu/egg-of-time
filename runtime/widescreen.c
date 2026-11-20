@@ -595,11 +595,17 @@ static int field_margin; /* this frame's margin columns in the field, 0 elsewher
  * the camera's own (map streaming uses them too), so they are widened to the shown view only for the call: the
  * margins, moved by the view's shift at a room's end (the sprite view's, set_sprite_view). Widened by the shift on
  * both sides, the objects passed spanned more than the 512 px rt_ws_draw_cell tells apart. */
+/* The game keeps an object whose place lies up to 2 tiles above the view's top: enough at the DS screen's edge, but an
+ * object's art can hang well below its place. The table settings in the dining hall beside the castle's kitchen are
+ * one object placed 74 px above its plates: zoomed out, the plates came into the rows above the DS screen while the
+ * object was still culled, and showed suddenly once its place reached the view. Zoomed out, the view's top reaches
+ * this much further up. */
+#define ART_BELOW 80 /* px */
 static void game_object_visible(CPU *cpu) { rt_call_wrapped(cpu, "ov004", 0x02130dbcu); } /* the original */
 void rt_ws_object_visible(CPU *cpu) {
     uint32_t scroll = rt_r32(SCROLL);
     int dl = (next_x - field_margin) >> 3, dr = (next_x + field_margin + 7) >> 3; /* tiles, floor and ceiling */
-    int dt = (next_y - field_rows) >> 3, db = (next_y + field_rows + 7) >> 3;
+    int dt = (next_y - field_rows - (field_rows ? ART_BELOW : 0)) >> 3, db = (next_y + field_rows + 7) >> 3;
     if ((!field_margin && !field_rows && !next_x && !next_y) || !ram_ptr(scroll) || cpu->resume_pc) {
         game_object_visible(cpu);
         return;
