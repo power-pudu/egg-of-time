@@ -298,6 +298,27 @@ static uint32_t room_print(uint32_t scroll) {
     return h;
 }
 
+/* The location of the room on screen, for the tables keyed by location: the game sets the next scene's location
+ * before its room. Leaving the End of Time for the parked Epoch (0x1d9), the location read 0x1d9 for 17 frames of the
+ * fade while the End of Time still showed: as a narrow room its view jumped 488 px and its BGs repeated into the
+ * margins, the map scrambled. A new location counts once the room (room_print) has changed since the frame before it
+ * (a room set the same frame counts too), or after LOCATION_WAIT frames (a location in the same room); the first one
+ * seen (a state loaded) at once. */
+#define LOCATION_WAIT 60 /* frames */
+static uint32_t ws_frame;
+static int room_location(void) {
+    static int last, shown;
+    static uint32_t print_before, print_then, changed_at;
+    uint32_t scroll = rt_r32(SCROLL);
+    int loc = rt_r16(LOCATION);
+    uint32_t print = ram_ptr(scroll) ? room_print(scroll) : 0;
+    if (!last) last = shown = loc, print_before = print;
+    if (loc != last) last = loc, print_then = print_before, changed_at = ws_frame;
+    if (shown != loc && (print != print_then || ws_frame - changed_at >= LOCATION_WAIT)) shown = loc;
+    if (shown == loc) print_before = print;
+    return shown;
+}
+
 /* The room is one of left_rooms, and stays one while it holds (room_print): leaving the Blackbird's wing, the
  * location reads the next scene's (0x16e) for a few frames, and the view went back to the middle. */
 static int left_room(void) {
@@ -342,7 +363,7 @@ int ws_room_span(int *x0, int *x1) {
     uint32_t print = room_print(scroll);
     int found = 0;
     for (size_t i = 0; i < sizeof narrow_rooms / sizeof *narrow_rooms; i++)
-        if (rt_r16(LOCATION) == narrow_rooms[i].location) narrow = narrow_rooms[i].right, narrow_print = print, found = 1;
+        if (room_location() == narrow_rooms[i].location) narrow = narrow_rooms[i].right, narrow_print = print, found = 1;
     if (!found && print != narrow_print) narrow = -1;
     if (narrow >= 0 && right > narrow) right = narrow;
     if (right < left) return 0;
@@ -571,7 +592,7 @@ static const struct { uint16_t location; uint8_t bgs; } wide_picture_rooms[] = {
 int ws_wide_picture_bgs(void) {
     if (!ss_in_field()) return 0;
     for (size_t i = 0; i < sizeof wide_picture_rooms / sizeof *wide_picture_rooms; i++)
-        if (rt_r16(LOCATION) == wide_picture_rooms[i].location) return wide_picture_rooms[i].bgs;
+        if (room_location() == wide_picture_rooms[i].location) return wide_picture_rooms[i].bgs;
     return 0;
 }
 
@@ -1152,7 +1173,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * and for 6 frames of the fade-in the margins were black around the 4:3 picture). */
     if (one_screen)
         for (size_t i = 0; i < sizeof repeat_rooms / sizeof *repeat_rooms; i++)
-            if (rt_r16(LOCATION) == repeat_rooms[i].location) repeat_bgs |= repeat_rooms[i].bgs;
+            if (room_location() == repeat_rooms[i].location) repeat_bgs |= repeat_rooms[i].bgs;
     /* A layer scrolling on its own is no room layer, even while its scroll passes its ring origin (the stars of a
      * one-screen battle room, every 256 frames for 12): moved by the view's shift then, it jumped up and back. */
     view_bgs &= ~repeat_bgs;
