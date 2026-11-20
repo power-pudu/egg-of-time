@@ -1396,7 +1396,171 @@ static int fit_ring(Engine *e, int top, int bottom) {
     return 1;
 }
 
+/* Beyond the screen (the zoom out's rows above and below it), a window the game shapes line by line goes on as its
+ * shape would: the game has no lines there (its table, the SNES one, holds nothing past the DS's 192 lines but blanks),
+ * and drawn as the screen's first or last line, an effect reaching the edge went on as a straight column (an enemy's
+ * red orb, growing past the top, rose as a flat-topped box). A rounded shape is fitted half by half, split at its
+ * widest line, each half as an upright ellipse about the shape's middle column when its sides lie on one (the orb is
+ * a dome, round above and squashed below: one circle for all of it came out smaller than its top). A half that fits is that ellipse beyond the screen
+ * (empty past its end) and where the screen's left or right side cuts it, in the margins (carried along its last
+ * slope there, the orb's left side spread far into the margin as it faded). Another shape goes on along each side's
+ * slope on its EDGE_FIT lines nearest the end, until the sides meet; a side the screen's sides cut stays where its
+ * last line has it. Rings, rays and stretched bands draw these rows their own way. */
+/* EDGE_ROWS: all the rows beyond the screen, the view shifted at a room's end showing more of them on one side. */
+enum { EDGE_ROWS = VIDEO_ROWS_MAX - SCREEN_H, EDGE_FIT = 16, SHAPE_POINTS = 2 * SCREEN_H };
+static int16_t beyond[2][EDGE_ROWS][2][2]; /* by end (above, below), row from the screen out, window: span x0..x1-1 */
+static uint8_t beyond_on[2];                /* by end: the windows (bit per window) that go on there */
+
+typedef struct Ellipse { float cx, cy, a, r; } Ellipse; /* (x - cx)^2 + a (y - cy)^2 = r */
+
+/* Half width of the ellipse on row y, or -1 past its top or bottom. */
+static float ellipse_half(const Ellipse *el, float y) {
+    float d = el->r - el->a * (y - el->cy) * (y - el->cy);
+    return d > 0 ? SDL_sqrtf(d) : -1;
+}
+
+/* Window w's upright ellipse about column cx through the sides of its lines y0..y1, those the screen's sides cut left
+ * out: 1 when every point lies on it. The centre comes from the lines with both sides on screen (a symmetric shape's
+ * midpoints), so a half the screen's side cuts on one side is still fitted from the other (the orb's top, its left
+ * side off the screen: fitted from both sides alone, it was given up and went on as a box). */
+static int window_ellipse(int w, int y0, int y1, float cx, Ellipse *el) {
+    static float px[SHAPE_POINTS], py[SHAPE_POINTS];
+    int n = 0, x[2];
+    double m[3][4] = {{0}};
+    for (int y = y0; y <= y1; y++) {
+        if (win_span(y, w, &x[0], &x[1]) <= 0) continue;
+        for (int sd = 0; sd < 2; sd++) {
+            if (x[sd] < 0 || x[sd] >= SCREEN_W) continue; /* cut by the screen's side */
+            px[n] = (float)(sd ? x[1] - 1 : x[0]), py[n] = (float)y, n++;
+        }
+    }
+    if (n < 6) return 0;
+    for (int i = 0; i < n; i++) { /* (x - cx)^2 = P y^2 + Q y + K, least squares */
+        double a[3] = {(double)py[i] * py[i], py[i], 1}, b = ((double)px[i] - cx) * ((double)px[i] - cx);
+        for (int j = 0; j < 3; j++) {
+            for (int k = 0; k < 3; k++) m[j][k] += a[j] * a[k];
+            m[j][3] += a[j] * b;
+        }
+    }
+    for (int c = 0; c < 3; c++) { /* Gauss-Jordan */
+        int piv = c;
+        for (int j = c + 1; j < 3; j++) if (SDL_fabs(m[j][c]) > SDL_fabs(m[piv][c])) piv = j;
+        if (SDL_fabs(m[piv][c]) < 1e-9) return 0;
+        for (int k = 0; k < 4; k++) { double t = m[c][k]; m[c][k] = m[piv][k], m[piv][k] = t; }
+        for (int j = 0; j < 3; j++) {
+            if (j == c) continue;
+            double f = m[j][c] / m[c][c];
+            for (int k = c; k < 4; k++) m[j][k] -= f * m[c][k];
+        }
+    }
+    double P = m[0][3] / m[0][0], Q = m[1][3] / m[1][1], K = m[2][3] / m[2][2];
+    if (-P <= 0.01 || -P > 100) return 0; /* no ellipse, or a straight edge */
+    el->cx = cx, el->a = (float)-P, el->cy = (float)(-Q / (2 * P));
+    el->r = (float)(K - Q * Q / (4 * P));
+    if (el->r <= 4) return 0;
+    for (int i = 0; i < n; i++) {
+        float h = ellipse_half(el, py[i]);
+        if (h < 0 || SDL_fabsf(SDL_fabsf(px[i] - el->cx) - h) > 2.5f) return 0;
+    }
+    return 1;
+}
+
+static void window_beyond(void) {
+    beyond_on[0] = beyond_on[1] = 0;
+    for (int w = 0; w < 2; w++) {
+        int x[2], top = -1, bottom = -1, widest = -1, width = -1, cut0 = -1, cut1 = -1;
+        for (int y = win_top; y < SCREEN_H; y++) { /* the window's first run of lines from the top */
+            if (win_span(y, w, &x[0], &x[1]) <= 0) {
+                if (top >= 0) break;
+                continue;
+            }
+            if (top < 0) top = y;
+            bottom = y;
+            if (x[0] < 0 || x[1] >= SCREEN_W) {
+                if (cut0 < 0) cut0 = y;
+                cut1 = y;
+            } else if (x[1] - x[0] > width) width = x[1] - x[0], widest = y;
+        }
+        if (top < 0) continue;
+        /* Split at the widest line, among those the screen's sides cut when there are any (the middle of them). */
+        int split = cut0 >= 0 ? (cut0 + cut1) / 2 : widest;
+        if (split < 0) split = (top + bottom) / 2;
+        /* The centre: the uncut lines' midpoints, all within a pixel of each other. */
+        float mid = 0, lo = 1e9f, hi = -1e9f;
+        int mids = 0;
+        for (int y = top; y <= bottom; y++) {
+            if (win_span(y, w, &x[0], &x[1]) <= 0 || x[0] < 0 || x[1] >= SCREEN_W) continue;
+            float c = (float)(x[0] + x[1] - 1) / 2;
+            mid += c, mids++, lo = SDL_min(lo, c), hi = SDL_max(hi, c);
+        }
+        Ellipse half[2];
+        int fits[2] = {0, 0};
+        if (mids >= 3 && hi - lo <= 2) {
+            mid /= (float)mids;
+            fits[0] = window_ellipse(w, top, split, mid, &half[0]), fits[1] = window_ellipse(w, split, bottom, mid, &half[1]);
+        }
+        /* The screen's sides cutting it: those sides from its half's ellipse, in the margins. */
+        for (int y = top; y <= bottom; y++) {
+            int h = y > split;
+            if (!fits[h] || win_span(y, w, &x[0], &x[1]) <= 0) continue;
+            float hw = ellipse_half(&half[h], (float)y);
+            if (hw < 0) continue;
+            if (x[0] < 0) win_ext[y][w][0] = (int16_t)SDL_lroundf(half[h].cx - hw);
+            if (x[1] >= SCREEN_W) win_ext[y][w][1] = (int16_t)(SDL_lroundf(half[h].cx + hw) + 1);
+        }
+        for (int end = 0; end < 2; end++) {
+            int y0 = end ? SCREEN_H - 1 : win_top, dir = end ? -1 : 1; /* the end line, and inward */
+            if (win_span(y0, w, &x[0], &x[1]) <= 0) continue;
+            if (win_ext[y0][w][0] > win_ext[y0][w][1]) continue; /* wraps */
+            const Ellipse *el = fits[end] && (end ? y0 > split : y0 <= split) ? &half[end] : NULL;
+            float last[2] = {(float)win_ext[y0][w][0], (float)win_ext[y0][w][1] - 1};
+            /* Else each side's slope on the lines nearest the end (none: it stays). */
+            float slope[2] = {0, 0};
+            int n[2] = {0, 0};
+            if (!el) {
+                float px[2][EDGE_FIT], py[2][EDGE_FIT];
+                for (int i = 0, y = y0; i < EDGE_FIT && y >= 0 && y < SCREEN_H; i++, y += dir) {
+                    if (win_span(y, w, &x[0], &x[1]) <= 0) break;
+                    for (int sd = 0; sd < 2; sd++) {
+                        if (x[sd] < 0 || x[sd] >= SCREEN_W) continue;
+                        px[sd][n[sd]] = (float)(sd ? x[1] - 1 : x[0]), py[sd][n[sd]] = (float)y, n[sd]++;
+                    }
+                }
+                if (!n[0] && !n[1]) continue; /* as wide as the screen: as its last line has it */
+                for (int sd = 0; sd < 2; sd++) {
+                    if (n[sd] < 2) continue;
+                    float my = 0, mx = 0, syy = 0, sxy = 0;
+                    for (int i = 0; i < n[sd]; i++) my += py[sd][i], mx += px[sd][i];
+                    my /= (float)n[sd], mx /= (float)n[sd];
+                    for (int i = 0; i < n[sd]; i++) syy += (py[sd][i] - my) * (py[sd][i] - my), sxy += (py[sd][i] - my) * (px[sd][i] - mx);
+                    if (syy > 0) slope[sd] = sxy / syy;
+                }
+            }
+            int gone = 0;
+            for (int i = 0; i < EDGE_ROWS; i++) {
+                float y = (float)(end ? SCREEN_H + i : -1 - i);
+                int16_t *sp = beyond[end][i][w];
+                float a = last[0], b = last[1];
+                if (el) {
+                    float hw = ellipse_half(el, y);
+                    if (hw < 0) gone = 1;
+                    else a = el->cx - hw, b = el->cx + hw;
+                } else {
+                    if (n[0]) a += slope[0] * (y - (float)y0);
+                    if (n[1]) b += slope[1] * (y - (float)y0);
+                }
+                if (a > b) gone = 1;
+                if (gone) { sp[0] = sp[1] = 0; continue; }
+                sp[0] = (int16_t)SDL_clamp(SDL_lroundf(a), -0x7FFF, 0x7FFF);
+                sp[1] = (int16_t)SDL_clamp(SDL_lroundf(b) + 1, -0x7FFF, 0x7FFF);
+            }
+            beyond_on[end] |= (uint8_t)(1 << w);
+        }
+    }
+}
+
 enum { BAND_MIN = 48, BATTLE_TOP = 46, BATTLE_BOTTOM = 166 }; /* the lines between the battle menu and the text box */
+enum { BEAM_LINES = 4 }; /* an effect this many lines tall or less is a beam, drawn on its own lines */
 static void effect_rows(Engine *e) {
     int x[2], top = win_top, bottom = SCREEN_H - 1;
 #define WIN_EMPTY(y) (!win_span(y, 0, &x[0], &x[1]) && !win_span(y, 1, &x[0], &x[1]))
@@ -1436,7 +1600,11 @@ static void effect_rows(Engine *e) {
     /* So is an effect hanging from the battle menu, or rising from the text box, that ends short of the other: it
      * has a place on screen (Azala's red pillar, down to just below Marle, before its rounded end fits as rays),
      * stretched from those lines its end went lower until the rays took over and it went back. */
-    if (top >= BATTLE_TOP && bottom < BATTLE_BOTTOM && (top == BATTLE_TOP) != (bottom == BATTLE_BOTTOM - 1)) e->rays_seen = 1;
+    /* Not a beam a few lines thin: an enemy's laser, WIN0 on lines 46-47 alone growing to the right, carried up from
+     * line 46 over the rows the battle menu covers on the DS, showed as a square. */
+    if (top >= BATTLE_TOP && bottom < BATTLE_BOTTOM && (top == BATTLE_TOP) != (bottom == BATTLE_BOTTOM - 1) &&
+        bottom - top + 1 > BEAM_LINES)
+        e->rays_seen = 1;
     if (e->rays_seen) {
         e->rays = rays | RAYS_KEPT, e->band_top = top, e->band_rows = bottom - top + 1;
         fit_oval(0), fit_oval(1);
@@ -1551,6 +1719,8 @@ static void engine_frame_start(Engine *e) {
             win_ext_on = e->margin && ws_window_lines(win_lines);
             if (win_ext_on) window_margins();
             if (win_ext_on && e->rows) effect_rows(e);
+            if (win_ext_on && !e->band_rows) window_beyond();
+            else beyond_on[0] = beyond_on[1] = 0;
             e->hdma_bgs = e->margin ? (uint8_t)ws_hdma_bgs() : 0;
             e->mirror_bg = 0;
             for (int bg = 0; bg < 4 && win_ext_on; bg++) e->mirror_bg |= (uint8_t)(picture_256(e, bg, dispcnt) << bg);
@@ -1607,6 +1777,9 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
     int m = e->margin, width = SCREEN_W + 2 * m;
     int on_screen = y >= 0 && y < SCREEN_H, ly = row_line(e, y); /* the line it is drawn as (its registers) */
     int by = e->band_rows && !e->ring && !e->rays ? ly : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
+    /* Where a window goes on beyond the screen (window_beyond), the effect's map goes on as its nearest line: its own
+     * rows there hold less of it (the orb's red, a smaller disc above line 0, showed a narrower cap inside the dome). */
+    if (!e->band_rows && ((y < 0 && beyond_on[0]) || (y >= SCREEN_H && beyond_on[1]))) by = ly;
     /* The line whose windows it has: the view's shift at a room's end moves the picture, and the windows the game
      * placed on it with it, as for the columns (vx below). Shifted, the row's registers are another line's: its
      * window spans are then the HDMA table's for that line (the portal a monster of the Arena of the Ages comes back
@@ -1736,6 +1909,21 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         int in_w0y = win0 && in_range(wy, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(wy, w1v >> 8, w1v & 0xFF);
         int ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h); /* the line as the table has it */
         const int16_t *ext0 = ext ? win_ext[wy][0] : NULL, *ext1 = ext ? win_ext[wy][1] : NULL;
+        /* Beyond the screen: the windows' shapes carried on (window_beyond), by the line the row has its windows from
+         * (vy: shifted with the view at a room's end, the orb's 8 rows above the screen were its lines 0-7, and taken
+         * from beyond, its top was dented). */
+        int bend = vy < 0 ? 0 : vy >= SCREEN_H ? 1 : -1, brow = bend ? vy - SCREEN_H : -1 - vy;
+        if (bend >= 0 && beyond_on[bend] && brow < EDGE_ROWS && !e->band_rows) {
+            for (int w = 0; w < 2; w++) {
+                if (!(beyond_on[bend] >> w & 1)) continue;
+                const int16_t *sp = beyond[bend][brow][w];
+                uint16_t h = sp[0] >= sp[1] ? 0 : (uint16_t)(SDL_clamp(sp[0], 0, SCREEN_W - 1) << 8 | (sp[1] >= SCREEN_W ? 0xFF : SDL_clamp(sp[1], 0, SCREEN_W - 1)));
+                if (w) w1h = h, ext1 = sp; else w0h = h, ext0 = sp;
+            }
+            if (!ext0) ext0 = win_ext[wy][0];
+            if (!ext1) ext1 = win_ext[wy][1];
+            ext = 1;
+        }
         /* A ring (effect_rows): its windows from its circles in the margins and on the rows beyond its band. */
         int ring_sp[2][2], ring_n = e->ring ? ring_spans(e, vy, ring_sp) : 0;
         int ring_row = e->ring && (vy < e->band_top || vy >= e->band_top + e->band_rows);
