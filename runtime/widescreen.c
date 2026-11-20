@@ -301,21 +301,20 @@ static uint32_t room_print(uint32_t scroll) {
 /* The location of the room on screen, for the tables keyed by location: the game sets the next scene's location
  * before its room. Leaving the End of Time for the parked Epoch (0x1d9), the location read 0x1d9 for 17 frames of the
  * fade while the End of Time still showed: as a narrow room its view jumped 488 px and its BGs repeated into the
- * margins, the map scrambled. A new location counts once the room (room_print) has changed since the frame before it
- * (a room set the same frame counts too), or after LOCATION_WAIT frames (a location in the same room); the first one
- * seen (a state loaded) at once. */
+ * margins, the map scrambled. A new location counts once the room (room_print) differs from the one the location
+ * shown was taken in (the room may change before or after the location), or after LOCATION_WAIT frames (a location
+ * in the same room); the first one seen (a state loaded) at once. */
 #define LOCATION_WAIT 60 /* frames */
 static uint32_t ws_frame;
 static int room_location(void) {
     static int last, shown;
-    static uint32_t print_before, print_then, changed_at;
+    static uint32_t shown_print, changed_at;
     uint32_t scroll = rt_r32(SCROLL);
     int loc = rt_r16(LOCATION);
     uint32_t print = ram_ptr(scroll) ? room_print(scroll) : 0;
-    if (!last) last = shown = loc, print_before = print;
-    if (loc != last) last = loc, print_then = print_before, changed_at = ws_frame;
-    if (shown != loc && (print != print_then || ws_frame - changed_at >= LOCATION_WAIT)) shown = loc;
-    if (shown == loc) print_before = print;
+    if (!last) last = shown = loc, shown_print = print;
+    if (loc != last) last = loc, changed_at = ws_frame;
+    if (shown != loc && (print != shown_print || ws_frame - changed_at >= LOCATION_WAIT)) shown = loc, shown_print = print;
     return shown;
 }
 
@@ -585,7 +584,7 @@ int ws_repeat_bgs(void) { return repeat_bgs; }
  * Epoch (0x1d9): BG0's water, with BG3 added onto it (BLDCNT 0x014a), starts at its ring origin as the Epoch lands
  * from the time gate; for the ~60 frames until it was seen off it, the gate's white light showed in the 4:3 view
  * only. */
-static const struct { uint16_t location; uint8_t bgs; } repeat_rooms[] = {{0x1b0, 1 << 3}, {0x1d9, 1 | 1 << 3}};
+static const struct { uint16_t location; uint8_t bgs; } repeat_rooms[] = {{0x1b0, 1 << 3}, {0x1c1, 1 << 3}, {0x1d9, 1 | 1 << 3}};
 
 static const struct { uint16_t location; uint8_t bgs; } wide_picture_rooms[] = {{0x1d3, 1 << 3 | 1}};
 
@@ -1163,7 +1162,11 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
              * map, scroll and ring origin a frame apart; taken for a layer moving on its own, it repeated, BG3 blended
              * onto it with it, and the margins showed BG3's map beside the room until the room was left. */
             off[bg] = s == 2 ? off[bg] + (off[bg] < DRIFT_STEPS) : 0;
-            if ((off[bg] >= DRIFT_STEPS && settled) || ((s == 2 || settled) && s && (seen >> bg & 1))) repeat_bgs |= 1 << bg;
+            /* Or seen drifting (below): the marble behind location 0x1c1's walkway,
+             * BG3 a row every 4 frames, was off its ring origin by two steps only after a second; till then the
+             * margins showed nothing beside the 4:3 view. */
+            int dr = bg == 3 ? drift & 1 : bg == 0 ? drift >> 1 & 1 : 0;
+            if (((off[bg] >= DRIFT_STEPS || dr) && settled) || ((s == 2 || settled) && s && (seen >> bg & 1))) repeat_bgs |= 1 << bg;
         }
         uint16_t bld = io_get16(0x50);
         if (((bld >> 6) & 3) == 1 && (bld >> 8 & repeat_bgs)) repeat_bgs |= bld & 9; /* BG0, BG3 blended onto them */
