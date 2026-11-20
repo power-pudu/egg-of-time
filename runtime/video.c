@@ -132,6 +132,7 @@ typedef struct Engine {
     int view_x, view_y, view_bgs; /* the view's shift from the camera at the room's ends, the BGs it moves (ws_view_shift) */
     int bg_dx[4], bg_dy[4];       /* each of those BGs' share of it (ws_bg_shift) */
     int obj_dx, obj_dy;           /* the world's sprites are that much off it (ws_sprite_lag) */
+    int short_rows; /* with room_clip: the room has fewer rows than the view, black beyond room_y0..y1-1 */
     int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
     uint8_t wide_bgs; /* BGs drawn as they are beyond the screen's sides, not repeated (ws_wide_picture_bgs: Lavos's ripples) */
     int repeat_bgs; /* BGs whose screen columns repeat into the margins, the others empty beyond the room
@@ -1583,6 +1584,7 @@ static void engine_frame_start(Engine *e) {
                 e->room_x0 += to, e->room_x1 += to;
             }
             e->room_y0 = -e->rows, e->room_y1 = SCREEN_H + e->rows;
+            e->short_rows = e->room_clip && shown_rows && ws_short_room();
             if (e->room_clip && shown_rows && ws_room_rows(&e->room_y0, &e->room_y1)) {
                 int to = (known && rk && SDL_abs(ry - cy) <= VIDEO_SLIDE_MAX ? ry - cy : 0) - e->view_y;
                 e->room_y0 += to, e->room_y1 += to;
@@ -1914,6 +1916,14 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             }
         }
         }
+    }
+    if (e->short_rows && (y < e->room_y0 || y >= e->room_y1)) { /* a band beyond a room shorter than the view */
+        for (int x = 0; x < width; x++) out[x] = 0xFF000000u;
+        if (e->party) memset(&party_frame[FROW(e, y)], 0, (size_t)width * sizeof *party_frame);
+        if (e->still_bgs) memset(&still_frame[FROW(e, y)], 0, (size_t)width * sizeof *still_frame);
+        if (hd_row) memset(hd_row, 0, (size_t)width * sizeof *hd_row);
+        if (hd_on && e->party) memset(&hd_party[FROW(e, y)], 0, (size_t)width * sizeof *hd_party);
+        if (hd_on && e->still_bgs) memset(&hd_still[FROW(e, y)], 0, (size_t)width * sizeof *hd_still);
     }
 
 advance:

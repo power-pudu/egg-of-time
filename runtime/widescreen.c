@@ -65,6 +65,7 @@
 static int ram_ptr(uint32_t p) { return p >> 24 == 0x02; }
 
 static int field_rows; /* this frame's rows above and below the screen in the field (zoom out), 0 elsewhere */
+static int short_room;  /* the room's rows are fewer than the zoomed view's: it is centred, black beyond (ws_room_rows) */
 static int view_x, view_y; /* the view's shift from the camera (the room's ends) for this frame's scroll */
 static int next_x, next_y; /* and for the next frame's, from the camera in RAM */
 static int oam_x, oam_y;   /* the one this frame's sprites were placed with (ws_sprite_lag) */
@@ -477,10 +478,16 @@ static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
  * above the screen showed the water where Lavos's top goes on. So the clip goes on over rows that are not the void
  * (void_row), within the rows shown, the view still stopping at the bounds. The rows shown are the view's, shifted at
  * the room's ends: counted from the camera, at Arris Dome's bottom end (2300 A.D.) the view's top rows, 14 above it,
- * were cut black, the fog over them gone, while at its top end the same rows showed. */
+ * were cut black, the fog over them gone, while at its top end the same rows showed. A room with fewer rows than the
+ * view is clipped at its bounds: it is centred, and the map past both ends is shown, which the game never draws. Below
+ * Death Peak (location 0x106, 224 rows against 240 or 226 at 80% and 85%) the cliffs' ground ended on a straight line
+ * 8 rows above the view's bottom, the valley showing under it. */
+int ws_short_room(void) { return short_room; }
+
 int ws_room_rows(int *y0, int *y1) {
     int top_void, bottom_void;
     if (!room_rows(y0, y1, &top_void, &bottom_void)) return 0;
+    if (short_room) return 1;
     uint32_t scroll = rt_r32(SCROLL), tilesets = rt_r32(TILESETS);
     int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17), top = rt_r8(scroll + 0x18), bottom = rt_r8(scroll + 0x19);
     int view = (int16_t)rt_r16(CAMERA + 2), last = rt_r8(scroll + 0x1b), shown = view + view_y;
@@ -1156,7 +1163,9 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * clouds 4 rows a frame over BG3's. Filled only while that scroll passed near the layer's place in the room, the
      * rows beyond the screen jumped for those frames (from the map's last row on). Left to the game while the room
      * holds. Drifting is a few rows a frame, seen twice (DRIFT_STEPS), also while the room settles: entering the
-     * Blackbird's hall, BG3 went from the wing's VOFS 403 to 0 in one step, no drift. */
+     * Blackbird's hall, BG3 went from the wing's VOFS 403 to 0 in one step, no drift. A layer whose own scroll holds
+     * does not drift: below Death Peak (location 0x106) BG3 is fixed to the screen, and as the camera stopped, BG2's
+     * last steps came a frame after the camera in RAM, so BG3 seemed to move against it and was left to the game. */
     static uint32_t drift_room;
     static int steps[2], last_cam, last_vofs[2], last_room_vofs;
     int cam = (int16_t)rt_r16(CAMERA + 2), room_vofs = io_get16(0x1a) & 511;
@@ -1165,7 +1174,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     else if (cam == last_cam) {
         for (int i = 0; i < 2; i++) {
             int d = (vofs[i] - last_vofs[i] - room_vofs + last_room_vofs) & 511;
-            if (d && (d <= DRIFT_STEP || d >= 512 - DRIFT_STEP) && ++steps[i] >= DRIFT_STEPS) drift |= 1 << i;
+            if (d && vofs[i] != last_vofs[i] && (d <= DRIFT_STEP || d >= 512 - DRIFT_STEP) && ++steps[i] >= DRIFT_STEPS) drift |= 1 << i;
         }
     }
     last_cam = cam, last_vofs[0] = vofs[0], last_vofs[1] = vofs[1], last_room_vofs = room_vofs;
@@ -1189,7 +1198,17 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     }
     int drifting = (drift & 1) << 3 | (drift & 2) >> 1; /* BG3 layer 1, BG0 layer 2 */
     measure_rates(scroll, room, drifting); /* layer 1's own camera known */
-    int pic1 = ok1 && !held1, pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
+    /* Layer 1 on its own camera held at the map's origin while the room's is well away from it is a picture fixed to
+     * the screen: the misty valley below Death Peak (location 0x106), BG3 at 0, 0 however the party walks. Its room map
+     * holds 256 columns of it and other rooms' tiles beyond, so filled, the margins showed a flat green around a 4:3
+     * box. As a picture its margins show it reflected. (A sky at half the room's speed is only at 0 near the room's
+     * top-left, where the room's camera is too.) Once seen so, it stays a picture in that room while it holds there:
+     * walking to the room's left end, the camera's column went below 8 and the box came back. */
+    static uint32_t fixed_room;
+    int fixed1 = held1 && own_l1 && !layer_col(scroll, 1) && !layer_row(scroll, 1);
+    if (fixed1 && (layer_col(scroll, 0) >= 8 || layer_row(scroll, 0) >= 8)) fixed_room = here;
+    fixed1 = fixed1 && fixed_room == here;
+    int pic1 = ok1 && (!held1 || fixed1), pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
     tent_back |= pic1 << 3 | pic2;
     /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge), both ways: the shaft
@@ -1282,6 +1301,7 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
     give_back(tent_back);
     next_x = next_y = 0;
     int lo, hi;
+    short_room = 0;
     if (field && limit) {
         int at_lo = 1, at_hi = 1;
         /* Fill screen sides: only where it has nothing to show. A layer repeating into the margins (the clouds of
@@ -1293,6 +1313,7 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
         if (limit_rows && room_rows(&lo, &hi, &at_lo, &at_hi)) {
             if (!fills) at_lo = at_hi = 1;
             next_y = view_shift(lo, hi, SCREEN_H, limit_rows, at_lo, at_hi);
+            short_room = at_lo && at_hi && hi - lo < SCREEN_H + 2 * limit_rows;
         }
     }
     set_sprite_view(field_margin, field_rows, next_x, next_y);

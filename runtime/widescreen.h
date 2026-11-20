@@ -30,6 +30,8 @@ int ws_world_sprite_limit(int rows);
 int ws_room_span(int *x0, int *x1);
 /* In the field: the rows the room covers, y0..y1-1 from the top of the DS screen; 0 elsewhere. */
 int ws_room_rows(int *y0, int *y1);
+/* Zoomed out, the room has fewer rows than the view: the rows beyond it are black bands. */
+int ws_short_room(void);
 /* In the field: the BGs (bit per BG) whose 256 columns repeat into the margins, in a room one screen wide where
  * they scroll on their own (beyond the room the other BGs are then empty); 0 otherwise. */
 int ws_repeat_bgs(void);
