@@ -560,8 +560,11 @@ int ws_repeat_bgs(void) { return repeat_bgs; }
  * Lavos's room (0x1d3): the ripples around him on BG3, whose map goes on with the rings on both sides. Repeated, its
  * 256 columns showed seams at the 4:3 picture's sides, and in the room's first frames (the fade to him), before the
  * layer was seen scrolling on its own, the margins were black: a box. */
-/* Rooms with a layer scrolling on its own from their first frame (BGs by location): fill_field_margins. */
-static const struct { uint16_t location; uint8_t bgs; } repeat_rooms[] = {{0x1b0, 1 << 3}};
+/* Rooms with a layer scrolling on its own from their first frame (BGs by location): fill_field_margins. The parked
+ * Epoch (0x1d9): BG0's water, with BG3 added onto it (BLDCNT 0x014a), starts at its ring origin as the Epoch lands
+ * from the time gate; for the ~60 frames until it was seen off it, the gate's white light showed in the 4:3 view
+ * only. */
+static const struct { uint16_t location; uint8_t bgs; } repeat_rooms[] = {{0x1b0, 1 << 3}, {0x1d9, 1 | 1 << 3}};
 
 static const struct { uint16_t location; uint8_t bgs; } wide_picture_rooms[] = {{0x1d3, 1 << 3 | 1}};
 
