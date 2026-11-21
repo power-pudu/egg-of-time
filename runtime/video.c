@@ -111,12 +111,14 @@ typedef struct Engine {
     int ring;                /* or (a ring) drawn from its circles beyond them, its tables repeating every */
     int band_period;         /* band_period lines (0: the nearest line's) */
     int lines_top[2], lines_bottom[2]; /* effect_rows: the lines the effect was on this frame and the last */
+    int hang;                /* effect_rows: frames running the effect's own top has been the battle menu's edge */
     int rays;                /* effect_rows: the windows (bit per window) drawn as rays beyond the band; RAYS_KEPT: the
                               * band not stretched, the effect having had rays */
     int rays_seen;           /* the effect running has had rays */
     int rays_up, rays_down;  /* the rays go on beyond the band's top, its bottom (the lines a menu or the text box
                               * blanks); else the effect ends there */
     float ring_cx, ring_cy, ring_outer, ring_inner; /* the ring's circles (ring_inner 0: a disc) */
+    float ring_a;            /* their shape: (x - cx)^2 + ring_a (y - cy)^2 = radius^2 (1: circles) */
     float ring_width;        /* the ring's width when both its circles last showed (0: none yet) */
     int ring_keep;           /* the frames its centre still counts for, the ring having shown */
     uint8_t ring_fits;       /* by frame, the last first: the windows fit a ring */
@@ -1224,67 +1226,91 @@ static void window_margins(void) {
  * the screen's included: each row is drawn as the band's line at the same height (its windows, the rows of the BGs
  * not the room's, render_engine_line) with what the game's software HDMA writes for that line (ws_hdma_line,
  * video_render_line); sprites and the room's BGs (the stars too, coloured by the line's palette) keep their rows. */
-/* A circle through points (Kasa's least squares): 1 with its centre and radius, else 0. */
-static int fit_circle(const float *px, const float *py, const uint8_t *use, int n, float *cx, float *cy, float *r) {
-    double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0, sz = 0, k = 0;
+/* Fire 2's ring is an ellipse twice as wide as tall (a = 3.9); Rainbow Beam's a circle. */
+#define RING_SHAPE_MIN 0.2
+#define RING_SHAPE_MAX 8.0
+/* An upright ellipse through points, (x - cx)^2 + a (y - cy)^2 = r^2 (least squares on x^2 + A y^2 + Dx + Ey + F = 0):
+ * 1 with its centre, shape a and radius (its half width), else 0. A circle has a = 1. With rings 2, two concentric
+ * ellipses of one shape, through the points use marks 1 and 2 (an F each), their radii in r[0] and r[1]. */
+static int fit_conics(const float *px, const float *py, const uint8_t *use, int n, int rings, float *cx, float *cy, float *a, float *r) {
+    enum { N = 5 };
+    int u = 3 + rings;
+    double m[N][N + 1] = {{0}};
     for (int i = 0; i < n; i++) {
-        if (use && !use[i]) continue;
-        double x = px[i], y = py[i], z = x * x + y * y;
-        sx += x, sy += y, sxx += x * x, syy += y * y, sxy += x * y, sxz += x * z, syz += y * z, sz += z, k++;
-    }
-    /* [sxx sxy sx; sxy syy sy; sx sy k] (D E F) = -(sxz syz sz), the circle x^2 + y^2 + Dx + Ey + F = 0 */
-    double a[3][4] = {{sxx, sxy, sx, -sxz}, {sxy, syy, sy, -syz}, {sx, sy, k, -sz}};
-    for (int c = 0; c < 3; c++) {
-        int piv = c;
-        for (int r2 = c + 1; r2 < 3; r2++) if (SDL_fabs(a[r2][c]) > SDL_fabs(a[piv][c])) piv = r2;
-        if (SDL_fabs(a[piv][c]) < 1e-9) return 0;
-        for (int j = 0; j < 4; j++) { double t = a[c][j]; a[c][j] = a[piv][j], a[piv][j] = t; }
-        for (int r2 = 0; r2 < 3; r2++) {
-            if (r2 == c) continue;
-            double f = a[r2][c] / a[c][c];
-            for (int j = c; j < 4; j++) a[r2][j] -= f * a[c][j];
+        int k = use ? use[i] : 1;
+        if (k < 1 || k > rings) continue;
+        double x = px[i], y = py[i], v[N] = {y * y, x, y, 0, 0}, b = -x * x;
+        v[2 + k] = 1;
+        for (int j = 0; j < u; j++) {
+            for (int l = 0; l < u; l++) m[j][l] += v[j] * v[l];
+            m[j][N] += v[j] * b;
         }
     }
-    double d = a[0][3] / a[0][0], ee = a[1][3] / a[1][1], f = a[2][3] / a[2][2];
-    double x0 = -d / 2, y0 = -ee / 2, r2 = x0 * x0 + y0 * y0 - f;
-    if (r2 <= 0) return 0;
-    *cx = (float)x0, *cy = (float)y0, *r = (float)SDL_sqrt(r2);
+    for (int c = 0; c < u; c++) { /* Gauss-Jordan */
+        int piv = c;
+        for (int r2 = c + 1; r2 < u; r2++) if (SDL_fabs(m[r2][c]) > SDL_fabs(m[piv][c])) piv = r2;
+        if (SDL_fabs(m[piv][c]) < 1e-9) return 0;
+        for (int j = 0; j <= N; j++) { double t = m[c][j]; m[c][j] = m[piv][j], m[piv][j] = t; }
+        for (int r2 = 0; r2 < u; r2++) {
+            if (r2 == c) continue;
+            double f = m[r2][c] / m[c][c];
+            for (int j = c; j <= N; j++) m[r2][j] -= f * m[c][j];
+        }
+    }
+    double A = m[0][N] / m[0][0], D = m[1][N] / m[1][1], E = m[2][N] / m[2][2];
+    if (A < RING_SHAPE_MIN || A > RING_SHAPE_MAX) return 0;
+    double x0 = -D / 2, y0 = -E / (2 * A);
+    for (int k = 0; k < rings; k++) {
+        double r2 = x0 * x0 + A * y0 * y0 - m[3 + k][N] / m[3 + k][3 + k];
+        if (r2 <= 0) return 0;
+        r[k] = (float)SDL_sqrt(r2);
+    }
+    *cx = (float)x0, *cy = (float)y0, *a = (float)A;
     return 1;
+}
+static int fit_conic(const float *px, const float *py, const uint8_t *use, int n, float *cx, float *cy, float *a, float *r) {
+    return fit_conics(px, py, use, n, 1, cx, cy, a, r);
 }
 
 /* The circle most of the points not yet taken lie on (RANSAC over triples, then refined): their count, marking
  * them in mark. */
 enum { RING_POINTS_MAX = 4 * SCREEN_H, RING_MIN = 12, RING_RADIUS_MAX = 320 };
-#define RING_TOLERANCE 1.5f
-static int on_circle(float x, float y, float cx, float cy, float r) {
-    return SDL_fabsf(SDL_sqrtf((x - cx) * (x - cx) + (y - cy) * (y - cy)) - r) <= RING_TOLERANCE;
+#define RING_TOLERANCE 1.5f /* pixels off the ring a window's edge may lie */
+static float ring_dist(float x, float y, float cx, float cy, float a) { return SDL_sqrtf((x - cx) * (x - cx) + a * (y - cy) * (y - cy)); }
+static int on_circle(float x, float y, float cx, float cy, float a, float r) {
+    return SDL_fabsf(ring_dist(x, y, cx, cy, a) - r) <= RING_TOLERANCE;
 }
-static int ring_circle(const float *px, const float *py, const uint8_t *taken, int n, uint8_t *mark, float *cx, float *cy, float *r) {
+static int ring_circle(const float *px, const float *py, const uint8_t *taken, int n, uint8_t *mark, float *cx, float *cy, float *a, float *r) {
     uint32_t seed = 0x2545F491u;
     int best = 0;
-    float bx = 0, by = 0, br = 0;
+    float bx = 0, by = 0, ba = 1, br = 0;
     for (int it = 0; it < 400; it++) {
-        int t[3];
-        for (int k = 0; k < 3; k++) {
+        int t[4];
+        for (int k = 0; k < 4; k++) {
             seed = seed * 1664525u + 1013904223u;
             t[k] = (int)((seed >> 8) % (uint32_t)n);
         }
-        if (taken[t[0]] || taken[t[1]] || taken[t[2]] || t[0] == t[1] || t[1] == t[2] || t[0] == t[2]) continue;
-        float qx[3] = {px[t[0]], px[t[1]], px[t[2]]}, qy[3] = {py[t[0]], py[t[1]], py[t[2]]}, x0, y0, r0;
-        if (!fit_circle(qx, qy, NULL, 3, &x0, &y0, &r0) || r0 > RING_RADIUS_MAX) continue;
+        int bad = 0;
+        for (int k = 0; k < 4; k++) {
+            bad |= taken[t[k]];
+            for (int j = 0; j < k; j++) bad |= t[j] == t[k];
+        }
+        if (bad) continue;
+        float qx[4] = {px[t[0]], px[t[1]], px[t[2]], px[t[3]]}, qy[4] = {py[t[0]], py[t[1]], py[t[2]], py[t[3]]}, x0, y0, a0, r0;
+        if (!fit_conic(qx, qy, NULL, 4, &x0, &y0, &a0, &r0) || r0 > RING_RADIUS_MAX) continue;
         int c = 0;
-        for (int i = 0; i < n; i++) c += !taken[i] && on_circle(px[i], py[i], x0, y0, r0);
-        if (c > best) best = c, bx = x0, by = y0, br = r0;
+        for (int i = 0; i < n; i++) c += !taken[i] && on_circle(px[i], py[i], x0, y0, a0, r0);
+        if (c > best) best = c, bx = x0, by = y0, ba = a0, br = r0;
     }
     if (best < RING_MIN) return 0;
-    for (int i = 0; i < n; i++) mark[i] = !taken[i] && on_circle(px[i], py[i], bx, by, br);
-    if (!fit_circle(px, py, mark, n, cx, cy, r) || *r > RING_RADIUS_MAX) return 0;
+    for (int i = 0; i < n; i++) mark[i] = !taken[i] && on_circle(px[i], py[i], bx, by, ba, br);
+    if (!fit_conic(px, py, mark, n, cx, cy, a, r) || *r > RING_RADIUS_MAX) return 0;
     return best;
 }
 
 /* The ring's spans on row y (effect_rows), in screen columns from x0 to before x1: their count, 0-2. */
 static int ring_spans(const Engine *e, int y, int sp[2][2]) {
-    float dy = (float)y - e->ring_cy, ro = e->ring_outer, ri = e->ring_inner;
+    float dy = ((float)y - e->ring_cy) * SDL_sqrtf(e->ring_a), ro = e->ring_outer, ri = e->ring_inner;
     if (SDL_fabsf(dy) >= ro) return 0;
     float h = SDL_sqrtf(ro * ro - dy * dy);
     int a = (int)SDL_lroundf(e->ring_cx - h), b = (int)SDL_lroundf(e->ring_cx + h);
@@ -1299,7 +1325,10 @@ static int ring_spans(const Engine *e, int y, int sp[2][2]) {
 }
 
 /* The ring's windows as the game draws them on the band's lines: 1 if they are the circles' on nearly all of them,
- * but for a pixel or two at an edge (not a shape that only has some of its edges on them). */
+ * but for pixels at an edge (not a shape that only has some of its edges on them). A pixel counts off only if it is
+ * further than a pixel or two from both circles: near an ellipse's top a line's span changes by tens of pixels
+ * with its radius (Fire 2's, past the screen's sides, its top arcs alone left on it). */
+enum { RING_MISS = 8 };
 static int ring_matches(const Engine *e, int top, int bottom) {
     int bad = 0, x[2], sp[2][2];
     for (int y = top; y <= bottom; y++) {
@@ -1313,18 +1342,22 @@ static int ring_matches(const Engine *e, int top, int bottom) {
         int n = ring_spans(e, y, sp);
         for (int k = 0; k < n; k++) for (int c = SDL_max(sp[k][0], 0); c < SDL_min(sp[k][1], SCREEN_W); c++) row[c] |= 2;
         int miss = 0;
-        for (int c = 0; c < SCREEN_W; c++) miss += row[c] == 1 || row[c] == 2;
-        bad += miss > 8;
+        for (int c = 0; c < SCREEN_W; c++) {
+            if (row[c] != 1 && row[c] != 2) continue;
+            float d = ring_dist((float)c + 0.5f, (float)y, e->ring_cx, e->ring_cy, e->ring_a);
+            miss += SDL_fabsf(d - e->ring_outer) > RING_TOLERANCE + 1 && SDL_fabsf(d - e->ring_inner) > RING_TOLERANCE + 1;
+        }
+        bad += miss > RING_MISS;
     }
     return bad * 20 <= bottom - top + 1;
 }
 
 /* The radius most of the points not yet marked lie at from (cx, cy): their count (at least 2), marking them k. */
 enum { RING_KEEP = 4 };
-static int ring_radius(const float *px, const float *py, int n, float cx, float cy, uint8_t k, uint8_t *mark, float *r) {
+static int ring_radius(const float *px, const float *py, int n, float cx, float cy, float ra, uint8_t k, uint8_t *mark, float *r) {
     static float d[RING_POINTS_MAX];
     if (k == 1) memset(mark, 0, (size_t)n);
-    for (int i = 0; i < n; i++) d[i] = SDL_sqrtf((px[i] - cx) * (px[i] - cx) + (py[i] - cy) * (py[i] - cy));
+    for (int i = 0; i < n; i++) d[i] = ring_dist(px[i], py[i], cx, cy, ra);
     int best = 0;
     float at = 0;
     for (int i = 0; i < n; i++) {
@@ -1357,8 +1390,8 @@ static int fit_ring(Engine *e, int top, int bottom) {
             for (int s = 0; s < 2; s++) if (x[s] > 0 && x[s] < SCREEN_W) px[n] = (float)x[s], py[n] = (float)y, right[n] = !s, n++;
         }
     }
-    float cx = e->ring_cx, cy = e->ring_cy, r = 0, r2 = 0;
-    int a = 0, b = 0;
+    float cx = e->ring_cx, cy = e->ring_cy, ra = e->ring_a, r = 0, r2 = 0;
+    int a = 0, b = 0, fresh = 0;
     if (e->ring_keep) {
         /* A ring just shown keeps its centre as it grows: only its radii from its edges, however few show (as it
          * leaves the screen, a few lines in a corner), or none (its arcs past both sides): it stays as it was. */
@@ -1366,30 +1399,43 @@ static int fit_ring(Engine *e, int top, int bottom) {
             e->ring = 1, e->ring_keep = RING_KEEP;
             return 1;
         }
-        a = ring_radius(px, py, n, cx, cy, 1, mark, &r);
-        if (a) b = ring_radius(px, py, n, cx, cy, 2, mark, &r2);
+        a = ring_radius(px, py, n, cx, cy, ra, 1, mark, &r);
+        if (a) b = ring_radius(px, py, n, cx, cy, ra, 2, mark, &r2);
         if (b < 3) b = 0;
         if ((a + b) * 100 < n * 90) a = b = 0;
     }
     if (!a) {
+        fresh = 1;
         if (n < RING_MIN) return 0;
-        float cx2, cy2;
+        float cx2, cy2, ra2;
         memset(taken, 0, (size_t)n);
-        a = ring_circle(px, py, taken, n, mark, &cx, &cy, &r);
+        a = ring_circle(px, py, taken, n, mark, &cx, &cy, &ra, &r);
         if (!a) return 0;
         for (int i = 0; i < n; i++) taken[i] |= mark[i];
-        b = ring_circle(px, py, taken, n, taken, &cx2, &cy2, &r2); /* taken: marks circle 1's as 1 too */
-        if (b && SDL_fabsf(cx2 - cx) + SDL_fabsf(cy2 - cy) > 4) b = 0; /* not concentric: no ring */
+        b = ring_circle(px, py, taken, n, taken, &cx2, &cy2, &ra2, &r2); /* taken: marks circle 1's as 1 too */
+        if (b && (SDL_fabsf(cx2 - cx) + SDL_fabsf(cy2 - cy) > 4 || SDL_fabsf(ra2 - ra) > 0.25f * ra)) b = 0; /* not concentric: no ring */
         if ((a + b) * 100 < n * 90) return 0; /* the edges are not all on them */
         /* Centred off the screen: a shape's flat edge (Rainbow Storm's clouds' oval past the screen's sides). */
         if (cx < 0 || cx >= SCREEN_W || cy < 0 || cy >= SCREEN_H) return 0;
     }
+    if (b) {
+        /* Both circles' shape and centre from all their edges, while they show above and below the centre (their
+         * top arcs alone fit many: the ring then keeps the shape it had). */
+        float ymin = 1e9f, ymax = -1e9f, h = SDL_max(r, r2) / SDL_sqrtf(ra), cx2, cy2, ra2, rr[2];
+        for (int i = 0; i < n; i++) {
+            if (fresh) mark[i] = mark[i] == 1 ? 1 : taken[i] ? 2 : 0; /* a fresh fit: circle 2's taken */
+            if (mark[i]) ymin = SDL_min(ymin, py[i]), ymax = SDL_max(ymax, py[i]);
+        }
+        if (ymin < cy - h / 4 && ymax > cy + h / 4 && fit_conics(px, py, mark, n, 2, &cx2, &cy2, &ra2, rr)
+            && SDL_fabsf(cx2 - cx) + SDL_fabsf(cy2 - cy) <= 4)
+            cx = cx2, cy = cy2, ra = fresh ? ra2 : (ra + ra2) / 2, r = rr[0], r2 = rr[1]; /* its shape steadied */
+    }
     Engine ring = *e; /* the fit, checked before it is taken */
-    ring.ring_cx = cx, ring.ring_cy = cy;
+    ring.ring_cx = cx, ring.ring_cy = cy, ring.ring_a = ra;
     if (b) {
         ring.ring_outer = SDL_max(r, r2), ring.ring_inner = SDL_min(r, r2);
         if (!ring_matches(&ring, top, bottom)) return 0;
-        e->ring = 1, e->ring_keep = RING_KEEP, e->ring_cx = cx, e->ring_cy = cy;
+        e->ring = 1, e->ring_keep = RING_KEEP, e->ring_cx = cx, e->ring_cy = cy, e->ring_a = ra;
         e->ring_outer = ring.ring_outer, e->ring_inner = ring.ring_inner;
         e->ring_width = e->ring_outer - e->ring_inner;
         return 1;
@@ -1401,7 +1447,7 @@ static int fit_ring(Engine *e, int top, int bottom) {
     if (out <= 0) ring.ring_outer = r, ring.ring_inner = 0;
     else ring.ring_inner = r, ring.ring_outer = e->ring_width ? r + e->ring_width : 4 * RING_RADIUS_MAX;
     if (!ring_matches(&ring, top, bottom)) return 0;
-    e->ring = 1, e->ring_keep = RING_KEEP, e->ring_cx = cx, e->ring_cy = cy;
+    e->ring = 1, e->ring_keep = RING_KEEP, e->ring_cx = cx, e->ring_cy = cy, e->ring_a = ra;
     e->ring_outer = ring.ring_outer, e->ring_inner = ring.ring_inner;
     return 1;
 }
@@ -1583,6 +1629,7 @@ static void window_beyond(void) {
 enum { BAND_MIN = 48, BATTLE_TOP = 46, BATTLE_BOTTOM = 166 }; /* the lines between the battle menu and the text box */
 enum { BEAM_LINES = 4 }; /* an effect this many lines tall or less is a beam, drawn on its own lines */
 enum { BEAM_WIDTH = 8 }; /* an effect this many columns wide or less on every line is a beam too (a laser's line) */
+enum { HANG_FRAMES = 3 }; /* frames an effect's top stays on the battle menu's edge to hang from it */
 static void effect_rows(Engine *e) {
     int x[2], top = win_top, bottom = SCREEN_H - 1;
 #define WIN_EMPTY(y) (!win_span(y, 0, &x[0], &x[1]) && !win_span(y, 1, &x[0], &x[1]))
@@ -1595,7 +1642,7 @@ static void effect_rows(Engine *e) {
     while (top < SCREEN_H && WIN_EMPTY(top)) top++;
     while (bottom >= top && WIN_EMPTY(bottom)) bottom--;
 #undef WIN_EMPTY
-    if (top > bottom) return;
+    if (top > bottom) { e->hang = 0; return; }
     /* A ring fits two frames running: Rainbow Storm's clouds' oval fits one now and then. */
     /* The ring is both windows where they show the same layers (an enemy's Rainbow Beam), else WIN0 alone. */
     uint8_t wins = (reg16(e, 0x48) & 0x3F) == (reg16(e, 0x48) >> 8 & 0x3F) ? 3 : 1;
@@ -1609,6 +1656,7 @@ static void effect_rows(Engine *e) {
     /* The band takes the lines of the frame before too: Lightning II's rays alternate frame by frame between two
      * sets, one of them clear of the top lines, and stretched from each in turn the bolts jumped up and down. */
     e->lines_top[0] = top, e->lines_bottom[0] = bottom;
+    e->hang = top == BATTLE_TOP ? e->hang + 1 : 0;
     if (e->lines_top[1] < top) top = e->lines_top[1];
     if (e->lines_bottom[1] > bottom) bottom = e->lines_bottom[1];
     /* Rays are not stretched either (their centre, on the target, would move with the stretch: Lightning II's met
@@ -1624,8 +1672,11 @@ static void effect_rows(Engine *e) {
      * stretched from those lines its end went lower until the rays took over and it went back. */
     /* Not a beam a few lines thin: an enemy's laser, WIN0 on lines 46-47 alone growing to the right, carried up from
      * line 46 over the rows the battle menu covers on the DS, showed as a square. */
+    /* Nor a shape passing line 46 as it grows: Fire 2's ring, its top on that line for the 2 frames the game keeps a
+     * size, was drawn as rays from then on and went on beyond the screen as flat streaks. A shape hanging from the
+     * menu stays there (HANG_FRAMES). */
     if (top >= BATTLE_TOP && bottom < BATTLE_BOTTOM && (top == BATTLE_TOP) != (bottom == BATTLE_BOTTOM - 1) &&
-        bottom - top + 1 > BEAM_LINES)
+        bottom - top + 1 > BEAM_LINES && (top != BATTLE_TOP || e->hang >= HANG_FRAMES))
         e->rays_seen = 1;
     if (e->rays_seen) {
         e->rays = rays | RAYS_KEPT, e->band_top = top, e->band_rows = bottom - top + 1;
