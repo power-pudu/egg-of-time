@@ -1324,21 +1324,30 @@ static int ring_spans(const Engine *e, int y, int sp[2][2]) {
     return 2;
 }
 
+/* The battle menu at the bottom covers the screen's last MENU_LINES lines, where the game blanks the windows: an
+ * effect's shape goes on from line 145 instead, down the rows the zoom out shows there (Luminaire's orb, a dome cut
+ * flat at line 145, above the menu drawn lower in the picture; with the menu at the top it showed whole). */
+enum { MENU_LINES = 46 };
 /* The ring's windows as the game draws them on the band's lines: 1 if they are the circles' on nearly all of them,
  * but for pixels at an edge (not a shape that only has some of its edges on them). A pixel counts off only if it is
  * further than a pixel or two from both circles: near an ellipse's top a line's span changes by tens of pixels
- * with its radius (Fire 2's, past the screen's sides, its top arcs alone left on it). */
+ * with its radius (Fire 2's, past the screen's sides, its top arcs alone left on it). The menu's lines the game
+ * left blank are not the ring's: its bottom tip showing on the screen's last lines, below them, took them in, the
+ * ring fitted no more and was stretched with the band, a tall oval for a few frames. */
 enum { RING_MISS = 8 };
 static int ring_matches(const Engine *e, int top, int bottom) {
     int bad = 0, x[2], sp[2][2];
     for (int y = top; y <= bottom; y++) {
         uint8_t row[SCREEN_W] = {0};
+        int shown = 0;
         for (int w = 0; w < 2; w++) {
             if (!(e->ring_wins >> w & 1)) continue;
             int k = win_span(y, w, &x[0], &x[1]);
             if (k < 0) return 0;
+            shown |= k;
             for (int c = SDL_max(x[0], 0); k && c < x[1]; c++) row[c] |= 1;
         }
+        if (!shown && y >= SCREEN_H - MENU_LINES) continue;
         int n = ring_spans(e, y, sp);
         for (int k = 0; k < n; k++) for (int c = SDL_max(sp[k][0], 0); c < SDL_min(sp[k][1], SCREEN_W); c++) row[c] |= 2;
         int miss = 0;
@@ -1418,23 +1427,32 @@ static int fit_ring(Engine *e, int top, int bottom) {
         /* Centred off the screen: a shape's flat edge (Rainbow Storm's clouds' oval past the screen's sides). */
         if (cx < 0 || cx >= SCREEN_W || cy < 0 || cy >= SCREEN_H) return 0;
     }
-    if (b) {
-        /* Both circles' shape and centre from all their edges, while they show above and below the centre (their
-         * top arcs alone fit many: the ring then keeps the shape it had). */
+    {
+        /* The circles' shape and centre from all their edges, while they show above and below the centre (their
+         * top arcs alone fit many: the ring then keeps the shape it had). A disc too: a ring's first frames, a small
+         * blocky disc (a rainbow ring's start, 12 columns by 16 lines, taken for an ellipse half as tall again), kept that
+         * shape as it grew round, fitted no more, and was stretched with the band between the menu and the text box,
+         * a tall oval. */
         float ymin = 1e9f, ymax = -1e9f, h = SDL_max(r, r2) / SDL_sqrtf(ra), cx2, cy2, ra2, rr[2];
         for (int i = 0; i < n; i++) {
-            if (fresh) mark[i] = mark[i] == 1 ? 1 : taken[i] ? 2 : 0; /* a fresh fit: circle 2's taken */
+            if (fresh) mark[i] = mark[i] == 1 ? 1 : b && taken[i] ? 2 : 0; /* a fresh fit: circle 2's taken */
             if (mark[i]) ymin = SDL_min(ymin, py[i]), ymax = SDL_max(ymax, py[i]);
         }
-        if (ymin < cy - h / 4 && ymax > cy + h / 4 && fit_conics(px, py, mark, n, 2, &cx2, &cy2, &ra2, rr)
+        if (ymin < cy - h / 4 && ymax > cy + h / 4 && fit_conics(px, py, mark, n, b ? 2 : 1, &cx2, &cy2, &ra2, rr)
             && SDL_fabsf(cx2 - cx) + SDL_fabsf(cy2 - cy) <= 4)
-            cx = cx2, cy = cy2, ra = fresh ? ra2 : (ra + ra2) / 2, r = rr[0], r2 = rr[1]; /* its shape steadied */
+            cx = cx2, cy = cy2, ra = fresh ? ra2 : (ra + ra2) / 2, r = rr[0], r2 = b ? rr[1] : r2; /* its shape steadied */
     }
     Engine ring = *e; /* the fit, checked before it is taken */
     ring.ring_cx = cx, ring.ring_cy = cy, ring.ring_a = ra;
     if (b) {
         ring.ring_outer = SDL_max(r, r2), ring.ring_inner = SDL_min(r, r2);
-        if (!ring_matches(&ring, top, bottom)) return 0;
+        if (!ring_matches(&ring, top, bottom)) {
+            /* A few edges at a second radius: a disc's steps, no ring, if its circle has nearly all of them. */
+            if (a * 100 < n * 90) return 0;
+            b = 0;
+        }
+    }
+    if (b) {
         e->ring = 1, e->ring_keep = RING_KEEP, e->ring_cx = cx, e->ring_cy = cy, e->ring_a = ra;
         e->ring_outer = ring.ring_outer, e->ring_inner = ring.ring_inner;
         e->ring_width = e->ring_outer - e->ring_inner;
@@ -1462,10 +1480,6 @@ static int fit_ring(Engine *e, int top, int bottom) {
  * slope there, the orb's left side spread far into the margin as it faded). Another shape goes on along each side's
  * slope on its EDGE_FIT lines nearest the end, until the sides meet; a side the screen's sides cut stays where its
  * last line has it. Rings, rays and stretched bands draw these rows their own way. */
-/* The battle menu at the bottom covers the screen's last MENU_LINES lines, where the game blanks the windows: an
- * effect's shape goes on from line 145 instead, down the rows the zoom out shows there (Luminaire's orb, a dome cut
- * flat at line 145, above the menu drawn lower in the picture; with the menu at the top it showed whole). */
-enum { MENU_LINES = 46 };
 /* EDGE_ROWS: all the rows beyond the screen (or the menu's edge), the view shifted at a room's end showing more of
  * them on one side. */
 enum { EDGE_ROWS = VIDEO_ROWS_MAX - SCREEN_H + MENU_LINES, EDGE_FIT = 16, SHAPE_POINTS = 2 * SCREEN_H };
