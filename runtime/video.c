@@ -142,6 +142,7 @@ typedef struct Engine {
     int short_rows; /* with room_clip: the room has fewer rows than the view, black beyond room_y0..y1-1 */
     int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
     uint8_t wide_bgs; /* BGs drawn as they are beyond the screen's sides, not repeated (ws_wide_picture_bgs: Lavos's ripples) */
+    uint8_t held_bgs; /* BGs held still on the screen while the camera moves: no BG past the screen's rows */
     int row_period[4]; /* by BG: the lines after which its picture is the same again, above and below the screen too */
     int repeat_bgs; /* BGs whose screen columns repeat into the margins, the others empty beyond the room
                      * (ws_repeat_bgs: a one-screen room's layer scrolling on its own, the clouds of the Epoch's flight),
@@ -525,6 +526,7 @@ static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *
     /* A BG of a room that repeats down its rows, showing them so on the screen, repeats them beyond it: a layer the
      * fill does not write (one scrolling on its own) has only the screen's rows written (Future's corridor walls, BG3,
      * ended on the screen's lines in black). */
+    if (m && e->held_bgs && (y < 0 || y >= SCREEN_H)) return; /* see Engine.held_bgs */
     int period = m ? e->row_period[bg] : 0;
     if (period && (y < 0 || y >= SCREEN_H)) y = y < 0 ? y + (-y + period - 1) / period * period : y - (y - SCREEN_H + period) / period * period;
     int solid = m && (e->solid_bgs >> bg & 1);
@@ -680,6 +682,7 @@ static int panel_has_ui(const Engine *e) {
  * shift: draw the sprites starting above row e->sel_rows that many columns left (Engine.sel_shift). */
 static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, int skip_party, int shift, int skip_ui) {
     int m = e->margin;
+    if (m && e->held_bgs && (y < 0 || y >= SCREEN_H)) return; /* nor sprites (Engine.held_bgs): the character sank on below the cab */
     for (int i = 0; i < 128; i++) {
         if (skip_party && e->follows[i]) continue;
         uint16_t a0 = oam16(e, i * 8), a1 = oam16(e, i * 8 + 2), a2 = oam16(e, i * 8 + 4);
@@ -1987,6 +1990,29 @@ static void engine_frame_start(Engine *e) {
                 if (SDL_abs(frame_dx) > VIDEO_SLIDE_MAX || SDL_abs(frame_dy) > VIDEO_SLIDE_MAX) frame_dx = frame_dy = 0, frame_cut = 1;
             }
             camera_known = known, camera_x = cx + vx, camera_y = cy + vy;
+            /* BGs the game holds still on the screen while its camera moves (the elevator ride, location 0x1a2: the cab
+             * on BG1 and BG3 at VOFS 480 while the shaft, BG2, scrolls) make a scene fixed to the DS screen, and no BG
+             * has rows past it then: the game never shows them. The platform sinking below the cab was drawn there in
+             * pieces (BG1, BG2), and the cab's rows came round its 256-row map into the rows above the screen. Seen
+             * once the camera moves and they do not; kept while it is still. Not a picture reflected or repeated at
+             * the sides. */
+            static int held_cy, held_known;
+            static uint16_t held_vofs[4];
+            if (!known || !e->margin) e->held_bgs = 0;
+            else if (held_known && cy != held_cy) {
+                e->held_bgs = 0;
+                int follows = 0;
+                for (int bg = 0; bg < 4; bg++) {
+                    uint16_t cnt = reg16(e, 0x08 + 2 * bg), vofs = reg16(e, 0x12 + 4 * bg);
+                    if (!(dispcnt & (0x100u << bg)) || (cnt >> 14) != 1) continue; /* the room's 512x256 rings only */
+                    follows |= ((vofs - held_vofs[bg]) & 0x1FF) == ((uint32_t)(cy - held_cy) & 0x1FF);
+                    if (vofs == held_vofs[bg] && !((e->mirror_bg | e->repeat_bgs | e->solid_bgs | e->wide_bgs) >> bg & 1))
+                        e->held_bgs |= (uint8_t)(1u << bg);
+                }
+                if (!follows) e->held_bgs = 0; /* the camera's move shown by a BG going with it */
+            }
+            held_known = known, held_cy = cy;
+            for (int bg = 0; bg < 4; bg++) held_vofs[bg] = reg16(e, 0x12 + 4 * bg);
             /* ws_room_span goes by the camera in RAM, already the next frame's: the room's edge goes with this one's scroll. */
             if (e->room_clip) {
                 int to = (known && rk && SDL_abs(rx - cx) <= VIDEO_SLIDE_MAX ? rx - cx : 0) - e->view_x;
