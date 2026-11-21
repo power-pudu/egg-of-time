@@ -1117,6 +1117,7 @@ static struct {
     int32_t moved[4][2];     /* each BG's motion along the room's */
     int32_t size[4][2];      /* and the room's over the same frames */
     int rate[4][2];
+    int prior[2];            /* BG3's start, from the frame before (see measure_rates) */
 } rates;
 
 static void measure_rates(uint32_t scroll, uint32_t room, int free) {
@@ -1137,7 +1138,14 @@ static void measure_rates(uint32_t scroll, uint32_t room, int free) {
         int pos0 = a ? layer_row(scroll, 0) : layer_col(scroll, 0), pos1 = a ? layer_row(scroll, 1) : layer_col(scroll, 1);
         for (int bg = 0; bg < 4; bg++) {
             int prior = 256;
-            if (bg == 3 && own_l1 && pos0 >= 8 && pos1 >= 0 && pos1 <= 2 * pos0) prior = pos1 * 256 / pos0;
+            if (bg == 3) {
+                /* The frame before's: the layers' place in RAM is the next frame's, the BGs' scroll this one's. The
+                 * elevator ride put layer 1 at 0 a frame before the cab's BG3 showed it, and that frame the cab's
+                 * inner wall went by a share of the view's shift near none, 5 rows down. */
+                int now = own_l1 && pos0 >= 8 && pos1 >= 0 && pos1 <= 2 * pos0 ? pos1 * 256 / pos0 : 256;
+                prior = fresh ? now : rates.prior[a];
+                rates.prior[a] = now;
+            }
             if (free >> bg & 1) rates.rate[bg][a] = rates.size[bg][a] ? rates.moved[bg][a] * 256 / rates.size[bg][a] : 0;
             else rates.rate[bg][a] = bg == 2 ? 256 : (prior * RATE_PRIOR + rates.moved[bg][a] * 256) / (RATE_PRIOR + rates.size[bg][a]);
         }
@@ -1149,9 +1157,17 @@ static void measure_rates(uint32_t scroll, uint32_t room, int free) {
  * by all of it, with its target: Frog Squash's frog, its scroll bouncing while the room's shook, was measured at a
  * rate near 0, and at Lavos's room's end it stood up to 16 rows off its eyes (sprites), the room showing through
  * their holes. */
+/* BGs the game holds still on the screen while its camera moves (video.c Engine.held_bgs, last frame's): a scene
+ * fixed to the DS screen, such as the elevator ride's cab. The view's shift stays as it was while it lasts, and they
+ * keep all of it: the cab's BG3 dropped out of the shift as the ride began and BG1 some frames on, each jumping 16
+ * rows off the other, while the shift, still centring the room on a rising camera, carried the party 8 rows down
+ * through the cab's floor. */
+static int held_bgs;
+void ws_hold_scene(int bgs) { held_bgs = bgs; }
+
 static int bg_shift(int bg, int a, int v) {
     int effect = (io_get16(0x08 + 2 * bg) >> 14) == 3;
-    int r = rates.room && !world_margin && !effect ? rates.rate[bg][a] : 256, p = v * r; /* the world map's: all of it */
+    int r = rates.room && !world_margin && !effect && !(held_bgs >> bg & 1) ? rates.rate[bg][a] : 256, p = v * r; /* the world map's: all of it */
     return (p + (p >= 0 ? 128 : -128)) / 256;
 }
 
@@ -1323,6 +1339,13 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
     if (fixed1 && (layer_col(scroll, 0) >= 8 || layer_row(scroll, 0) >= 8)) fixed_room = here;
     fixed1 = fixed1 && fixed_room == here;
     int pic1 = ok1 && (!held1 || fixed1), pic2 = ok2 && !bg_holds_layer(0, scroll, tilesets, 2);
+    /* A picture once seen so the frame before too: the scroll in RAM is the next frame's, the BGs' this one's. The
+     * elevator ride set layer 1's origin to 0 a frame before the cab's BG3 showed it held, and for those frames the
+     * inner wall went as a picture, without the view's shift: 16 rows down. */
+    static int last_pic1, last_pic2;
+    int seen1 = pic1, seen2 = pic2;
+    pic1 = pic1 && last_pic1, pic2 = pic2 && last_pic2;
+    last_pic1 = seen1, last_pic2 = seen2;
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
     tent_back |= pic1 << 3 | pic2;
     /* At scroll 0, or a few pixels off it while the screen shakes (the Dragon Tank's charge), both ways: the shaft
@@ -1432,6 +1455,7 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
             short_room = at_lo && at_hi && hi - lo < SCREEN_H + 2 * limit_rows;
         }
     }
+    if (held_bgs && field) next_y = view_y; /* a held scene: the shift stays */
     set_sprite_view(field_margin, field_rows, next_x, next_y);
     /* The world map's shift is this frame's: its BGs' scroll is the camera's above. Its sprites are in the 4:3 screen's
      * coordinates, moved by all of it. */
@@ -1439,7 +1463,7 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
 }
 
 void ws_view_shift(int *x, int *y, int *bgs) {
-    *x = view_x, *y = view_y, *bgs = view_bgs;
+    *x = view_x, *y = view_y, *bgs = view_bgs | held_bgs;
 }
 
 /* The game moves its camera after the sprite view is set here, then places the sprites with that camera and this

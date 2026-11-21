@@ -2012,6 +2012,14 @@ static void engine_frame_start(Engine *e) {
                 if (!follows) e->held_bgs = 0; /* the camera's move shown by a BG going with it */
             }
             held_known = known, held_cy = cy;
+            if (e->id == !a_top) {
+                /* Found after ws_view_shift and ws_bg_shift: a BG held from this frame on keeps all of the shift now, not
+                 * a frame on (the cab's inner wall went by its measured share, none, 16 rows down for the ride's first
+                 * frame). */
+                ws_hold_scene(e->held_bgs);
+                e->view_bgs |= e->held_bgs;
+                for (int bg = 0; bg < 4; bg++) if (e->held_bgs >> bg & 1) ws_bg_shift(bg, &e->bg_dx[bg], &e->bg_dy[bg]);
+            }
             for (int bg = 0; bg < 4; bg++) held_vofs[bg] = reg16(e, 0x12 + 4 * bg);
             /* ws_room_span goes by the camera in RAM, already the next frame's: the room's edge goes with this one's scroll. */
             if (e->room_clip) {
@@ -2025,7 +2033,7 @@ static void engine_frame_start(Engine *e) {
                 e->room_y0 += to, e->room_y1 += to;
             }
             frames_since_step = frame_dx || frame_dy ? 0 : frame_cut ? VIDEO_GLIDE_FRAMES : SDL_min(frames_since_step + 1, VIDEO_GLIDE_FRAMES);
-            int gliding = frames_since_step < VIDEO_GLIDE_FRAMES;
+            int gliding = frames_since_step < VIDEO_GLIDE_FRAMES && !e->held_bgs;
             if (SDL_GetAtomicInt(&party_wanted)) find_party(e, frame_dx, frame_dy, gliding), e->sliding = gliding;
             e->still_bgs = e->sliding && e->margin ? ws_picture_bgs() : 0;
             if (e->still_bgs) {
