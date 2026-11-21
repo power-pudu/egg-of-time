@@ -652,9 +652,17 @@ static void render_objs(const Engine *e, int y, uint32_t dispcnt, ObjLine *ol, i
         int bw = w, bh = h;
         if (affine && (a0 & 0x200)) { bw *= 2; bh *= 2; }
         int ui = e->rows && !affine && (a1 & WS_OAM_UI) ? (a1 & WS_OAM_PLACED ? 2 : 1) : 0;
+        /* A number placed at an actor above the screen (damage on a turret at the room's top: its Y on the DS screen
+         * -23 and rising) goes with the world there: the UI layer has the screen's lines alone, and it showed only
+         * the number's few rows on them, then nothing. */
+        int above = ui == 2 && (a0 & 0xFF) >= SCREEN_H;
+        if (above) ui = 0;
         if (ui && skip_ui) continue;
         int ly = (y - (a0 & 0xFF)) & 0xFF;
-        if (e->rows && !ui) { /* Y 8 bits: from the view's top; the rows left over are above it, or tagged so */
+        if (above) {
+            ly = y - ((a0 & 0xFF) - 256);
+            if (ly < 0) continue;
+        } else if (e->rows && !ui) { /* Y 8 bits: from the view's top; the rows left over are above it, or tagged so */
             int oy = a0 & 0xFF, limit = e->obj_rows ? SCREEN_H + e->rows + e->obj_rows : ws_world_sprite_limit(e->rows);
             if (!e->obj_rows) { /* the world map: from the view's place, shifted at the map's ends (obj_dy) */
                 int lo = limit - e->obj_dy - 256;
