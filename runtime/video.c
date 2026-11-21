@@ -1465,8 +1465,11 @@ static int window_ellipse(int w, int y0, int y1, float cx, Ellipse *el) {
     return 1;
 }
 
+static float sym_mid[2];  /* by window: its shape's centre column, seen symmetric on the frames before */
+static uint8_t sym_seen;   /* the windows (bit per window) whose centre stands */
 static void window_beyond(void) {
     beyond_on[0] = beyond_on[1] = 0;
+    uint8_t sym_now = 0;
     for (int w = 0; w < 2; w++) {
         int x[2], top = -1, bottom = -1, widest = -1, width = -1, cut0 = -1, cut1 = -1;
         for (int y = win_top; y < SCREEN_H; y++) { /* the window's first run of lines from the top */
@@ -1493,20 +1496,27 @@ static void window_beyond(void) {
             float c = (float)(x[0] + x[1] - 1) / 2;
             mid += c, mids++, lo = SDL_min(lo, c), hi = SDL_max(hi, c);
         }
+        /* The centre seen on earlier frames stands while the shape lasts and the lines left uncut agree with it:
+         * growing past the screen's side, an explosion's orb soon had too few of them (two, then none), and its cut
+         * side, carried along the slope of its last lines, spread hundreds of columns into the margin. */
+        if (mids && hi - lo <= 2) mid /= (float)mids;
+        int known = mids >= 3 && hi - lo <= 2;
+        if (!known && (sym_seen >> w & 1) && (!mids || (hi - lo <= 2 && SDL_fabsf(mid - sym_mid[w]) <= 2)))
+            known = 1, mid = sym_mid[w];
+        sym_now |= (uint8_t)(known << w), sym_mid[w] = known ? mid : sym_mid[w];
         Ellipse half[2];
         int fits[2] = {0, 0};
-        if (mids >= 3 && hi - lo <= 2) {
-            mid /= (float)mids;
-            fits[0] = window_ellipse(w, top, split, mid, &half[0]), fits[1] = window_ellipse(w, split, bottom, mid, &half[1]);
-        }
-        /* The screen's sides cutting it: those sides from its half's ellipse, in the margins. */
-        for (int y = top; y <= bottom; y++) {
+        if (known) fits[0] = window_ellipse(w, top, split, mid, &half[0]), fits[1] = window_ellipse(w, split, bottom, mid, &half[1]);
+        /* The screen's sides cutting it: those sides from its half's ellipse in the margins, else the other side
+         * mirrored about the centre. */
+        for (int y = top; y <= bottom && known; y++) {
             int h = y > split;
-            if (!fits[h] || win_span(y, w, &x[0], &x[1]) <= 0) continue;
-            float hw = ellipse_half(&half[h], (float)y);
+            if (win_span(y, w, &x[0], &x[1]) <= 0) continue;
+            if ((x[0] < 0) == (x[1] >= SCREEN_W)) continue; /* uncut, or cut on both sides */
+            float hw = fits[h] ? ellipse_half(&half[h], (float)y) : x[0] < 0 ? (float)(x[1] - 1) - mid : mid - (float)x[0];
             if (hw < 0) continue;
-            if (x[0] < 0) win_ext[y][w][0] = (int16_t)SDL_lroundf(half[h].cx - hw);
-            if (x[1] >= SCREEN_W) win_ext[y][w][1] = (int16_t)(SDL_lroundf(half[h].cx + hw) + 1);
+            if (x[0] < 0) win_ext[y][w][0] = (int16_t)SDL_min(SDL_lroundf(mid - hw), 0);
+            else win_ext[y][w][1] = (int16_t)SDL_max(SDL_lroundf(mid + hw) + 1, SCREEN_W);
         }
         for (int end = 0; end < 2; end++) {
             int y0 = end ? SCREEN_H - 1 : win_top, dir = end ? -1 : 1; /* the end line, and inward */
@@ -1557,6 +1567,7 @@ static void window_beyond(void) {
             beyond_on[end] |= (uint8_t)(1 << w);
         }
     }
+    sym_seen = sym_now;
 }
 
 enum { BAND_MIN = 48, BATTLE_TOP = 46, BATTLE_BOTTOM = 166 }; /* the lines between the battle menu and the text box */
@@ -1728,7 +1739,7 @@ static void engine_frame_start(Engine *e) {
             if (win_ext_on) window_margins();
             if (win_ext_on && e->rows) effect_rows(e);
             if (win_ext_on && !e->band_rows) window_beyond();
-            else beyond_on[0] = beyond_on[1] = 0;
+            else beyond_on[0] = beyond_on[1] = sym_seen = 0;
             e->hdma_bgs = e->margin ? (uint8_t)ws_hdma_bgs() : 0;
             e->mirror_bg = 0;
             for (int bg = 0; bg < 4 && win_ext_on; bg++) e->mirror_bg |= (uint8_t)(picture_256(e, bg, dispcnt) << bg);
