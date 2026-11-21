@@ -92,6 +92,8 @@ uint8_t *video_vram_ptr(uint32_t addr) {
 
 /* ---- engine state ---- */
 
+typedef struct RingShape { float cx, cy, a, width; int keep; } RingShape;
+
 typedef struct Engine {
     int id;             /* 0 = A, 1 = B */
     uint32_t io;        /* register base offset in rt_io */
@@ -121,6 +123,8 @@ typedef struct Engine {
     float ring_a;            /* their shape: (x - cx)^2 + ring_a (y - cy)^2 = radius^2 (1: circles) */
     float ring_width;        /* the ring's width when both its circles last showed (0: none yet) */
     int ring_keep;           /* the frames its centre still counts for, the ring having shown */
+    RingShape ring_alt;      /* the other ring of an effect that shows two in turn, while the effect lasts (keep: one
+                              * is kept; see fit_ring) */
     uint8_t ring_fits;       /* by frame, the last first: the windows fit a ring */
     uint8_t ring_wins;       /* the windows the ring stands for (bit per window): both, or WIN0 alone where WIN1 shows
                               * other layers (Magus's portal: WIN0 the disc, WIN1 a frame with rounded corners) */
@@ -167,6 +171,8 @@ typedef struct Engine {
     uint16_t frame_bld[2];   /* BLDCNT, BLDALPHA (see margin_bg) */
     uint8_t mirror_bg;       /* widescreen: text BGs whose margins show the screen reflected (see picture_256) */
     uint8_t solid_bgs;       /* widescreen, this line: text BGs one opaque tile throughout (see solid_256) */
+    uint8_t fill_bgs, fill_now; /* widescreen: text BGs the windows alone show that covered a whole screen line last
+                                 * frame (fill_now: this frame so far), an effect's fill (see fill_bg) */
     uint64_t solid_key[4];   /* solid_256's last answer by BG this frame, and the registers it was for */
     uint8_t solid_val[4];
     uint8_t frame_solid;     /* widescreen: BG0/BG1 one-tile overlays (solid_256) as the frame started */
@@ -1389,7 +1395,25 @@ static int ring_radius(const float *px, const float *py, int n, float cx, float 
  * or a disc: the window edges on the band's lines that do not stop at a screen side lie on one circle or two
  * concentric ones. Its spans beyond the screen's columns and on the lines the game blanks are then drawn from the
  * circles, as a wider and taller screen would show it, instead of carrying its edges on (straight up and down). */
-static int fit_ring(Engine *e, int top, int bottom) {
+/* The columns both windows span on line y, from the first in either to the last (a shape split between them: the
+ * orb's halves either side of its hole), or -1 with neither. */
+static int shape_width(int y) {
+    int x[2], lo = SCREEN_W, hi = -1;
+    for (int w = 0; w < 2; w++) if (win_span(y, w, &x[0], &x[1]) > 0) lo = SDL_min(lo, x[0]), hi = SDL_max(hi, x[1]);
+    return hi < 0 ? -1 : hi - lo;
+}
+
+enum { EDGE_TOP = 8, EDGE_WIDE = 16 }; /* a cut top: at least EDGE_WIDE columns, over half as wide as EDGE_TOP lines down */
+/* A box at the top (a tech's name, the menu there) has the game blank the windows on its lines: a shape that
+ * starts below them more than half as wide as EDGE_TOP lines down (both windows together) was cut there. A rounded
+ * top's first line is narrower: its width squared grows with the lines below it, by a ninth of the 9 lines' or less
+ * on the first. */
+static int top_cut(int y) {
+    int wy = shape_width(y);
+    return y > win_top && y < MENU_LINES && wy >= EDGE_WIDE && wy * 2 > shape_width(y + EDGE_TOP);
+}
+
+static int fit_ring_one(Engine *e, int top, int bottom, int keep_only) {
     static float px[RING_POINTS_MAX], py[RING_POINTS_MAX];
     static uint8_t taken[RING_POINTS_MAX], mark[RING_POINTS_MAX], right[RING_POINTS_MAX];
     int n = 0, x[2];
@@ -1414,6 +1438,7 @@ static int fit_ring(Engine *e, int top, int bottom) {
         if ((a + b) * 100 < n * 90) a = b = 0;
     }
     if (!a) {
+        if (keep_only) return 0;
         fresh = 1;
         if (n < RING_MIN) return 0;
         float cx2, cy2, ra2;
@@ -1470,6 +1495,26 @@ static int fit_ring(Engine *e, int top, int bottom) {
     return 1;
 }
 
+/* Some effects show two rings in turn, a frame each (Flare: its growing disc and an oval): each keeps its centre and
+ * shape as it grows, the other's kept beside it (ring_alt), and a frame's windows are fitted with either before
+ * they are fitted anew, while the effect lasts (Flare's oval shows again after dozens of frames). Fitted anew each
+ * frame, Flare's oval, cut by the tech's name box and the menu, took another centre each time. */
+static RingShape ring_shape(const Engine *e) { return (RingShape){e->ring_cx, e->ring_cy, e->ring_a, e->ring_width, e->ring_keep}; }
+static void set_ring_shape(Engine *e, RingShape r) { e->ring_cx = r.cx, e->ring_cy = r.cy, e->ring_a = r.a, e->ring_width = r.width, e->ring_keep = r.keep; }
+static int fit_ring(Engine *e, int top, int bottom) {
+    RingShape old = ring_shape(e);
+    if (fit_ring_one(e, top, bottom, 1)) return 1;
+    if (e->ring_alt.keep) {
+        set_ring_shape(e, e->ring_alt);
+        if (fit_ring_one(e, top, bottom, 1)) return e->ring_alt = old, 1;
+        set_ring_shape(e, old);
+    }
+    if (!fit_ring_one(e, top, bottom, 0)) return 0;
+    if (old.keep && (SDL_fabsf(e->ring_cx - old.cx) + SDL_fabsf(e->ring_cy - old.cy) > 4 || SDL_fabsf(e->ring_a - old.a) > 0.25f * old.a))
+        e->ring_alt = old;
+    return 1;
+}
+
 /* Beyond the screen (the zoom out's rows above and below it), a window the game shapes line by line goes on as its
  * shape would: the game has no lines there (its table, the SNES one, holds nothing past the DS's 192 lines but blanks),
  * and drawn as the screen's first or last line, an effect reaching the edge went on as a straight column (an enemy's
@@ -1486,6 +1531,7 @@ enum { EDGE_ROWS = VIDEO_ROWS_MAX - SCREEN_H + MENU_LINES, EDGE_FIT = 16, SHAPE_
 static int16_t beyond[2][EDGE_ROWS][2][2]; /* by end (above, below), row from the screen out, window: span x0..x1-1 */
 static uint8_t beyond_on[2];                /* by end: the windows (bit per window) that go on there */
 static int beyond_last = SCREEN_H - 1;      /* the last line the game draws them on: the rows below go on from it */
+static int beyond_first = 0;                /* and the first: the rows above go on from it */
 
 typedef struct Ellipse { float cx, cy, a, r; } Ellipse; /* (x - cx)^2 + a (y - cy)^2 = r */
 
@@ -1554,10 +1600,17 @@ static int kept_y[2][2] = {{-1, -1}, {-1, -1}};
 static void window_beyond(void) {
     beyond_on[0] = beyond_on[1] = 0;
     int x[2], blank = 1;
-    for (int y = SCREEN_H - MENU_LINES; y < SCREEN_H && blank; y++)
+    /* Its last lines may hold leftovers too, as the table's first do (win_top): Flare's dome, cut at line 145, had
+     * its top's lines repeated on lines 190 and 191, was taken as not cut by the menu and ended flat there. */
+    for (int y = SCREEN_H - MENU_LINES; y < SCREEN_H - WIN_LEFTOVERS_MAX && blank; y++)
         for (int w = 0; w < 2; w++) blank &= win_span(y, w, &x[0], &x[1]) <= 0;
     int edge = SCREEN_H - MENU_LINES - 1;
     beyond_last = blank && (win_span(edge, 0, &x[0], &x[1]) > 0 || win_span(edge, 1, &x[0], &x[1]) > 0) ? edge : SCREEN_H - 1;
+    /* A shape cut by a box at the top (top_cut) goes on above from its first line (Flare's oval, flat at line 26
+     * under the tech's name). */
+    beyond_first = 0;
+    for (int y = win_top; y < MENU_LINES && !beyond_first; y++) if (shape_width(y) >= 0) beyond_first = top_cut(y) ? y : MENU_LINES;
+    if (beyond_first == MENU_LINES) beyond_first = 0;
     uint8_t sym_now = 0;
     for (int w = 0; w < 2; w++) {
         int top = -1, bottom = -1, widest = -1, width = -1, cut0 = -1, cut1 = -1;
@@ -1617,7 +1670,7 @@ static void window_beyond(void) {
             else win_ext[y][w][1] = (int16_t)SDL_max(SDL_lroundf(mid + hw) + 1, SCREEN_W);
         }
         for (int end = 0; end < 2; end++) {
-            int y0 = end ? beyond_last : win_top, dir = end ? -1 : 1; /* the end line, and inward */
+            int y0 = end ? beyond_last : beyond_first ? beyond_first : win_top, dir = end ? -1 : 1; /* the end line, and inward */
             if (win_span(y0, w, &x[0], &x[1]) <= 0) continue;
             if (win_ext[y0][w][0] > win_ext[y0][w][1]) continue; /* wraps */
             const Ellipse *el = fits[end] && (end ? y0 > split : y0 <= split) ? &half[end] : NULL, *side_el[2] = {el, el};
@@ -1629,6 +1682,22 @@ static void window_beyond(void) {
                 }
             }
             if (side_el[0] && side_el[0] == side_el[1]) el = side_el[0];
+            /* Else the one kept, grown to this end line: a half the screen's sides cut on all but its last lines has
+             * too few points to fit (Flare's oval, cut from line 80 to 143 as it grew, went on along the slope of its
+             * two last lines, straight down). Its other lines the screen's sides cut must lie beyond them on it. */
+            Ellipse grown;
+            if (!el && !side_el[0] && !side_el[1] && kept_y[w][end] >= 0 && x[0] >= 0 && x[1] < SCREEN_W) {
+                grown = kept_half[w][end];
+                float hw = (float)(x[1] - 1 - x[0]) / 2, d = (float)y0 - grown.cy;
+                int ok = SDL_fabsf((float)(x[0] + x[1] - 1) / 2 - grown.cx) <= 1.5f && (end ? d > 0 : d < 0);
+                grown.r = hw * hw + grown.a * d * d;
+                for (int y = y0, x2[2]; ok && y >= 0 && y < SCREEN_H && win_span(y, w, &x2[0], &x2[1]) > 0; y += dir) {
+                    float h = ellipse_half(&grown, (float)y);
+                    if (x2[0] < 0 && h >= 0 && grown.cx - h > 0.5f) ok = 0;
+                    if (x2[1] >= SCREEN_W && h >= 0 && grown.cx + h < (float)SCREEN_W - 1.5f) ok = 0;
+                }
+                if (ok) el = side_el[0] = side_el[1] = &grown;
+            }
             if (el) kept_half[w][end] = *el, kept_y[w][end] = y0;
             else if (side_el[0] != &kept_half[w][end] && side_el[1] != &kept_half[w][end]) kept_y[w][end] = -1;
             float last[2] = {(float)win_ext[y0][w][0], (float)win_ext[y0][w][1] - 1};
@@ -1656,7 +1725,7 @@ static void window_beyond(void) {
             }
             int gone = 0;
             for (int i = 0; i < EDGE_ROWS; i++) {
-                float y = (float)(end ? beyond_last + 1 + i : -1 - i);
+                float y = (float)(end ? beyond_last + 1 + i : beyond_first - 1 - i);
                 int16_t *sp = beyond[end][i][w];
                 float a = last[0], b = last[1];
                 if (n[0]) a += slope[0] * (y - (float)y0);
@@ -1687,7 +1756,9 @@ enum { HANG_FRAMES = 3 }; /* frames an effect's top stays on the battle menu's e
 static void effect_rows(Engine *e) {
     int x[2], top = win_top, bottom = SCREEN_H - 1;
 #define WIN_EMPTY(y) (!win_span(y, 0, &x[0], &x[1]) && !win_span(y, 1, &x[0], &x[1]))
-    for (int y = SCREEN_H - 1; y >= SCREEN_H - WIN_LEFTOVERS_MAX; y--) {
+    /* The table's last lines may hold leftovers below an empty one (Flare's oval's top lines on lines 190 and 191,
+     * taken as its bottom: fitted as an ellipse half as tall again, it went on flat and spiked into the margins). */
+    for (int y = SCREEN_H - WIN_LEFTOVERS_MAX; y < SCREEN_H; y++) {
         if (WIN_EMPTY(y)) {
             bottom = y;
             break;
@@ -1697,12 +1768,14 @@ static void effect_rows(Engine *e) {
     while (bottom >= top && WIN_EMPTY(bottom)) bottom--;
 #undef WIN_EMPTY
     if (top > bottom) { e->hang = 0; return; }
-    /* A ring fits two frames running: Rainbow Storm's clouds' oval fits one now and then. */
+    /* A ring fits two frames running: Rainbow Storm's clouds' oval fits one now and then. Or every other frame,
+     * steadily: Flare shows its growing disc and an oval in turn, and its disc, fitted on every other frame alone,
+     * was drawn as the game cut it, flat at the battle menu. */
     /* The ring is both windows where they show the same layers (an enemy's Rainbow Beam), else WIN0 alone. */
     uint8_t wins = (reg16(e, 0x48) & 0x3F) == (reg16(e, 0x48) >> 8 & 0x3F) ? 3 : 1;
-    if (wins != e->ring_wins) e->ring_keep = 0, e->ring_width = 0;
+    if (wins != e->ring_wins) e->ring_keep = e->ring_alt.keep = 0, e->ring_width = 0;
     e->ring_wins = wins;
-    if (fit_ring(e, top, bottom) && (e->ring_fits |= 1, e->ring_fits & 2 || (e->ring = 0))) {
+    if (fit_ring(e, top, bottom) && (e->ring_fits |= 1, e->ring_fits & 2 || (e->ring_fits & 0x15) == 0x15 || (e->ring = 0))) {
         e->band_top = top, e->band_rows = bottom - top + 1;
         e->band_period = ws_hdma_period(top, bottom);
         return;
@@ -1818,7 +1891,7 @@ static void engine_frame_start(Engine *e) {
         e->band_rows = e->ring = e->rays = 0;
         e->lines_top[1] = e->lines_top[0], e->lines_bottom[1] = e->lines_bottom[0];
         e->lines_top[0] = SCREEN_H, e->lines_bottom[0] = -1; /* none yet */
-        if (e->lines_top[1] == SCREEN_H) e->rays_seen = 0; /* no effect last frame */
+        if (e->lines_top[1] == SCREEN_H) e->rays_seen = 0, e->ring_alt.keep = 0; /* no effect last frame */
         if (e->ring_keep) e->ring_keep--;
         e->ring_fits <<= 1;
         e->party = e->sliding = e->still_bgs = 0;
@@ -1854,7 +1927,7 @@ static void engine_frame_start(Engine *e) {
             if (win_ext_on) window_margins();
             if (win_ext_on && e->rows) effect_rows(e);
             if (win_ext_on && !e->band_rows) window_beyond();
-            else beyond_on[0] = beyond_on[1] = sym_seen = 0, beyond_last = SCREEN_H - 1;
+            else beyond_on[0] = beyond_on[1] = sym_seen = 0, beyond_last = SCREEN_H - 1, beyond_first = 0;
             e->hdma_bgs = e->margin ? (uint8_t)ws_hdma_bgs() : 0;
             e->mirror_bg = 0;
             for (int bg = 0; bg < 4 && win_ext_on; bg++) e->mirror_bg |= (uint8_t)(picture_256(e, bg, dispcnt) << bg);
@@ -1866,6 +1939,7 @@ static void engine_frame_start(Engine *e) {
             e->edge_bgs = e->margin && ss_in_epoch_ride() ? 1 : 0; /* BG0: the cockpit */
             e->repeat_256 = e->margin && ss_in_race();
             e->shown_bgs = e->shown_now, e->shown_now = 0;
+            e->fill_bgs = e->fill_now, e->fill_now = 0;
             e->void_col = e->void_now == 1 ? e->void_now_col : 0xFF000000u, e->void_now = 0;
             e->repeat_bgs = e->margin ? ws_repeat_bgs() & e->shown_bgs : 0;
             e->wide_bgs = e->margin ? (uint8_t)ws_wide_picture_bgs() : 0;
@@ -1906,6 +1980,36 @@ static void engine_frame_start(Engine *e) {
 }
 
 /* Row y of the frame: a line of the screen (0..191), or one the zoom out draws beyond it. */
+/* Widescreen: a BG the windows alone show (WINOUT leaves it out), opaque across the whole screen on some line, is
+ * an effect's fill, its tiles laid only where the game's screen shows them (Flare's red, BG0 in an oval WIN0: the
+ * oval went on into the margins and past its lines, the red stopped at the screen's sides and flat at its top and
+ * bottom lines). Where it has no pixel in the margins, a column a whole number of tiles in shows; on a line it has
+ * none of, the nearest line a whole number of tiles nearer the screen's middle that has some. */
+enum { FILL_TILES = 32 };
+static void fill_bg(Engine *e, int bg, int y, int row, uint32_t dispcnt, uint16_t *line) {
+    int m = e->margin, x0 = m, x1 = m + SCREEN_W;
+    uint32_t win = dispcnt & 0x6000, in = (uint32_t)reg16(e, 0x48) | reg16(e, 0x48) >> 8;
+    if (!win || (reg16(e, 0x4A) >> bg & 1) || !(in >> bg & 1)) return;
+    if ((dispcnt & 7) >= (bg == 3 ? 1u : bg == 2 ? 2u : 6u)) return; /* text BGs only */
+    int all = y >= 0 && y < SCREEN_H, any = 0;
+    for (int x = x0; x < x1; x++) all &= (line[x] & OPAQUE) != 0, any |= (line[x] & OPAQUE) != 0;
+    if (all) e->fill_now |= (uint8_t)(1u << bg);
+    if (!(e->fill_bgs >> bg & 1)) return;
+    if (!any) {
+        static uint16_t near[VIDEO_LINE_MAX];
+        int step = row < SCREEN_H / 2 ? 8 : -8;
+        for (int k = 1; k <= FILL_TILES && !any; k++) {
+            memset(near, 0, sizeof near);
+            bg_text(e, bg, row + k * step, dispcnt, near, NULL);
+            for (int x = x0; x < x1 && !any; x++) any = (near[x] & OPAQUE) != 0;
+        }
+        if (!any) return;
+        memcpy(line, near, (size_t)(x1 + m) * sizeof *line);
+    }
+    for (int x = 0; x < x0; x++) if (!(line[x] & OPAQUE)) line[x] = line[x + (x0 - x + 7) / 8 * 8];
+    for (int x = x1; x < x1 + m; x++) if (!(line[x] & OPAQUE)) line[x] = line[x - (x - x1 + 8) / 8 * 8];
+}
+
 static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
     int m = e->margin, width = SCREEN_W + 2 * m;
@@ -1913,7 +2017,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
     int by = e->band_rows && !e->ring && !e->rays ? ly : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
     /* Where a window goes on beyond the screen (window_beyond), the effect's map goes on as its nearest line: its own
      * rows there hold less of it (the orb's red, a smaller disc above line 0, showed a narrower cap inside the dome). */
-    if (!e->band_rows && ((y < 0 && beyond_on[0]) || (y > beyond_last && beyond_on[1]))) by = ly;
+    if (!e->band_rows && ((y < beyond_first && beyond_on[0]) || (y > beyond_last && beyond_on[1]))) by = ly;
     /* The line whose windows it has: the view's shift at a room's end moves the picture, and the windows the game
      * placed on it with it, as for the columns (vx below). Shifted, the row's registers are another line's: its
      * window spans are then the HDMA table's for that line (the portal a monster of the Arena of the Ages comes back
@@ -1987,6 +2091,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             if (affine) bg_affine(e, bg, dispcnt, 0, bgline[bg]);
             else bg_text(e, bg, (own_bgs >> bg & 1) ? by : y, dispcnt, bgline[bg], hd_on ? &bghd[bg] : NULL);
         }
+        for (int bg = 0; bg < 4; bg++) if (enabled[bg] && m) fill_bg(e, bg, y, (own_bgs >> bg & 1) ? by : y, dispcnt, bgline[bg]);
         /* Camera smoothing: the text box stays still while the field slides. On its lines (BG0/BG1 switched to
          * one-screen maps, margin_bg) the box's pixels go to the party layer, and the slid picture shows the room
          * under the box (the layers as the frame started, as in the margins). */
@@ -2046,7 +2151,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         /* Beyond the screen: the windows' shapes carried on (window_beyond), by the line the row has its windows from
          * (vy: shifted with the view at a room's end, the orb's 8 rows above the screen were its lines 0-7, and taken
          * from beyond, its top was dented). */
-        int bend = vy < 0 ? 0 : vy > beyond_last ? 1 : -1, brow = bend ? vy - beyond_last - 1 : -1 - vy;
+        int bend = vy < beyond_first ? 0 : vy > beyond_last ? 1 : -1, brow = bend ? vy - beyond_last - 1 : beyond_first - 1 - vy;
         if (bend >= 0 && beyond_on[bend] && brow < EDGE_ROWS && !e->band_rows) {
             for (int w = 0; w < 2; w++) {
                 if (!(beyond_on[bend] >> w & 1)) continue;
