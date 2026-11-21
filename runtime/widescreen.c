@@ -1208,6 +1208,13 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
         drift_dir[0] = drift_dir[1] = drift_smooth[0] = drift_smooth[1] = 0;
     } else if (cam == last_cam) {
         for (int i = 0; i < 2; i++) {
+            /* A battle effect's 512x512 map is no room layer (theirs are 512x256 rings): Ice II's first block fell
+             * 8 rows a frame on BG0, taken for drift, and the second's start, a jump back up, was undone, so it
+             * slid in below the screen. */
+            if ((io_get16(i ? 0x08 : 0x0e) >> 14) == 3) {
+                drift &= ~(1 << i), steps[i] = drift_dir[i] = drift_smooth[i] = 0;
+                continue;
+            }
             int d = (vofs[i] - last_vofs[i] - room_vofs + last_room_vofs) & 511, step = d <= DRIFT_STEP ? d : d - 512;
             int moved = ((vofs[i] - last_vofs[i] + 256) & 511) - 256; /* the layer's own change */
             int small = d && vofs[i] != last_vofs[i] && (d <= DRIFT_STEP || d >= 512 - DRIFT_STEP);
