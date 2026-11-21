@@ -1561,6 +1561,7 @@ static void window_beyond(void) {
 
 enum { BAND_MIN = 48, BATTLE_TOP = 46, BATTLE_BOTTOM = 166 }; /* the lines between the battle menu and the text box */
 enum { BEAM_LINES = 4 }; /* an effect this many lines tall or less is a beam, drawn on its own lines */
+enum { BEAM_WIDTH = 8 }; /* an effect this many columns wide or less on every line is a beam too (a laser's line) */
 static void effect_rows(Engine *e) {
     int x[2], top = win_top, bottom = SCREEN_H - 1;
 #define WIN_EMPTY(y) (!win_span(y, 0, &x[0], &x[1]) && !win_span(y, 1, &x[0], &x[1]))
@@ -1613,7 +1614,14 @@ static void effect_rows(Engine *e) {
          * elsewhere the effect ends on its own lines (Azala's red pillar, a WIN0 column from under the top menu down
          * to just below Marle, went on to the bottom of the picture; growing, it passed line 145, the bottom menu's
          * edge when the menu is at the bottom, and went on for those frames). */
-        e->rays_up = top <= 0 || top == BATTLE_TOP;
+        /* A thin beam (an enemy's laser, a line 2 to 5 columns wide from a turret at the room's top) starts at its
+         * shooter: carried up from line 46, where the game blanks it, it went on past the turret to the top of the
+         * picture, the lines above 46 on view in One Screen Mode (no menu there). */
+        int beam = 1;
+        for (int y = top; y <= bottom && beam; y++)
+            for (int w = 0; w < 2; w++)
+                if (win_span(y, w, &x[0], &x[1]) && (x[0] < 0 || x[1] >= SCREEN_W || x[1] - x[0] > BEAM_WIDTH)) beam = 0;
+        e->rays_up = top <= 0 || (top == BATTLE_TOP && !beam);
         e->rays_down = bottom >= SCREEN_H - 1 || bottom == BATTLE_BOTTOM - 1 ||
                        (bottom == SCREEN_H - BATTLE_TOP - 1 && top < BATTLE_TOP); /* the menu at the bottom, not the top */
         return;
