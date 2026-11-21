@@ -74,6 +74,7 @@ static int room_loaded;    /* and its room is no room just entered (fill_field_m
 static int view_bgs;       /* the BGs it moves */
 static int world_dx, world_dy; /* the world map's: the view's shift from the camera at the map's ends (0 normally) */
 static int drift;          /* the room's layers 1 (bit 0, BG3) and 2 (bit 1, BG0) drifting on their own (fill_field_margins) */
+static int drift_smooth[2]; /* by drifting layer: rows its scroll is drawn further than the game sets it (ws_drift_dy) */
 
 /* The room map's metatile rows (room + 0x1000: 0x100 a row) as the field last had them. */
 static struct {
@@ -1091,6 +1092,11 @@ static int bg_shift(int bg, int a, int v) {
     return (p + (p >= 0 ? 128 : -128)) / 256;
 }
 
+int ws_drift_dy(int bg) {
+    if (!field_margin) return 0;
+    return bg == 3 && (drift & 1) ? drift_smooth[0] : bg == 0 && (drift & 2) ? drift_smooth[1] : 0;
+}
+
 void ws_bg_shift(int bg, int *x, int *y) {
     *x = bg_shift(bg, 0, view_x), *y = bg_shift(bg, 1, view_y);
 }
@@ -1194,14 +1200,24 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * does not drift: below Death Peak (location 0x106) BG3 is fixed to the screen, and as the camera stopped, BG2's
      * last steps came a frame after the camera in RAM, so BG3 seemed to move against it and was left to the game. */
     static uint32_t drift_room;
-    static int steps[2], last_cam, last_vofs[2], last_room_vofs;
+    static int steps[2], last_cam, last_vofs[2], last_room_vofs, drift_dir[2];
     int cam = (int16_t)rt_r16(CAMERA + 2), room_vofs = io_get16(0x1a) & 511;
     int vofs[2] = {io_get16(0x1e) & 511, io_get16(0x12) & 511};
-    if (here != drift_room) drift = steps[0] = steps[1] = 0, drift_room = here;
-    else if (cam == last_cam) {
+    if (here != drift_room) {
+        drift = steps[0] = steps[1] = 0, drift_room = here;
+        drift_dir[0] = drift_dir[1] = drift_smooth[0] = drift_smooth[1] = 0;
+    } else if (cam == last_cam) {
         for (int i = 0; i < 2; i++) {
-            int d = (vofs[i] - last_vofs[i] - room_vofs + last_room_vofs) & 511;
-            if (d && vofs[i] != last_vofs[i] && (d <= DRIFT_STEP || d >= 512 - DRIFT_STEP) && ++steps[i] >= DRIFT_STEPS) drift |= 1 << i;
+            int d = (vofs[i] - last_vofs[i] - room_vofs + last_room_vofs) & 511, step = d <= DRIFT_STEP ? d : d - 512;
+            int moved = ((vofs[i] - last_vofs[i] + 256) & 511) - 256; /* the layer's own change */
+            int small = d && vofs[i] != last_vofs[i] && (d <= DRIFT_STEP || d >= 512 - DRIFT_STEP);
+            /* A drifting layer goes on drifting where the game breaks its scroll: at location 0x1c1's door the clouds'
+             * (BG3) jumped from 335 to 0 with the room's re-placed layers, then went 0, 511, 510, 509 and back to 0 over
+             * and over, a cloud picture of its own that snapped back every 3 rows. Its change is undone there (drawn
+             * drift_smooth further), so it moves only by its steps in the way it drifts. */
+            if ((drift >> i & 1) && moved && !(small && (step > 0) == (drift_dir[i] > 0))) drift_smooth[i] -= moved;
+            if (small && !(drift >> i & 1)) drift_dir[i] = step;
+            if (small && ++steps[i] >= DRIFT_STEPS) drift |= 1 << i;
         }
     }
     last_cam = cam, last_vofs[0] = vofs[0], last_vofs[1] = vofs[1], last_room_vofs = room_vofs;

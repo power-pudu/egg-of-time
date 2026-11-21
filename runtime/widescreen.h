@@ -11,6 +11,7 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill);
 void ws_view_shift(int *x, int *y, int *bgs);
 /* BG bg's share of that shift: a layer scrolling at its own rate to the room's moves by as much of it. */
 void ws_bg_shift(int bg, int *x, int *y);
+int ws_drift_dy(int bg); /* rows a layer drifting on its own is drawn beyond the game's scroll */
 /* How far this frame's sprites in the world are to be moved to go with that shift. */
 void ws_sprite_lag(int *x, int *y);
 /* Columns the game's sprite coordinates are shifted by (the widened view's left margin; 0 normally). */
