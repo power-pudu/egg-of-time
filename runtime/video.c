@@ -142,6 +142,7 @@ typedef struct Engine {
     int short_rows; /* with room_clip: the room has fewer rows than the view, black beyond room_y0..y1-1 */
     int room_clip, room_x0, room_x1; /* Fill screen sides off: black beyond the room's columns room_x0..x1-1 */
     uint8_t wide_bgs; /* BGs drawn as they are beyond the screen's sides, not repeated (ws_wide_picture_bgs: Lavos's ripples) */
+    int row_period[4]; /* by BG: the lines after which its picture is the same again, above and below the screen too */
     int repeat_bgs; /* BGs whose screen columns repeat into the margins, the others empty beyond the room
                      * (ws_repeat_bgs: a one-screen room's layer scrolling on its own, the clouds of the Epoch's flight),
                      * only those seen at the screen's sides the frame before (shown_bgs), which the margins go on
@@ -493,11 +494,39 @@ static inline void copy_col(uint16_t *out, HdLine *hd, int to, int from) {
 /* Layer (0-3 BG, 4 OBJ, 5 backdrop) holds still on screen while camera smoothing slides the room (Engine.still_bgs). */
 static int still_layer(const Engine *e, int layer) { return layer == 5 || (layer < 4 && (e->still_bgs >> layer & 1)); }
 
+/* Text BG bg's map entry under screen pixel (x, y), as bg_text_cols reads it. */
+static uint16_t bg_entry(const Engine *e, int bg, uint32_t dispcnt, int x, int y) {
+    uint16_t cnt = reg16(e, 0x08 + 2 * bg);
+    uint32_t hofs = reg16(e, 0x10 + 4 * bg), vofs = reg16(e, 0x12 + 4 * bg);
+    if ((cnt & 0x4000) && (e->view_bgs >> bg & 1)) hofs += (uint32_t)e->bg_dx[bg], vofs += (uint32_t)e->bg_dy[bg];
+    if (cnt & 0x4000) vofs += (uint32_t)e->drift_dy[bg];
+    uint32_t w = (cnt & 0x4000) ? 512 : 256, h = (cnt & 0x8000) ? 512 : 256, scr = ((cnt >> 8) & 0x1F) * 0x800u;
+    if (e->id == 0) scr += ((dispcnt >> 27) & 7) * 0x10000u;
+    uint32_t xx = (uint32_t)(x + (int)hofs) & (w - 1), yy = (uint32_t)(y + (int)vofs) & (h - 1);
+    uint32_t block = (xx >> 8) + (yy >> 8) * (w >> 8);
+    return vr16(e->bg, e->bg_mask, scr + block * 0x800 + ((yy & 255) >> 3) * 64 + ((xx & 255) >> 3) * 2);
+}
+
+/* Whether text BG bg shows the same rows again every period lines over the screen's lines: the game writes its ring
+ * for those only, and the zoom out's rows above and below the screen read the rest of it (ws_bg_row_period). */
+static int bg_rows_repeat(const Engine *e, int bg, uint32_t dispcnt, int period) {
+    if (period <= 0 || period > SCREEN_H - 4 * 8) return 0;
+    for (int y = 0; y + period < SCREEN_H; y += 8)
+        for (int x = 0; x < SCREEN_W; x += 8)
+            if (bg_entry(e, bg, dispcnt, x, y) != bg_entry(e, bg, dispcnt, x, y + period)) return 0;
+    return 1;
+}
+
 static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *out, HdLine *hd) {
     int m = e->margin;
     uint16_t cnt = reg16(e, 0x08 + 2 * bg), hofs = reg16(e, 0x10 + 4 * bg), vofs = reg16(e, 0x12 + 4 * bg);
     /* A picture reflected at the screen's sides is at its top and bottom too. */
     if (m && (e->mirror_bg >> bg & 1)) y = y < 0 ? -1 - y : y >= SCREEN_H ? 2 * SCREEN_H - 1 - y : y;
+    /* A BG of a room that repeats down its rows, showing them so on the screen, repeats them beyond it: a layer the
+     * fill does not write (one scrolling on its own) has only the screen's rows written (Future's corridor walls, BG3,
+     * ended on the screen's lines in black). */
+    int period = m ? e->row_period[bg] : 0;
+    if (period && (y < 0 || y >= SCREEN_H)) y = y < 0 ? y + (-y + period - 1) / period * period : y - (y - SCREEN_H + period) / period * period;
     int solid = m && (e->solid_bgs >> bg & 1);
     if (solid && (y < 0 || y >= SCREEN_H)) y &= 7; /* a screen line with the same row of the tile */
     if (!m || (cnt & 0x4000) || e->repeat_256 || solid) {
@@ -1942,6 +1971,8 @@ static void engine_frame_start(Engine *e) {
             e->fill_bgs = e->fill_now, e->fill_now = 0;
             e->void_col = e->void_now == 1 ? e->void_now_col : 0xFF000000u, e->void_now = 0;
             e->repeat_bgs = e->margin ? ws_repeat_bgs() & e->shown_bgs : 0;
+            for (int bg = 0; bg < 4; bg++)
+                e->row_period[bg] = e->margin && bg_rows_repeat(e, bg, dispcnt, ws_bg_row_period(bg)) ? ws_bg_row_period(bg) : 0;
             e->wide_bgs = e->margin ? (uint8_t)ws_wide_picture_bgs() : 0;
             e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs) &&
                            ws_room_span(&e->room_x0, &e->room_x1);

@@ -144,6 +144,39 @@ static int map_row(uint32_t scroll, int L, int r, int own) {
     return r < 0 ? 0 : r >= n ? n - 1 : r;
 }
 
+/* A room whose layers repeat down its rows goes on repeating beyond its bounds, past where the game's camera stops:
+ * Future's corridors (the battle in a hall 14 metatile rows tall, its walls 8 rows each) stood in black above and
+ * below in the zoomed-out view, the bounds clipped. Each layer's period is the fewest metatile rows after which every
+ * row of the bounds is the same again, seen on REPEAT_SEEN rows at least and on half a period (a room that does not
+ * repeat matches only on its last few rows, where its top and bottom happen to agree). Layer 1 on its own camera is
+ * another picture (a sky): no room repeats then. */
+enum { REPEAT_SEEN = 4 };
+static int row_period[3]; /* by layer, in metatile rows; all 0: the room does not repeat */
+static void find_row_periods(uint32_t scroll, uint32_t tilesets) {
+    int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17), top = rt_r8(scroll + 0x18), bottom = rt_r8(scroll + 0x19);
+    int n = bottom - top + 1, all = n > REPEAT_SEEN && right >= left && !own_l1;
+    for (int L = 0; L < 3; L++) {
+        row_period[L] = 0;
+        for (int p = 1; all && p <= n - REPEAT_SEEN && 2 * (n - p) >= p && !row_period[L]; p++) {
+            int same = 1;
+            for (int r = top * 2; r + 2 * p <= bottom * 2 + 1 && same; r++)
+                for (int c = left * 2; c <= right * 2 + 1 && same; c++) same = room_tile(scroll, tilesets, L, c, r) == room_tile(scroll, tilesets, L, c, r + 2 * p);
+            if (same) row_period[L] = p;
+        }
+        all = all && row_period[L];
+    }
+    if (!all) row_period[0] = row_period[1] = row_period[2] = 0;
+}
+
+/* Layer L's tile row r, in a room that repeats, brought within its bounds by whole periods. */
+static int repeat_row(uint32_t scroll, int L, int r) {
+    int p = 2 * row_period[L], lo = rt_r8(scroll + 0x18) * 2, hi = rt_r8(scroll + 0x19) * 2 + 1;
+    if (!p) return r;
+    if (r < lo) r += (lo - r + p - 1) / p * p;
+    else if (r > hi) r -= (r - hi + p - 1) / p * p;
+    return r;
+}
+
 static uint16_t map_entry(int L, uint32_t t) {
     uint32_t b0 = t & 0xFF, b1 = (t >> 8) & 0xFF, pal = b1 >> 4;
     if (L == 2) pal = rt_r8(PAL_REMAP + pal);
@@ -229,6 +262,30 @@ static int bg_holds_layer(int bg, uint32_t scroll, uint32_t tilesets, int L) {
         }
     }
     if (!cells) cells = pri_cells, same = pri_empty;
+    return cells && same * 10 >= cells * 9;
+}
+
+/* BG1 holds the priority tiles of layers 0 and 1 as the fill would write them, layer 1's included: the cells the game
+ * drew in the 4:3 view agree (9 in 10) where layer 1 has a priority tile. Layer 1 then goes into BG1 beyond the
+ * screen even while BG3 is not filled (drifting): Future's corridor, its walls' priority tiles the dark strips at the
+ * screen's sides, had BG1 written without them above and below the screen, the strips cut there. */
+static int bg1_holds_pri1(uint32_t scroll, uint32_t tilesets) {
+    if (own_l1) return 0;
+    int camc = layer_col(scroll, 0), camr = layer_row(scroll, 0), oc = rt_r8(scroll + 0x8e), orow = rt_r8(scroll + 0x8f);
+    uint32_t dispcnt = io_get32(0), cnt = io_get16(0x0a);
+    uint32_t base = 0x06000000u + ((dispcnt >> 27) & 7) * 0x10000u + ((cnt >> 8) & 0x1F) * 0x800u;
+    int cells = 0, same = 0;
+    for (int k = 1; k < 31; k++) {
+        int slot = (oc + k) & 63;
+        for (int r = 0; r < SCREEN_H / 8; r++) {
+            uint32_t t1 = room_tile(scroll, tilesets, 1, camc + k, camr + r);
+            if (!((t1 >> 16) & 0xFF)) continue;
+            const uint8_t *p = video_vram_ptr(base + (uint32_t)(slot >> 5) * 0x800u + (uint32_t)((orow + r) & 31) * 64 + (uint32_t)(slot & 31) * 2);
+            uint16_t v = 0;
+            if (p) memcpy(&v, p, 2);
+            cells++, same += v == map_entry(1, t1);
+        }
+    }
     return cells && same * 10 >= cells * 9;
 }
 
@@ -503,11 +560,11 @@ static int room_rows(int *y0, int *y1, int *top_void, int *bottom_void) {
  * view is clipped at its bounds: it is centred, and the map past both ends is shown, which the game never draws. Below
  * Death Peak (location 0x106, 224 rows against 240 or 226 at 80% and 85%) the cliffs' ground ended on a straight line
  * 8 rows above the view's bottom, the valley showing under it. */
-int ws_short_room(void) { return short_room; }
+int ws_short_room(void) { return short_room && !row_period[0]; }
 
 int ws_room_rows(int *y0, int *y1) {
     int top_void, bottom_void;
-    if (!room_rows(y0, y1, &top_void, &bottom_void)) return 0;
+    if (row_period[0] || !room_rows(y0, y1, &top_void, &bottom_void)) return 0; /* repeating: not clipped */
     if (short_room) return 1;
     uint32_t scroll = rt_r32(SCROLL), tilesets = rt_r32(TILESETS);
     int left = rt_r8(scroll + 0x16), right = rt_r8(scroll + 0x17), top = rt_r8(scroll + 0x18), bottom = rt_r8(scroll + 0x19);
@@ -575,6 +632,12 @@ static int repeat_bgs;
 static uint32_t repeat_room; /* the room map the layers were seen moving in */
 
 int ws_repeat_bgs(void) { return repeat_bgs; }
+
+/* The rows after which BG bg's picture is the same again, in a room that repeats down its rows (0: it does not). */
+int ws_bg_row_period(int bg) {
+    static const int layer_of_bg[4] = {2, 0, 0, 1};
+    return row_period[0] ? 16 * row_period[layer_of_bg[bg]] : 0;
+}
 
 /* Rooms with a layer scrolling on its own whose 512-wide map holds a picture wider than the screen: shown as drawn
  * beyond the screen's sides (and the room's ends) instead of repeating its columns, from the room's first frame.
@@ -1104,6 +1167,7 @@ void ws_bg_shift(int bg, int *x, int *y) {
 static void fill_field_margins(int margin, int rows, int shown_rows) {
     int seen = repeat_bgs;
     repeat_bgs = picture_bgs = view_bgs = 0;
+    row_period[0] = row_period[1] = row_period[2] = 0;
     if (!field_margin) return;
     uint32_t scroll = rt_r32(SCROLL), room = rt_r32(ROOM), tilesets = rt_r32(TILESETS);
     if (!ram_ptr(scroll) || !ram_ptr(room) || !ram_ptr(tilesets)) return;
@@ -1270,7 +1334,9 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * following the room's scroll and a row every 8 frames off it. Left out of the shift for being off its
      * ring origin, at the room's bottom end the fog slid up over the room, its last rows bare. It moves by its share. */
     for (int bg = 0; bg < 4; bg++) if ((drifting & ~repeat_bgs) >> bg & 1 && (io_get16(0x08 + 2 * bg) >> 14) == 1) view_bgs |= 1 << bg;
+    find_row_periods(scroll, tilesets);
     int okhi = ok0 && bg_on_layer(1, scroll, 0); /* BG1: the priority tiles of the filled layers 0 and 1 */
+    int hi1 = okhi && (ok1 || bg1_holds_pri1(scroll, tilesets)); /* and layer 1's in it */
     int camc = layer_col(scroll, 0), camr = layer_row(scroll, 0);
     int dc1 = layer_col(scroll, 1) - camc, dr1 = layer_row(scroll, 1) - camr; /* layer 1's tiles, from its own camera */
     /* The tiles the filled layers show: they agree on the tile, not always on the pixel (Zenan Bridge: BG0 still
@@ -1302,17 +1368,17 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
              * row 32 away, and written last, the bottom guard row stood in the top row (location 0x178: lights
              * at the view's top, gone as the camera brought those rows into the 4:3 view). The shown row keeps it. */
             if ((r < shown_top && r + 32 <= bottom) || (r > shown_bottom && r - 32 >= top)) continue;
-            uint32_t t0 = room_tile(scroll, tilesets, 0, c, map_row(scroll, 0, r, camr));
-            uint32_t t1 = room_tile(scroll, tilesets, 1, c + dc1, map_row(scroll, 1, r + dr1, camr + dr1));
+            uint32_t t0 = room_tile(scroll, tilesets, 0, c, map_row(scroll, 0, repeat_row(scroll, 0, r), camr));
+            uint32_t t1 = room_tile(scroll, tilesets, 1, c + dc1, map_row(scroll, 1, repeat_row(scroll, 1, r + dr1), camr + dr1));
             int pri0 = (t0 >> 16) & 0xFF, pri1 = (t1 >> 16) & 0xFF;
             for (int L = 0; L < 3; L++) {
                 static const int bg_of[3] = {2, 3, 0};
                 int ok = L == 0 ? ok0 : L == 1 ? ok1 : ok2;
                 if (!ok) continue;
                 int slot = (rt_r8(scroll + 0x8e + 2 * L) + c - camc) & 63, row = (rt_r8(scroll + 0x8f + 2 * L) + r - camr) & 31;
-                uint32_t t = L == 0 ? t0 : L == 1 ? t1 : room_tile(scroll, tilesets, 2, c, map_row(scroll, 2, r, camr));
+                uint32_t t = L == 0 ? t0 : L == 1 ? t1 : room_tile(scroll, tilesets, 2, c, map_row(scroll, 2, repeat_row(scroll, 2, r), camr));
                 (L ? fill_put : put)(bg_of[L], slot, row, L == 0 && pri0 ? 0 : L == 1 && pri1 ? 0 : map_entry(L, t));
-                if (L == 0 && okhi) put(1, slot, row, ok1 && pri1 ? map_entry(1, t1) : pri0 ? map_entry(0, t0) : 0);
+                if (L == 0 && okhi) put(1, slot, row, hi1 && pri1 ? map_entry(1, t1) : pri0 ? map_entry(0, t0) : 0);
             }
         }
     }

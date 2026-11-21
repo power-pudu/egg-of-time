@@ -36,6 +36,7 @@ int ws_short_room(void);
 /* In the field: the BGs (bit per BG) whose 256 columns repeat into the margins, in a room one screen wide where
  * they scroll on their own (beyond the room the other BGs are then empty); 0 otherwise. */
 int ws_repeat_bgs(void);
+int ws_bg_row_period(int bg);
 /* In the field: the BGs whose own map goes on beyond the screen's sides with the picture (Lavos's ripples), drawn as
  * they are there, also beyond the room's ends; 0 otherwise. */
 int ws_wide_picture_bgs(void);
