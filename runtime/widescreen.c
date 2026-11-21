@@ -1551,16 +1551,18 @@ int ws_hdma_bgs(void) {
 int ws_hdma_effect(void) {
     uint32_t end = rt_r32(HDMA_END);
     if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * 32) return 0;
-    if (ws_hdma_bgs()) return 1;
     for (uint32_t c = HDMA_CHANNELS; c < end; c += 0x28) {
         uint32_t flags = rt_r32(c), dst = rt_r32(c + 8), src = rt_r32(c + 4), step = rt_r32(c + 0x14);
         uint32_t halves = rt_r32(c + 0x1c) * (flags & 2 ? 2 : 1);
         if ((flags & 9) != 1 || !step || !ram_ptr(src) || !halves || halves > WS_HDMA_UNITS) continue;
-        if ((dst >= 0x04000010u && dst < 0x04000020u) || (dst >= 0x04000040u && dst + 2 * halves <= 0x04000044u)) continue;
+        /* Nor a switch of BGs' maps (BGxCNT) alone: the text box's lines, its BG0/BG1 on the box's maps (MOTHER's room:
+         * her light, WIN0 from the monitors down to her, stretched over the picture as an effect
+         * once the box opened at the top, came down from her to the bottom). */
+        if ((dst >= 0x04000010u && dst < 0x04000020u) || (dst >= 0x04000040u && dst + 2 * halves <= 0x04000044u) ||
+            (dst >= 0x04000008u && dst + 2 * halves <= 0x04000010u)) continue;
         uint32_t first = rt_r32(c + 0x20), last = rt_r32(c + 0x24);
         for (uint32_t y = first + 1; y <= last && y < SCREEN_H; y++) {
             for (uint32_t k = 0; k < halves; k++) {
-                if (rt_r16(src + step * (y - first) + 2 * k) != rt_r16(src + 2 * k)) return 1;
             }
         }
     }

@@ -2075,6 +2075,10 @@ static void fill_bg(Engine *e, int bg, int y, int row, uint32_t dispcnt, uint16_
     for (int x = x1; x < x1 + m; x++) if (!(line[x] & OPAQUE)) line[x] = line[x - (x - x1 + 8) / 8 * 8];
 }
 
+/* By engine: BLDCNT, BLDALPHA of the room's lines last drawn outside the text box, its blending under the box. */
+static uint16_t room_bld[2][2];
+static int room_bld_seen[2];
+
 static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
     int m = e->margin, width = SCREEN_W + 2 * m;
@@ -2252,6 +2256,11 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             const uint16_t *fw = e->frame_win;
             win0 = fw[0] & 0x2000, win1 = fw[0] & 0x4000, winobj = fw[0] & 0x8000;
             winin = fw[1], winout = fw[2], w0h = fw[3], w1h = fw[4], w0v = fw[5], w1v = fw[6];
+            /* The room's own on its lines under the box: the windows the game sets line by line (ws_window_lines),
+             * the blending of its lines last drawn outside the box (the box's lines set their own). MOTHER's light,
+             * WIN0 from the monitors down to her blended over the room, was cut at the box's last line. */
+            if (win_ext_on) w0h = (uint16_t)win_lines[wy], w1h = (uint16_t)(win_lines[wy] >> 16);
+            if (room_bld_seen[e->id]) for (int k = 0; k < 2; k++) bld[k][0] = room_bld[e->id][0], bld[k][1] = room_bld[e->id][1];
             in_w0y = win0 && in_range(wy, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(wy, w1v >> 8, w1v & 0xFF);
             ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h);
             ext0 = ext ? win_ext[wy][0] : NULL, ext1 = ext ? win_ext[wy][1] : NULL;
@@ -2264,6 +2273,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h);
             ext0 = ext ? win_ext[wy][0] : NULL, ext1 = ext ? win_ext[wy][1] : NULL;
         }
+        if (!pass && !box && on_screen && m) room_bld[e->id][0] = bld[0][0], room_bld[e->id][1] = bld[0][1], room_bld_seen[e->id] = 1;
         int ui_own = pass == 2 && on_screen; /* the UI layer: its own line's windows (see ctl below) */
         uint32_t ui_h = win_ext_on ? win_lines[y] : (uint32_t)w1h << 16 | w0h;
         const ObjLine *o = pass == 2 ? &ol_ui : pass ? &ol_all : &ol;
