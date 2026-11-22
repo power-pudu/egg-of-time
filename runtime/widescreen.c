@@ -633,7 +633,7 @@ static void set_screen_view(int margin) {
 #define DRIFT_STEP 8  /* rows: the most a drifting layer moves in a frame */
 #define DRIFT_STEPS 2
 static int repeat_bgs;
-static uint32_t repeat_room; /* the room map the layers were seen moving in */
+static uint32_t repeat_room; /* the room map and location the layers were seen moving in */
 
 int ws_repeat_bgs(void) { return repeat_bgs; }
 
@@ -1228,7 +1228,11 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * game never redraws them): fill_put, give_back. */
     static uint32_t settle_room;
     static int settle;
-    uint32_t here = room ^ room_bounds(scroll);
+    /* The room map is one buffer for every room: rooms with the same bounds (one screen, 0..15) were taken for one,
+     * and the Epoch's flight (location 0x1b0) handed its repeating, drifting clouds to the cave it lands at (0x1da),
+     * the room map repeated into the margins, scrambled. The location tells them apart (room_location: the room's own). */
+    uint32_t place = room ^ (uint32_t)room_location() << 20;
+    uint32_t here = place ^ room_bounds(scroll);
     /* A loaded state's room has its layers' scroll in place: settling, it showed no repeating layer for 8 frames. */
     if (here != settle_room) settle_room = here, settle = room_loaded ? ROOM_SETTLE : 0;
     else if (settle < ROOM_SETTLE) settle++;
@@ -1240,7 +1244,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
          * 8 frames. A layer that repeated goes on repeating while it stays off its ring origin; back on it, it does so
          * only once the room has settled (the Blackbird's hall: BG3 kept the wing's scroll for 3 frames, then went
          * to its origin). */
-        if (room != repeat_room) seen = 0, repeat_room = room;
+        if (place != repeat_room) seen = 0, repeat_room = place;
         if (!bg_follows(2, scroll, 0) && bg_near(2, scroll, 0)) repeat_bgs = seen;
     }
     if (one_screen && bg_follows(2, scroll, 0)) {
