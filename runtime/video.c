@@ -1435,6 +1435,9 @@ static int shape_width(int y) {
     return hi < 0 ? -1 : hi - lo;
 }
 
+/* The lines from the top a box covered on the frame before (BG0/BG1 on a box's map, box_bg; 0: none), and on this
+ * one so far. */
+static int top_box_rows, top_box_now;
 enum { EDGE_TOP = 8, EDGE_WIDE = 16 }; /* a cut top: at least EDGE_WIDE columns, over half as wide as EDGE_TOP lines down */
 /* A box at the top (a tech's name, the menu there) has the game blank the windows on its lines: a shape that
  * starts below them more than half as wide as EDGE_TOP lines down (both windows together) was cut there. A rounded
@@ -1442,7 +1445,9 @@ enum { EDGE_TOP = 8, EDGE_WIDE = 16 }; /* a cut top: at least EDGE_WIDE columns,
  * on the first. */
 static int top_cut(int y) {
     int wy = shape_width(y);
-    return y > win_top && y < MENU_LINES && wy >= EDGE_WIDE && wy * 2 > shape_width(y + EDGE_TOP);
+    /* Only under a box there: in Lucca's house a pink cone, wide at its top and closing down on the machine, grows
+     * from the bottom; taken as cut, it went on above its first line as wide as the picture. */
+    return top_box_rows && y >= top_box_rows - 1 && y > win_top && y < MENU_LINES && wy >= EDGE_WIDE && wy * 2 > shape_width(y + EDGE_TOP);
 }
 
 static int fit_ring_one(Engine *e, int top, int bottom, int keep_only) {
@@ -1958,6 +1963,7 @@ static void engine_frame_start(Engine *e) {
             win_ext_on = e->margin && ws_window_lines(win_lines);
             if (win_ext_on) window_margins();
             if (win_ext_on && e->rows) effect_rows(e);
+            top_box_rows = top_box_now, top_box_now = 0;
             if (win_ext_on && !e->band_rows) window_beyond();
             else beyond_on[0] = beyond_on[1] = sym_seen = 0, beyond_last = SCREEN_H - 1, beyond_first = 0;
             e->hdma_bgs = e->margin ? (uint8_t)ws_hdma_bgs() : 0;
@@ -2167,6 +2173,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         static uint16_t under[2][VIDEO_LINE_MAX];
         int box = 0;
         if (on_screen && y < e->box_top && ((enabled[0] && box_bg(e, 0)) || (enabled[1] && box_bg(e, 1)))) e->box_top = y;
+        if (on_screen && e->margin && !e->sel_shift && y == top_box_now && ((enabled[0] && box_bg(e, 0)) || (enabled[1] && box_bg(e, 1)))) top_box_now = y + 1;
         for (int bg = 0; bg < 2; bg++) {
             if (!(e->sliding || e->rows) || !enabled[bg] || !margin_bg(e, bg)) continue;
             const uint16_t *f = e->frame_bg[bg];
