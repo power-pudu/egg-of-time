@@ -1115,7 +1115,7 @@ static void fill_world_margins(int margin, int rows) {
  * by the rate seen. */
 #define RATE_PRIOR 16 /* the pixels of the room's motion that start is worth */
 static struct {
-    uint32_t room;           /* the room measured (room map, bounds) */
+    uint32_t room;           /* the room measured (room map and location, bounds) */
     uint16_t last[4][2];     /* scroll by BG, axis, the frame before */
     uint16_t cnt[4];         /* BGxCNT the frame before */
     int32_t moved[4][2];     /* each BG's motion along the room's */
@@ -1335,7 +1335,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
         own_l1 = held1;
     }
     int drifting = (drift & 1) << 3 | (drift & 2) >> 1; /* BG3 layer 1, BG0 layer 2 */
-    measure_rates(scroll, room, drifting); /* layer 1's own camera known */
+    measure_rates(scroll, place, drifting); /* layer 1's own camera known */
     /* Layer 1 on its own camera held at the map's origin while the room's is well away from it is a picture fixed to
      * the screen: the misty valley below Death Peak (location 0x106), BG3 at 0, 0 however the party walks. Its room map
      * holds 256 columns of it and other rooms' tiles beyond, so filled, the margins showed a flat green around a 4:3
