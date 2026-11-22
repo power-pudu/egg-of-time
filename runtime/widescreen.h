@@ -10,6 +10,7 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill);
 /* This frame's shift of the view from the camera at the room's ends (pixels, 0 normally), and the BGs that move by it. */
 void ws_view_shift(int *x, int *y, int *bgs);
 void ws_hold_scene(int bgs);
+int ws_elevator(void); /* the elevator's room (2300 A.D., location 0x7f) is shown */
 /* BG bg's share of that shift: a layer scrolling at its own rate to the room's moves by as much of it. */
 void ws_bg_shift(int bg, int *x, int *y);
 int ws_drift_dy(int bg); /* rows a layer drifting on its own is drawn beyond the game's scroll */

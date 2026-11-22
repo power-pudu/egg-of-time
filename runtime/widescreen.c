@@ -376,6 +376,10 @@ static int room_location(void) {
     return shown;
 }
 
+/* The elevator's room in 2300 A.D. (location 0x7f): the cab held on the screen as the ride starts (video.c held_bgs)
+ * and the frame-before readings below are for it alone. */
+int ws_elevator(void) { return room_location() == 0x7f; }
+
 /* The room is one of left_rooms, and stays one while it holds (room_print): leaving the Blackbird's wing, the
  * location reads the next scene's (0x16e) for a few frames, and the view went back to the middle. */
 static int left_room(void) {
@@ -1143,7 +1147,7 @@ static void measure_rates(uint32_t scroll, uint32_t room, int free) {
                  * elevator ride put layer 1 at 0 a frame before the cab's BG3 showed it, and that frame the cab's
                  * inner wall went by a share of the view's shift near none, 5 rows down. */
                 int now = own_l1 && pos0 >= 8 && pos1 >= 0 && pos1 <= 2 * pos0 ? pos1 * 256 / pos0 : 256;
-                prior = fresh ? now : rates.prior[a];
+                prior = fresh || !ws_elevator() ? now : rates.prior[a];
                 rates.prior[a] = now;
             }
             if (free >> bg & 1) rates.rate[bg][a] = rates.size[bg][a] ? rates.moved[bg][a] * 256 / rates.size[bg][a] : 0;
@@ -1344,7 +1348,7 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
      * inner wall went as a picture, without the view's shift: 16 rows down. */
     static int last_pic1, last_pic2;
     int seen1 = pic1, seen2 = pic2;
-    pic1 = pic1 && last_pic1, pic2 = pic2 && last_pic2;
+    if (ws_elevator()) pic1 = pic1 && last_pic1, pic2 = pic2 && last_pic2;
     last_pic1 = seen1, last_pic2 = seen2;
     ok1 = ok1 && !pic1, ok2 = ok2 && !pic2;
     tent_back |= pic1 << 3 | pic2;

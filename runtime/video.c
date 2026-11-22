@@ -2004,7 +2004,9 @@ static void engine_frame_start(Engine *e) {
              * the sides. */
             static int held_cy, held_known;
             static uint16_t held_vofs[4];
-            if (!known || !e->margin) e->held_bgs = 0;
+            /* The elevator's room alone (ws_elevator): elsewhere layers off the camera (the world map's after a
+             * flight, a room's walking down) were taken as held, the rows past the screen lost to the backdrop. */
+            if (!known || !e->margin || !ws_elevator()) e->held_bgs = 0;
             else if (held_known && cy != held_cy) {
                 e->held_bgs = 0;
                 int follows = 0;
@@ -2214,6 +2216,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         }
         uint16_t bld[2][2] = {{reg16(e, 0x50), reg16(e, 0x52)}, {reg16(e, 0x50), reg16(e, 0x52)}};
         if (margin_kept) bld[1][0] = e->frame_bld[0], bld[1][1] = e->frame_bld[1];
+        uint16_t line_bld[2][2]; /* the line's own, for the passes after the picture's (the room's under the box) */
+        memcpy(line_bld, bld, sizeof bld);
         int evy = reg16(e, 0x54) & 31;
         if (evy > 16) evy = 16;
         uint16_t backdrop = pal16(e->pal);
@@ -2272,6 +2276,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h);
             ext0 = ext ? win_ext[wy][0] : NULL, ext1 = ext ? win_ext[wy][1] : NULL;
         } else if (pass && box) {
+            memcpy(bld, line_bld, sizeof bld); /* the box's own blending: given the room's, the box showed faded */
             win0 = dispcnt & 0x2000, win1 = dispcnt & 0x4000, winobj = dispcnt & 0x8000;
             winin = reg16(e, 0x48), winout = reg16(e, 0x4A);
             w0h = reg16(e, 0x40), w1h = reg16(e, 0x42), w0v = reg16(e, 0x44), w1v = reg16(e, 0x46);
