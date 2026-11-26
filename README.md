@@ -231,8 +231,8 @@ The defaults below can be changed in System Settings > Controls.
 
 ## Status
 
-- Playable from the start: tested through the opening, the Millennial Fair, the first time warp, battles and
-  Game Over. Sound, music and cutscenes work.
+- Fully playable: a complete run from the opening to the ending has been played. Battles, sound, music and
+  cutscenes work. Some minor issues may remain.
 - Windows (clang) and Linux (gcc) are tested. macOS compiles but is untested.
 - Not implemented: Wi-Fi, the microphone, and the DS 3D engine (no 3D has been seen in the tested parts).
 
