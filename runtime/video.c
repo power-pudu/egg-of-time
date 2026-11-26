@@ -248,6 +248,7 @@ static HdCache hd_cache[2][2][2]; /* by engine, sprite, 8 bits per pixel: VRAM a
 static VideoHd hd_frame[2][VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
 static VideoHd hd_ui[VIDEO_LINE_MAX * SCREEN_H]; /* the UI layer's (ui_frame) */
 static VideoHd present_hd[2][SCREEN_W * SCREEN_H], present_hd_wide[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
+static int32_t present_origin[SCREEN_W * SCREEN_H]; /* a main screen put together from both: its pixels' origins (ss_compose) */
 static VideoHd present_hd_main[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], present_hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX],
     present_hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], present_hd_ui[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
 static uint16_t present_palette[RT_PALETTE_SIZE / 2];
@@ -2790,7 +2791,7 @@ void video_end_frame(void) {
     }
     int main_from;
     present_main_w = ss_compose(present_main, present[0], present[1], present_wide, w, h, present_shifted_on ? present_shifted : NULL,
-                                present_shifted_sprite, &main_from);
+                                present_shifted_sprite, &main_from, hd_on ? present_origin : NULL);
     present_main_h = main_from == SS_FROM_WIDE ? h : SCREEN_H;
     present_party_on = et->party && present_main_w == w; /* the field: main is the wide picture */
     for (int y = 0; present_party_on && y < h; y++) {
@@ -2832,6 +2833,18 @@ void video_end_frame(void) {
         const VideoHd *from_hd = main_from == SS_FROM_WIDE ? present_hd_wide : main_from == SS_FROM_TOP ? present_hd[0] : present_hd[1];
         for (int i = 0; i < present_main_w * present_main_h; i++) {
             present_hd_main[i] = from && present_main[i] == from[i] ? from_hd[i] : (VideoHd){0};
+        }
+        /* Put together from both (the one-screen menus): each pixel's sources where it was taken from, while it is
+         * still that colour. */
+        if (!from && present_main_w == SCREEN_W && present_main_h == SCREEN_H) {
+            enum { N = SCREEN_W * SCREEN_H };
+            for (int i = 0; i < N; i++) {
+                int32_t o = present_origin[i];
+                if (o < 0) continue;
+                const uint32_t *px = o < N ? present[0] : present[1];
+                const VideoHd *src = o < N ? present_hd[0] : present_hd[1];
+                if (present_main[i] == px[o % N]) present_hd_main[i] = src[o % N];
+            }
         }
         memcpy(present_palette, rt_palette, sizeof present_palette);
         hd_stamp++;

@@ -376,6 +376,39 @@ uint32_t ss_game_keys(uint32_t keys) {
 
 #define BLACK 0xFF000000u
 
+/* Where each main screen pixel was taken from (HD art and fonts follow it there, video.c): an index into the top
+ * screen, SCREEN_W * SCREEN_H plus one into the bottom screen, or -1. Kept by put and cp, the composing's copies;
+ * a pixel drawn some other way keeps a stale entry, which video.c drops as the colours no longer match. */
+static uint32_t *o_main;
+static int32_t *o_map;
+static const uint32_t *o_top, *o_bottom;
+
+static int32_t origin_of(const uint32_t *s) {
+    enum { N = SCREEN_W * SCREEN_H };
+    if (s >= o_top && s < o_top + N) return (int32_t)(s - o_top);
+    if (s >= o_bottom && s < o_bottom + N) return N + (int32_t)(s - o_bottom);
+    if (o_main && s >= o_main && s < o_main + N) return o_map[s - o_main];
+    return -1;
+}
+
+/* *d = *s, d's origin s's. */
+static void put(uint32_t *d, const uint32_t *s) {
+    if (o_map && d >= o_main && d < o_main + SCREEN_W * SCREEN_H) o_map[d - o_main] = origin_of(s);
+    *d = *s;
+}
+
+/* memcpy into the main screen, with the pixels' origins. */
+static void cp(uint32_t *d, const uint32_t *s, size_t bytes) {
+    size_t n = bytes / 4;
+    if (o_map && d >= o_main && d < o_main + SCREEN_W * SCREEN_H) {
+        size_t at = (size_t)(d - o_main), m = SDL_min(n, (size_t)SCREEN_W * SCREEN_H - at);
+        int32_t o = origin_of(s);
+        int from_main = s >= o_main && s < o_main + SCREEN_W * SCREEN_H;
+        for (size_t i = 0; i < m; i++) o_map[at + i] = o < 0 ? -1 : from_main ? o_map[s - o_main + i] : o + (int32_t)i;
+    }
+    memcpy(d, s, bytes);
+}
+
 /* Copies the non-black pixels of rows [y0, y1) of src into dst, moved by (dx, dy). */
 static void overlay(uint32_t *dst, const uint32_t *src, int y0, int y1, int dx, int dy) {
     for (int y = y0; y < y1; y++) {
@@ -383,8 +416,9 @@ static void overlay(uint32_t *dst, const uint32_t *src, int y0, int y1, int dx, 
         if (ty < 0 || ty >= SCREEN_H) continue;
         for (int x = 0; x < SCREEN_W; x++) {
             int tx = x + dx;
-            uint32_t p = src[y * SCREEN_W + x];
-            if (p != BLACK && tx >= 0 && tx < SCREEN_W) dst[ty * SCREEN_W + tx] = p;
+            const uint32_t *pp = &src[y * SCREEN_W + x];
+            uint32_t p = *pp;
+            if (p != BLACK && tx >= 0 && tx < SCREEN_W) put(&dst[ty * SCREEN_W + tx], pp);
         }
     }
 }
@@ -401,7 +435,7 @@ static void overlay(uint32_t *dst, const uint32_t *src, int y0, int y1, int dx, 
 #define SELECT_HINT_Y1 164 /* ...and above this row */
 
 static void compose_title(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, top, SCREEN_W * SCREEN_H * 4);
+    cp(main, top, SCREEN_W * SCREEN_H * 4);
     overlay(main, bottom, COPYRIGHT_Y0, COPYRIGHT_Y1, 0, COPYRIGHT_DY);
     Scene sc = current();
     /* States before the waiting one set the bottom screen up, "Touch to Start" included: no menu yet. */
@@ -440,7 +474,7 @@ static void compose_title(uint32_t *main, const uint32_t *top, const uint32_t *b
         int ty = y + MENU_Y1 - (last + 1);
         if (ty < 0) continue;
         for (int x = x0; x <= x1; x++) {
-            if (x + MENU_DX >= 0 && x + MENU_DX < SCREEN_W) main[ty * SCREEN_W + x + MENU_DX] = src[x];
+            if (x + MENU_DX >= 0 && x + MENU_DX < SCREEN_W) put(&main[ty * SCREEN_W + x + MENU_DX], &src[x]);
         }
     }
     /* SELECT opens System Settings from the menu: its button, bottom right, right above the copyright. */
@@ -462,7 +496,7 @@ static const Band SET_HEADER = {0, 0, 26}, SET_BATTLE = {1, 58, 27}, SET_MOVIES 
 #define SELECT_FILL_W 30
 
 static int put_band(uint32_t *main, int y, Band b, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(&main[y * SCREEN_W], &(b.screen ? bottom : top)[b.y0 * SCREEN_W], (size_t)b.h * SCREEN_W * 4);
+    cp(&main[y * SCREEN_W], &(b.screen ? bottom : top)[b.y0 * SCREEN_W], (size_t)b.h * SCREEN_W * 4);
     return y + b.h;
 }
 
@@ -506,7 +540,7 @@ static void blit(uint32_t *dst, int dx, int dy, const uint32_t *src, int sx, int
     for (int y = 0; y < h; y++) {
         if (dy + y < 0 || dy + y >= SCREEN_H) continue;
         for (int x = 0; x < w; x++) {
-            if (dx + x >= 0 && dx + x < SCREEN_W) dst[(dy + y) * SCREEN_W + dx + x] = src[(sy + y) * SCREEN_W + sx + x];
+            if (dx + x >= 0 && dx + x < SCREEN_W) put(&dst[(dy + y) * SCREEN_W + dx + x], &src[(sy + y) * SCREEN_W + sx + x]);
         }
     }
 }
@@ -584,8 +618,9 @@ static int backdrop_px(uint32_t p) {
 static void blit_text(uint32_t *dst, int dx, int dy, const uint32_t *src, int sx, int sy, int w, int h) {
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            uint32_t p = src[(sy + y) * SCREEN_W + sx + x];
-            if (text_px(p)) dst[(dy + y) * SCREEN_W + dx + x] = p;
+            const uint32_t *pp = &src[(sy + y) * SCREEN_W + sx + x];
+            uint32_t p = *pp;
+            if (text_px(p)) put(&dst[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -595,19 +630,19 @@ static void blit_text(uint32_t *dst, int dx, int dy, const uint32_t *src, int sx
  * line over HP and MP. */
 static void menu_card(uint32_t *main, const uint32_t *top, int py, int cx, int cy) {
     enum { SX = 34, IN = CARD_W - 8 }; /* the stone shown: panel columns SX.., under the text */
-    uint32_t stone[IN];
+    const uint32_t *stone[IN]; /* the top screen's pixel each column shows */
     for (int y = 4; y < CARD_H - 4; y++) {
         const uint32_t *row = &top[(py + y + 2) * SCREEN_W + SX];
         for (int x = 0; x < IN; x++) { /* a text pixel takes the stone 8 columns left (glyphs are narrower) */
-            if (!text_px(row[x])) stone[x] = row[x];
+            if (!text_px(row[x])) stone[x] = &row[x];
             else if (x >= 8) stone[x] = stone[x - 8];
             else { /* left of SX is the portrait: the nearest stone 8, 16... columns right, in the dither's phase */
                 int k = x + 8;
                 while (k + 8 < IN && text_px(row[k])) k += 8;
-                stone[x] = row[k];
+                stone[x] = &row[k];
             }
         }
-        memcpy(&main[(cy + y) * SCREEN_W + cx + 4], stone, sizeof stone);
+        for (int x = 0; x < IN; x++) put(&main[(cy + y) * SCREEN_W + cx + 4 + x], stone[x]);
     }
     blit(main, cx, cy, top, 0, py, CARD_W - 4, 4);                                  /* top edge */
     blit(main, cx + CARD_W - 4, cy, top, 123, py, 4, 4);
@@ -659,9 +694,9 @@ static void menu_bar(uint32_t *main, const uint32_t *top, int y) {
 }
 
 static void compose_menu(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);                    /* backdrop, second icon row, description */
-    for (int y = 83; y >= 36; y--) memcpy(&main[(y + 8) * SCREEN_W], &bottom[y * SCREEN_W], SCREEN_W * 4); /* first row */
-    memcpy(&main[36 * SCREEN_W], &bottom[28 * SCREEN_W], 8 * SCREEN_W * 4); /* backdrop where it was */
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4);                    /* backdrop, second icon row, description */
+    for (int y = 83; y >= 36; y--) cp(&main[(y + 8) * SCREEN_W], &bottom[y * SCREEN_W], SCREEN_W * 4); /* first row */
+    cp(&main[36 * SCREEN_W], &bottom[28 * SCREEN_W], 8 * SCREEN_W * 4); /* backdrop where it was */
     for (int i = 0; i < 3; i++) {
         if (panel_at(top, 60, 24 + 48 * i)) menu_card(main, top, 24 + 48 * i, i * CARD_W, 1);
     }
@@ -695,8 +730,9 @@ static void equip_slot(uint32_t *main, const uint32_t *bottom, int n, int dx, in
     blit(main, dx + 4, dy + 4, bottom, 8, sy + 4, 112, EQ_ROW - 4);
     for (int y = 0; y < 7; y++) {
         for (int x = 0; x < 64; x++) {
-            uint32_t p = bottom[(sy + y) * SCREEN_W + 4 + x];
-            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 80)) main[(dy + y) * SCREEN_W + dx + x] = p;
+            const uint32_t *pp = &bottom[(sy + y) * SCREEN_W + 4 + x];
+            uint32_t p = *pp;
+            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 80)) put(&main[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -715,9 +751,9 @@ static int equip_list_shown(const uint32_t *bottom) {
 
 static void compose_equip(Scene sc, uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     uint32_t page = rt_r32(sc.obj + MENU_PAGE);
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4); /* members bar, the grid's backdrop, description */
-    memcpy(&main[23 * SCREEN_W], &top[51 * SCREEN_W], 10 * SCREEN_W * 4); /* name, HP */
-    memcpy(&main[33 * SCREEN_W], &top[65 * SCREEN_W], 10 * SCREEN_W * 4); /* LV, MP */
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4); /* members bar, the grid's backdrop, description */
+    cp(&main[23 * SCREEN_W], &top[51 * SCREEN_W], 10 * SCREEN_W * 4); /* name, HP */
+    cp(&main[33 * SCREEN_W], &top[65 * SCREEN_W], 10 * SCREEN_W * 4); /* LV, MP */
     for (int y = 23; y < 43; y++) { /* the portrait's columns: the row's empty end (x 216-255) */
         blit(main, 0, y, main, 216, y, 40, 1);
         blit(main, 40, y, main, 216, y, 22, 1);
@@ -736,10 +772,10 @@ static void compose_equip(Scene sc, uint32_t *main, const uint32_t *top, const u
     blit(main, 2, 23, top, 11, 31 + eyes, 42, 20); /* a full-size strip of the portrait across the eyes */
     blit(main, 46, 25, top, 64, 31, 16, 16); /* the element icon */
     static const int lines[] = {89, 106, 122, 138, 154, 177};
-    for (int i = 0; i < 6; i++) memcpy(&main[(43 + 11 * i) * SCREEN_W], &top[(lines[i] - 2) * SCREEN_W], 11 * SCREEN_W * 4);
-    memcpy(&main[(EQ_GRID - 1) * SCREEN_W], &top[187 * SCREEN_W], SCREEN_W * 4); /* backdrop down to the grid */
+    for (int i = 0; i < 6; i++) cp(&main[(43 + 11 * i) * SCREEN_W], &top[(lines[i] - 2) * SCREEN_W], 11 * SCREEN_W * 4);
+    cp(&main[(EQ_GRID - 1) * SCREEN_W], &top[187 * SCREEN_W], SCREEN_W * 4); /* backdrop down to the grid */
     for (int y = EQ_GRID; y < EQ_GRID + 2 * EQ_ROW; y += 20) { /* the grid's backdrop: clean rows 148-167 */
-        memcpy(&main[y * SCREEN_W], &bottom[148 * SCREEN_W], (size_t)SDL_min(20, EQ_GRID + 2 * EQ_ROW - y) * SCREEN_W * 4);
+        cp(&main[y * SCREEN_W], &bottom[148 * SCREEN_W], (size_t)SDL_min(20, EQ_GRID + 2 * EQ_ROW - y) * SCREEN_W * 4);
     }
     int slot = (int)(rt_r32(page + EQUIP_SLOT) & 3);
     if (rt_r32(page + EQUIP_STATE) != EQUIP_PICKING && !equip_list_shown(bottom)) {
@@ -766,8 +802,9 @@ static void compose_equip(Scene sc, uint32_t *main, const uint32_t *top, const u
 static void blit_light_text(uint32_t *dst, int dx, int dy, const uint32_t *src, int sx, int sy, int w, int h) {
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            uint32_t p = src[(sy + y) * SCREEN_W + sx + x];
-            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 80)) dst[(dy + y) * SCREEN_W + dx + x] = p;
+            const uint32_t *pp = &src[(sy + y) * SCREEN_W + sx + x];
+            uint32_t p = *pp;
+            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 80)) put(&dst[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -835,15 +872,16 @@ static void heal_number(uint32_t *main, const uint32_t *top, const uint32_t *bot
     int mid = (y0 + y1) / 2, dx = right - x1, dy = line + 4 + (mid - (py + rest)) / 2 - mid; /* the motion halved */
     for (int y = SDL_max(y0 + dy, 0); y <= y1 + 1 + dy && y < SCREEN_H; y++) { /* the text under it, with its shadow */
         int hp = y >= line && y < line + 10, xa = hp ? SDL_min(left, x0 + dx) : x0 + dx, xb = hp ? SDL_max(right, x1 + dx) : x1 + dx;
-        for (int x = SDL_max(xa, 0); x <= xb + 1 && x < SCREEN_W; x++) main[y * SCREEN_W + x] = bottom[(23 + y % 17) * SCREEN_W + x];
+        for (int x = SDL_max(xa, 0); x <= xb + 1 && x < SCREEN_W; x++) put(&main[y * SCREEN_W + x], &bottom[(23 + y % 17) * SCREEN_W + x]);
     }
     for (int y = y0; y <= y1 + 1 && y < SCREEN_H; y++) {
         for (int x = x0; x <= x1 + 1; x++) {
-            uint32_t p = top[y * SCREEN_W + x];
+            const uint32_t *pp = &top[y * SCREEN_W + x];
+            uint32_t p = *pp;
             int shadow = p == BLACK && x > 0 && y > 0 && (heal_px(top[y * SCREEN_W + x - 1]) || heal_px(top[(y - 1) * SCREEN_W + x]) ||
                                         heal_px(top[(y - 1) * SCREEN_W + x - 1]));
             int ty = y + dy, tx = x + dx;
-            if ((heal_px(p) || shadow) && ty >= 0 && ty < SCREEN_H && tx >= 0 && tx < SCREEN_W) main[ty * SCREEN_W + tx] = p;
+            if ((heal_px(p) || shadow) && ty >= 0 && ty < SCREEN_H && tx >= 0 && tx < SCREEN_W) put(&main[ty * SCREEN_W + tx], pp);
         }
     }
 }
@@ -856,8 +894,8 @@ static void heal_number(uint32_t *main, const uint32_t *top, const uint32_t *bot
 static int compose_targets(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     watch_heals();
     if (backdrop_px(bottom[50 * SCREEN_W + 128]) || bottom[40 * SCREEN_W + 128] == BLACK) return 0;
-    for (int y = 0; y < 72; y += 17) memcpy(&main[y * SCREEN_W], &bottom[23 * SCREEN_W], (size_t)SDL_min(17, 72 - y) * SCREEN_W * 4);
-    memcpy(main, &bottom[38 * SCREEN_W], 26 * SCREEN_W * 4); /* the bar */
+    for (int y = 0; y < 72; y += 17) cp(&main[y * SCREEN_W], &bottom[23 * SCREEN_W], (size_t)SDL_min(17, 72 - y) * SCREEN_W * 4);
+    cp(main, &bottom[38 * SCREEN_W], 26 * SCREEN_W * 4); /* the bar */
     for (int i = 0; i < 3; i++) {
         int sy = 56 * i, y = 29 + 11 * i;
         blit_light_text(main, 8, y, top, 54, sy + 32, 44, 10);   /* name */
@@ -870,7 +908,7 @@ static int compose_targets(uint32_t *main, const uint32_t *top, const uint32_t *
 }
 
 static void compose_items(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4);
     compose_targets(main, top, bottom);
 }
 
@@ -912,7 +950,7 @@ static int techs_list_shown(const uint32_t *bottom) {
 }
 
 static void compose_techs(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4);
     if (!techs_list_shown(bottom) && compose_targets(main, top, bottom)) return;
     int rest = techs_tabs_still(bottom); /* below, the backdrop alone: a scrolling button's edge is neutral grey in some designs */
     for (int y = TECHS_BAND_Y + TECHS_TABS_H; y < TECHS_BAND_Y + TECHS_BAND_H; y++) rest &= design_backdrop_px(bottom[y * SCREEN_W + 8]);
@@ -920,7 +958,7 @@ static void compose_techs(uint32_t *main, const uint32_t *top, const uint32_t *b
         memcpy(techs_band, &bottom[TECHS_BAND_Y * SCREEN_W], sizeof techs_band);
         techs_band_kept = 1;
     } else if (techs_band_kept) {
-        memcpy(&main[TECHS_BAND_Y * SCREEN_W], techs_band, sizeof techs_band);
+        cp(&main[TECHS_BAND_Y * SCREEN_W], techs_band, sizeof techs_band);
     }
     blit_light_text(main, 30, 51, top, 150, 32, 84, 10);  /* HP n/ n */
     blit_light_text(main, 142, 51, top, 150, 46, 84, 10); /* MP n/ n */
@@ -946,8 +984,9 @@ static const uint8_t SAVE_PORTRAIT_X[7] = {40, 56, 72, 92, 108, 124, 140};
 static void save_text(uint32_t *main, int dx, int dy, const uint32_t *top, int sx, int sy, int w) {
     for (int y = 0; y < 9; y++) {
         for (int x = 0; x < w; x++) {
-            uint32_t p = top[(sy + y) * SCREEN_W + sx + x];
-            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 200)) main[(dy + y) * SCREEN_W + dx + x] = p;
+            const uint32_t *pp = &top[(sy + y) * SCREEN_W + sx + x];
+            uint32_t p = *pp;
+            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 200)) put(&main[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -966,7 +1005,7 @@ static int save_portrait(const uint32_t *bottom, int sy, int k) { /* whether the
 static int save_shown = -1; /* the row of the file last seen highlighted (the cursor pulses up to near white) */
 
 static void compose_save(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4);
     /* the second file's panel, or the confirmation's backdrop (bluish in some Window Designs, as the files' stone) */
     if (!panel_at(bottom, 60, SAVE_FILE_Y + SAVE_ROW)) {
         save_shown = -1;
@@ -1015,17 +1054,17 @@ static void compose_save(uint32_t *main, const uint32_t *top, const uint32_t *bo
 static void compose_party(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     const char *hint = party_techs ? "Y: Party" : "Y: Techs";
     if (party_techs) {
-        memcpy(main, top, SCREEN_W * SCREEN_H * 4);
+        cp(main, top, SCREEN_W * SCREEN_H * 4);
         ui_draw_text(main, hint, SCREEN_W - 8 - ui_text_width(hint), 8, 0xFFFFFFFFu);
         return;
     }
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4);
     for (int y = 0; y < PARTY_SPRITES_H; y++) {
         for (int x = 0; x < PARTY_SPRITES_W; x++) {
             const uint32_t *q = &top[(PARTY_SPRITES_Y + y) * SCREEN_W + PARTY_SPRITES_X + x];
             int sprite = !backdrop_px(*q) || !backdrop_px(q[-1]) || !backdrop_px(q[1]) || !backdrop_px(q[-SCREEN_W]) ||
                          !backdrop_px(q[SCREEN_W]);
-            if (sprite) main[(PARTY_SLOT_Y + y) * SCREEN_W + PARTY_SLOT_X + x] = *q;
+            if (sprite) put(&main[(PARTY_SLOT_Y + y) * SCREEN_W + PARTY_SLOT_X + x], q);
         }
     }
     ui_draw_text(main, hint, PARTY_HINT_RIGHT - ui_text_width(hint), PARTY_HINT_Y, 0xFFFFFFFFu);
@@ -1041,7 +1080,7 @@ static void compose_party(uint32_t *main, const uint32_t *top, const uint32_t *b
 #define OPTIONS_SELECT_Y 146 /* the SELECT button, as relabel_select places it (label rows 151-160) */
 
 static void compose_options(Scene sc, uint32_t *main, const uint32_t *bottom) {
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4);
     if (rt_r8(rt_r32(sc.obj + MENU_PAGE) + OPTIONS_TAB) != 0) return;
     blit(main, 0, OPTION_Y, bottom, 0, OPTION_Y + OPTION_H, SCREEN_W, OPTIONS_END - OPTION_Y - OPTION_H);
     for (int y = OPTIONS_END - OPTION_H; y < OPTIONS_END; y++)
@@ -1061,8 +1100,9 @@ static int bestiary_text(uint32_t p) {
 static void blit_bestiary_text(uint32_t *main, int dx, int dy, const uint32_t *bottom, int sx, int sy, int w, int h) {
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            uint32_t p = bottom[(sy + y) * SCREEN_W + sx + x];
-            if (bestiary_text(p)) main[(dy + y) * SCREEN_W + dx + x] = p;
+            const uint32_t *pp = &bottom[(sy + y) * SCREEN_W + sx + x];
+            uint32_t p = *pp;
+            if (bestiary_text(p)) put(&main[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -1084,13 +1124,13 @@ static void blit_bestiary_text(uint32_t *main, int dx, int dy, const uint32_t *b
 #define ARENA_BUTTON_H 24
 
 static void compose_arena(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, top, 24 * SCREEN_W * 4);
-    memcpy(&main[24 * SCREEN_W], &top[ARENA_INFO_Y * SCREEN_W], (ARENA_STATS_AT - 24) * SCREEN_W * 4);
+    cp(main, top, 24 * SCREEN_W * 4);
+    cp(&main[24 * SCREEN_W], &top[ARENA_INFO_Y * SCREEN_W], (ARENA_STATS_AT - 24) * SCREEN_W * 4);
     blit(main, 0, 24, top, 0, ARENA_INFO_Y + ARENA_SPRITE_DY, ARENA_SPRITE_W, ARENA_STATS_AT - 24);
-    memcpy(&main[ARENA_STATS_AT * SCREEN_W], &top[ARENA_STATS_Y * SCREEN_W],
+    cp(&main[ARENA_STATS_AT * SCREEN_W], &top[ARENA_STATS_Y * SCREEN_W],
            (ARENA_BUTTONS_Y - ARENA_STATS_AT) * SCREEN_W * 4);
-    memcpy(&main[ARENA_BUTTONS_Y * SCREEN_W], &top[168 * SCREEN_W], ARENA_BUTTON_H * SCREEN_W * 4); /* backdrop */
-    memcpy(&main[168 * SCREEN_W], &bottom[168 * SCREEN_W], (SCREEN_H - 168) * SCREEN_W * 4);
+    cp(&main[ARENA_BUTTONS_Y * SCREEN_W], &top[168 * SCREEN_W], ARENA_BUTTON_H * SCREEN_W * 4); /* backdrop */
+    cp(&main[168 * SCREEN_W], &bottom[168 * SCREEN_W], (SCREEN_H - 168) * SCREEN_W * 4);
     static const int sy[3] = {0, 13, 34}, h[3] = {6, 12, 6}; /* top frame, the label's rows, bottom frame */
     int mid = ARENA_BUTTON_W - 12, mid_x = 56 + (144 - mid) / 2;
     for (int n = 0; n < 3; n++) {
@@ -1118,28 +1158,28 @@ static void compose_arena(uint32_t *main, const uint32_t *top, const uint32_t *b
 /* The top screen's stats (and with item, the item chosen) as lines of text TRAIN_LINE_H apart from row y. */
 static void train_lines(uint32_t *main, const uint32_t *top, int y, int item) {
     for (int n = 0; n < 4 + item; n++)
-        memcpy(&main[(y + TRAIN_LINE_H * n) * SCREEN_W], &top[(TRAIN_LINE_Y - 1 + 16 * n) * SCREEN_W],
+        cp(&main[(y + TRAIN_LINE_H * n) * SCREEN_W], &top[(TRAIN_LINE_Y - 1 + 16 * n) * SCREEN_W],
                TRAIN_LINE_H * SCREEN_W * 4);
 }
 
 static void compose_train(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, top, SCREEN_W * SCREEN_H * 4);
-    memcpy(&main[TRAIN_PROMPT_AT * SCREEN_W], &bottom[TRAIN_PROMPT_Y * SCREEN_W], TRAIN_PROMPT_H * SCREEN_W * 4);
+    cp(main, top, SCREEN_W * SCREEN_H * 4);
+    cp(&main[TRAIN_PROMPT_AT * SCREEN_W], &bottom[TRAIN_PROMPT_Y * SCREEN_W], TRAIN_PROMPT_H * SCREEN_W * 4);
 }
 
 static void compose_train_items(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4);
     for (int y = 24; y < 128; y += 12) /* the backdrop under the tab bar, over the rows' old places */
-        memcpy(&main[y * SCREEN_W], &bottom[24 * SCREEN_W], (size_t)SDL_min(12, 128 - y) * SCREEN_W * 4);
+        cp(&main[y * SCREEN_W], &bottom[24 * SCREEN_W], (size_t)SDL_min(12, 128 - y) * SCREEN_W * 4);
     for (int n = 0; n < 4; n++)
-        memcpy(&main[(26 + 25 * n) * SCREEN_W], &bottom[(39 + 28 * n) * SCREEN_W], 24 * SCREEN_W * 4);
+        cp(&main[(26 + 25 * n) * SCREEN_W], &bottom[(39 + 28 * n) * SCREEN_W], 24 * SCREEN_W * 4);
     train_lines(main, top, 128, 0);
 }
 
 static void compose_train_era(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4);
     for (int n = 0; n < 5; n++)
-        memcpy(&main[(1 + 24 * n) * SCREEN_W], &bottom[(8 + 32 * n) * SCREEN_W], 24 * SCREEN_W * 4);
+        cp(&main[(1 + 24 * n) * SCREEN_W], &bottom[(8 + 32 * n) * SCREEN_W], 24 * SCREEN_W * 4);
     train_lines(main, top, 122, 1);
 }
 
@@ -1149,10 +1189,10 @@ static void compose_train_era(uint32_t *main, const uint32_t *top, const uint32_
 #define ARENA_SHOP_TOP_H 102
 
 static void compose_arena_shop(Scene sc, uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+    cp(main, bottom, SCREEN_W * SCREEN_H * 4);
     if (!rt_r8(sc.obj + ARENA_SHOP_BUY)) return; /* a category's items */
-    memcpy(main, top, ARENA_SHOP_TOP_H * SCREEN_W * 4);
-    memcpy(&main[ARENA_SHOP_TOP_H * SCREEN_W], bottom, (168 - ARENA_SHOP_TOP_H) * SCREEN_W * 4);
+    cp(main, top, ARENA_SHOP_TOP_H * SCREEN_W * 4);
+    cp(&main[ARENA_SHOP_TOP_H * SCREEN_W], bottom, (168 - ARENA_SHOP_TOP_H) * SCREEN_W * 4);
 }
 
 /* The Arena's battle (see the top). Top screen: the Pit rows 0-127 (the monsters on their pads within rows 28-103),
@@ -1185,10 +1225,10 @@ static int has_text(const uint32_t *px, int x0, int x1, int y0, int y1) {
 }
 
 static void compose_arena_battle(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, bottom, AB_HEAD_H * SCREEN_W * 4);
-    memcpy(&main[AB_HEAD_H * SCREEN_W], &top[AB_PIT_Y * SCREEN_W], AB_PIT_H * SCREEN_W * 4);
+    cp(main, bottom, AB_HEAD_H * SCREEN_W * 4);
+    cp(&main[AB_HEAD_H * SCREEN_W], &top[AB_PIT_Y * SCREEN_W], AB_PIT_H * SCREEN_W * 4);
     for (int y = AB_ITEMS_AT; y < AB_TEXT_AT; y++) /* the backdrop under the items */
-        memcpy(&main[y * SCREEN_W], &bottom[(48 + (y - AB_ITEMS_AT) % 8) * SCREEN_W], SCREEN_W * 4);
+        cp(&main[y * SCREEN_W], &bottom[(48 + (y - AB_ITEMS_AT) % 8) * SCREEN_W], SCREEN_W * 4);
     static const int sy[3] = {0, 6, 22}, h[3] = {2, 10, 2}; /* top frame, the label's rows, bottom frame */
     for (int c = 0; c < 2; c++) {
         for (int r = 0; r < 4; r++) {
@@ -1204,14 +1244,14 @@ static void compose_arena_battle(uint32_t *main, const uint32_t *top, const uint
     SDL_SetAtomicInt(&arena_choosing, help);
     int at = AB_TEXT_AT;
     if (box || !help) { /* the text box, its frame and lines */
-        memcpy(&main[at * SCREEN_W], &top[128 * SCREEN_W], 6 * SCREEN_W * 4);
-        memcpy(&main[(at + 6) * SCREEN_W], &top[137 * SCREEN_W], 29 * SCREEN_W * 4);
-        memcpy(&main[(at + 35) * SCREEN_W], &top[186 * SCREEN_W], 6 * SCREEN_W * 4);
+        cp(&main[at * SCREEN_W], &top[128 * SCREEN_W], 6 * SCREEN_W * 4);
+        cp(&main[(at + 6) * SCREEN_W], &top[137 * SCREEN_W], 29 * SCREEN_W * 4);
+        cp(&main[(at + 35) * SCREEN_W], &top[186 * SCREEN_W], 6 * SCREEN_W * 4);
         return;
     }
     for (int y = at; y < 168; y++) /* the backdrop over the help bar */
-        memcpy(&main[y * SCREEN_W], &bottom[(48 + (y - at) % 8) * SCREEN_W], SCREEN_W * 4);
-    memcpy(&main[168 * SCREEN_W], &bottom[168 * SCREEN_W], (SCREEN_H - 168) * SCREEN_W * 4);
+        cp(&main[y * SCREEN_W], &bottom[(48 + (y - at) % 8) * SCREEN_W], SCREEN_W * 4);
+    cp(&main[168 * SCREEN_W], &bottom[168 * SCREEN_W], (SCREEN_H - 168) * SCREEN_W * 4);
     if (arena_item < 0) return;
     /* The count (its text and shadow, right-aligned at column 107 of the button) at the bar's right end, on the
      * description's line, where the description does not reach. */
@@ -1219,8 +1259,9 @@ static void compose_arena_battle(uint32_t *main, const uint32_t *top, const uint
     if (has_text(bottom, 96 + to - 8, 248, 174, 186)) return;
     for (int y = 9; y <= 16; y++) {
         for (int x = 96; x <= 107; x++) {
-            uint32_t p = bottom[(by + y) * SCREEN_W + bx + x];
-            if (p == AB_WHITE || p == BLACK) main[(167 + y) * SCREEN_W + x + to] = p;
+            const uint32_t *pp = &bottom[(by + y) * SCREEN_W + bx + x];
+            uint32_t p = *pp;
+            if (p == AB_WHITE || p == BLACK) put(&main[(167 + y) * SCREEN_W + x + to], pp);
         }
     }
 }
@@ -1261,22 +1302,22 @@ static void compose_credits(uint32_t *main, const uint32_t *top, const uint32_t 
         }
     }
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-        if (credits_px(bottom[i])) main[i] = bottom[i];
+        if (credits_px(bottom[i])) put(&main[i], &bottom[i]);
     }
 }
 
 static void compose_arena_result(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, &top[RESULT_SPOT_Y * SCREEN_W], RESULT_SPOT_H * SCREEN_W * 4);
-    for (int y = RESULT_SPOT_H; y < SCREEN_H; y++) memcpy(&main[y * SCREEN_W], &bottom[(y % 20) * SCREEN_W], SCREEN_W * 4);
-    memcpy(&main[RESULT_BOX_AT * SCREEN_W], &bottom[20 * SCREEN_W], 80 * SCREEN_W * 4);
+    cp(main, &top[RESULT_SPOT_Y * SCREEN_W], RESULT_SPOT_H * SCREEN_W * 4);
+    for (int y = RESULT_SPOT_H; y < SCREEN_H; y++) cp(&main[y * SCREEN_W], &bottom[(y % 20) * SCREEN_W], SCREEN_W * 4);
+    cp(&main[RESULT_BOX_AT * SCREEN_W], &bottom[20 * SCREEN_W], 80 * SCREEN_W * 4);
     static const int sy[3] = {112, 122, 147}, h[3] = {5, 20, 5}; /* top frame, label and icon, bottom frame */
     for (int k = 0, y = RESULT_BUTTON_AT; k < 3; y += h[k++])
-        memcpy(&main[y * SCREEN_W], &bottom[sy[k] * SCREEN_W], (size_t)h[k] * SCREEN_W * 4);
+        cp(&main[y * SCREEN_W], &bottom[sy[k] * SCREEN_W], (size_t)h[k] * SCREEN_W * 4);
 }
 
 static void compose_bestiary(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, top, SCREEN_W * SCREEN_H * 4);
-    memcpy(main, bottom, 24 * SCREEN_W * 4); /* the tabs over the title */
+    cp(main, top, SCREEN_W * SCREEN_H * 4);
+    cp(main, bottom, 24 * SCREEN_W * 4); /* the tabs over the title */
     for (int y = 134; y < SCREEN_H; y++) blit(main, 0, y, top, 0, 24 + (y - 134) % 10, 120, 1); /* backdrop under the monster */
     for (int i = 0; i < 4; i++) {
         int sy = 49 + 28 * i, y = 138 + 11 * i;
@@ -1321,14 +1362,15 @@ static int shop_fg(uint32_t p) {
 static void blit_shop_fg(uint32_t *main, int dx, int dy, const uint32_t *top, int sx, int sy, int w, int h) {
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            uint32_t p = top[(sy + y) * SCREEN_W + sx + x];
-            if (shop_fg(p)) main[(dy + y) * SCREEN_W + dx + x] = p;
+            const uint32_t *pp = &top[(sy + y) * SCREEN_W + sx + x];
+            uint32_t p = *pp;
+            if (shop_fg(p)) put(&main[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
 
 static void blit_shop_panel_row(uint32_t *main, int dy, const uint32_t *bottom, int sy) {
-    memcpy(&main[dy * SCREEN_W + SHOP_PANEL_X], &bottom[sy * SCREEN_W + SHOP_PANEL_X], SHOP_PANEL_W * 4);
+    cp(&main[dy * SCREEN_W + SHOP_PANEL_X], &bottom[sy * SCREEN_W + SHOP_PANEL_X], SHOP_PANEL_W * 4);
 }
 
 static void compose_shop_panel(uint32_t *main, const uint32_t *bottom) {
@@ -1370,8 +1412,9 @@ static void compose_shop_panel(uint32_t *main, const uint32_t *bottom) {
         }
         for (int y = 0; y < TEXT_H; y++) {
             for (int x = at; x < end; x++) {
-                uint32_t p = bottom[(TEXT_Y + y) * SCREEN_W + x];
-                if (p == BLACK || p == 0xFFFFFFFFu) main[(box + 4 + line * TEXT_H + y) * SCREEN_W + BOX_X + x - at] = p;
+                const uint32_t *pp = &bottom[(TEXT_Y + y) * SCREEN_W + x];
+                uint32_t p = *pp;
+                if (p == BLACK || p == 0xFFFFFFFFu) put(&main[(box + 4 + line * TEXT_H + y) * SCREEN_W + BOX_X + x - at], pp);
             }
         }
         at = end;
@@ -1393,10 +1436,10 @@ static int shop_changed(const uint32_t *top, int line) {
 }
 
 static void compose_shop(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
-    memcpy(main, bottom, 24 * SCREEN_W * 4);
-    memcpy(&main[24 * SCREEN_W], &bottom[(24 + SHOP_SHIFT) * SCREEN_W], (SHOP_GRID_Y - 24) * SCREEN_W * 4);
+    cp(main, bottom, 24 * SCREEN_W * 4);
+    cp(&main[24 * SCREEN_W], &bottom[(24 + SHOP_SHIFT) * SCREEN_W], (SHOP_GRID_Y - 24) * SCREEN_W * 4);
     for (int y = SHOP_GRID_Y; y < SCREEN_H; y += SHOP_SHIFT) /* the backdrop the shift left out */
-        memcpy(&main[y * SCREEN_W], &bottom[24 * SCREEN_W], (size_t)SDL_min(SHOP_SHIFT, SCREEN_H - y) * SCREEN_W * 4);
+        cp(&main[y * SCREEN_W], &bottom[24 * SCREEN_W], (size_t)SDL_min(SHOP_SHIFT, SCREEN_H - y) * SCREEN_W * 4);
     compose_shop_panel(main, bottom);
     int line = shop_changed(top, 21) || !shop_changed(top, 31) ? 21 : 31;
     for (int m = 0, n = 0; m < 8; m++) { /* the party (three at most), then the others */
@@ -1461,7 +1504,7 @@ static uint32_t map_pixel(const uint32_t *p, int edge) {
 
 static void compose_ages(uint32_t *main, const uint32_t *top, const uint32_t *shifted, const uint8_t *sprite,
                          int wide_w) {
-    memcpy(main, shifted, (size_t)wide_w * SCREEN_H * 4);
+    cp(main, shifted, (size_t)wide_w * SCREEN_H * 4);
     int mx = (wide_w - SCREEN_W) / 2 + AGES_RING_X - AGES_SHIFT + AGES_RING_W + AGES_GAP, my = AGES_MAP_TO_Y;
     for (int y = 0; y < AGES_MAP_H; y++) {
         for (int x = 0; x < AGES_MAP_W; x++) {
@@ -1504,7 +1547,7 @@ typedef struct ClearPart { const uint32_t *src; int y0, y1, gap; } ClearPart;
 
 static void compose_clear(uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
     if (blank(bottom)) {
-        memcpy(main, top, SCREEN_W * SCREEN_H * 4);
+        cp(main, top, SCREEN_W * SCREEN_H * 4);
         return;
     }
     uint8_t rows[CLEAR_TEXT_Y1 + 1] = {0};
@@ -1540,7 +1583,7 @@ static void compose_clear(uint32_t *main, const uint32_t *top, const uint32_t *b
         int rows_n = parts[k].y1 - parts[k].y0 + 1;
         if (y + rows_n > SCREEN_H) rows_n = SCREEN_H - y;
         if (rows_n <= 0) break;
-        memcpy(&main[y * SCREEN_W], &parts[k].src[parts[k].y0 * SCREEN_W], (size_t)rows_n * SCREEN_W * 4);
+        cp(&main[y * SCREEN_W], &parts[k].src[parts[k].y0 * SCREEN_W], (size_t)rows_n * SCREEN_W * 4);
         y += rows_n;
     }
 }
@@ -1591,7 +1634,9 @@ static void pause_hint(uint32_t *main, int w, int h) {
 }
 
 int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint32_t *wide, int wide_w, int wide_h,
-               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from) {
+               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from, int32_t *origin) {
+    o_main = main, o_map = origin, o_top = top, o_bottom = bottom;
+    if (origin) for (int i = 0; i < SCREEN_W * SCREEN_H; i++) origin[i] = -1;
     Scene sc = current();
     *from = SS_FROM_NONE;
     read_design_backdrop();
@@ -1611,13 +1656,13 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
     SDL_SetAtomicInt(&minimap_rows, map_ok ? video_box_top() : 0);
     if (sc.kind == SCENE_FIELD || sc.kind == SCENE_WARP || sc.kind == SCENE_OVERWORLD || sc.kind == SCENE_RACE ||
         sc.kind == SCENE_EPOCH_RIDE) { /* widescreen: the top screen with its margins (also with single screen mode off: the second window) */
-        memcpy(main, wide, (size_t)wide_w * wide_h * 4);
+        cp(main, wide, (size_t)wide_w * wide_h * 4);
         *from = SS_FROM_WIDE;
         if (paused) pause_hint(main, wide_w, wide_h);
         return wide_w;
     }
     if (!ss_enabled()) {
-        memcpy(main, top, SCREEN_W * SCREEN_H * 4);
+        cp(main, top, SCREEN_W * SCREEN_H * 4);
         *from = SS_FROM_TOP;
         if (paused) pause_hint(main, SCREEN_W, SCREEN_H);
         return SCREEN_W;
@@ -1625,14 +1670,14 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
     switch (sc.kind) {
     case SCENE_LOGOS:
         if (blank(top)) {
-            memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+            cp(main, bottom, SCREEN_W * SCREEN_H * 4);
             *from = SS_FROM_BOTTOM;
             break;
         }
         /* Square Enix (top rows 85-107) above Mobiclip (bottom rows 50-141), centred together. */
         for (int y = 0; y < SCREEN_H; y++) {
             const uint32_t *src = y < 60 ? &top[(y + 57) * SCREEN_W] : &bottom[(y - 21) * SCREEN_W];
-            memcpy(&main[y * SCREEN_W], src, SCREEN_W * 4);
+            cp(&main[y * SCREEN_W], src, SCREEN_W * 4);
         }
         break;
     case SCENE_TITLE:
@@ -1688,7 +1733,7 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
             compose_ages(main, top, bottom_shifted, shifted_sprite, wide_w);
             return wide_w;
         }
-        memcpy(main, bottom, SCREEN_W * SCREEN_H * 4); /* the first frame, drawn before the scene was known */
+        cp(main, bottom, SCREEN_W * SCREEN_H * 4); /* the first frame, drawn before the scene was known */
         *from = SS_FROM_BOTTOM;
         break;
     case SCENE_ARENA_BATTLE:
@@ -1704,17 +1749,17 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
         compose_clear(main, top, bottom);
         break;
     case SCENE_ARENA_PREP:
-        memcpy(main, bottom, SCREEN_W * SCREEN_H * 4);
+        cp(main, bottom, SCREEN_W * SCREEN_H * 4);
         *from = SS_FROM_BOTTOM;
         break;
     case SCENE_NAMING: {
         int entering = rt_r32(sc.obj + NAMING_STATE) == NAMING_ENTERING;
-        memcpy(main, entering ? bottom : top, SCREEN_W * SCREEN_H * 4);
+        cp(main, entering ? bottom : top, SCREEN_W * SCREEN_H * 4);
         *from = entering ? SS_FROM_BOTTOM : SS_FROM_TOP;
         break;
     }
     default:
-        memcpy(main, top, SCREEN_W * SCREEN_H * 4);
+        cp(main, top, SCREEN_W * SCREEN_H * 4);
         *from = SS_FROM_TOP;
         break;
     }
