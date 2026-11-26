@@ -43,7 +43,8 @@ int ss_minimap_rows(void);
  * runtime draws over it aside), SS_FROM_NONE when it is put together from both. It also draws on the bottom screen:
  * SELECT's label in Game Settings and the field menu's Settings page. origin (SCREEN_W x SCREEN_H, or NULL): where each
  * pixel of a main screen put together from both was taken from: an index into top, SCREEN_W * SCREEN_H plus one into
- * bottom, or -1 (HD sources follow it). */
+ * bottom, or -1 (HD sources follow it); under (the same size): for a letter's pixel moved alone, the colour it was put
+ * over (0: none), shown by its HD art's clear texels. */
 enum { SS_FROM_NONE, SS_FROM_TOP, SS_FROM_BOTTOM, SS_FROM_WIDE };
 int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint32_t *wide, int wide_w, int wide_h,
-               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from, int32_t *origin);
+               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from, int32_t *origin, uint32_t *under);

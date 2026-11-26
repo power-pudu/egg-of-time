@@ -381,6 +381,7 @@ uint32_t ss_game_keys(uint32_t keys) {
  * a pixel drawn some other way keeps a stale entry, which video.c drops as the colours no longer match. */
 static uint32_t *o_main;
 static int32_t *o_map;
+static uint32_t *o_under; /* by main pixel: the colour a letter moved there was put over (0: none) */
 static const uint32_t *o_top, *o_bottom;
 
 static int32_t origin_of(const uint32_t *s) {
@@ -393,8 +394,15 @@ static int32_t origin_of(const uint32_t *s) {
 
 /* *d = *s, d's origin s's. */
 static void put(uint32_t *d, const uint32_t *s) {
-    if (o_map && d >= o_main && d < o_main + SCREEN_W * SCREEN_H) o_map[d - o_main] = origin_of(s);
+    if (o_map && d >= o_main && d < o_main + SCREEN_W * SCREEN_H) o_map[d - o_main] = origin_of(s), o_under[d - o_main] = 0;
     *d = *s;
+}
+
+/* A letter's pixel (text alone, its background left as it is): *d = *s, and the colour it covers is the one its HD
+ * art's clear texels show (the background where it came from was another: each letter showed a box). */
+static void put_text(uint32_t *d, const uint32_t *s) {
+    if (o_map && d >= o_main && d < o_main + SCREEN_W * SCREEN_H) o_under[d - o_main] = *d | 0xFF000000u;
+    put(d, s);
 }
 
 /* memcpy into the main screen, with the pixels' origins. */
@@ -404,6 +412,7 @@ static void cp(uint32_t *d, const uint32_t *s, size_t bytes) {
         size_t at = (size_t)(d - o_main), m = SDL_min(n, (size_t)SCREEN_W * SCREEN_H - at);
         int32_t o = origin_of(s);
         int from_main = s >= o_main && s < o_main + SCREEN_W * SCREEN_H;
+        memset(&o_under[at], 0, m * 4);
         for (size_t i = 0; i < m; i++) o_map[at + i] = o < 0 ? -1 : from_main ? o_map[s - o_main + i] : o + (int32_t)i;
     }
     memcpy(d, s, bytes);
@@ -620,7 +629,7 @@ static void blit_text(uint32_t *dst, int dx, int dy, const uint32_t *src, int sx
         for (int x = 0; x < w; x++) {
             const uint32_t *pp = &src[(sy + y) * SCREEN_W + sx + x];
             uint32_t p = *pp;
-            if (text_px(p)) put(&dst[(dy + y) * SCREEN_W + dx + x], pp);
+            if (text_px(p)) put_text(&dst[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -732,7 +741,7 @@ static void equip_slot(uint32_t *main, const uint32_t *bottom, int n, int dx, in
         for (int x = 0; x < 64; x++) {
             const uint32_t *pp = &bottom[(sy + y) * SCREEN_W + 4 + x];
             uint32_t p = *pp;
-            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 80)) put(&main[(dy + y) * SCREEN_W + dx + x], pp);
+            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 80)) put_text(&main[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -804,7 +813,7 @@ static void blit_light_text(uint32_t *dst, int dx, int dy, const uint32_t *src, 
         for (int x = 0; x < w; x++) {
             const uint32_t *pp = &src[(sy + y) * SCREEN_W + sx + x];
             uint32_t p = *pp;
-            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 80)) put(&dst[(dy + y) * SCREEN_W + dx + x], pp);
+            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 80)) put_text(&dst[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -881,7 +890,7 @@ static void heal_number(uint32_t *main, const uint32_t *top, const uint32_t *bot
             int shadow = p == BLACK && x > 0 && y > 0 && (heal_px(top[y * SCREEN_W + x - 1]) || heal_px(top[(y - 1) * SCREEN_W + x]) ||
                                         heal_px(top[(y - 1) * SCREEN_W + x - 1]));
             int ty = y + dy, tx = x + dx;
-            if ((heal_px(p) || shadow) && ty >= 0 && ty < SCREEN_H && tx >= 0 && tx < SCREEN_W) put(&main[ty * SCREEN_W + tx], pp);
+            if ((heal_px(p) || shadow) && ty >= 0 && ty < SCREEN_H && tx >= 0 && tx < SCREEN_W) put_text(&main[ty * SCREEN_W + tx], pp);
         }
     }
 }
@@ -986,7 +995,7 @@ static void save_text(uint32_t *main, int dx, int dy, const uint32_t *top, int s
         for (int x = 0; x < w; x++) {
             const uint32_t *pp = &top[(sy + y) * SCREEN_W + sx + x];
             uint32_t p = *pp;
-            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 200)) put(&main[(dy + y) * SCREEN_W + dx + x], pp);
+            if (text_px(p) && ((p & 0xFF) == 0 || (p & 0xFF) >= 200)) put_text(&main[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -1064,7 +1073,7 @@ static void compose_party(uint32_t *main, const uint32_t *top, const uint32_t *b
             const uint32_t *q = &top[(PARTY_SPRITES_Y + y) * SCREEN_W + PARTY_SPRITES_X + x];
             int sprite = !backdrop_px(*q) || !backdrop_px(q[-1]) || !backdrop_px(q[1]) || !backdrop_px(q[-SCREEN_W]) ||
                          !backdrop_px(q[SCREEN_W]);
-            if (sprite) put(&main[(PARTY_SLOT_Y + y) * SCREEN_W + PARTY_SLOT_X + x], q);
+            if (sprite) put_text(&main[(PARTY_SLOT_Y + y) * SCREEN_W + PARTY_SLOT_X + x], q);
         }
     }
     ui_draw_text(main, hint, PARTY_HINT_RIGHT - ui_text_width(hint), PARTY_HINT_Y, 0xFFFFFFFFu);
@@ -1102,7 +1111,7 @@ static void blit_bestiary_text(uint32_t *main, int dx, int dy, const uint32_t *b
         for (int x = 0; x < w; x++) {
             const uint32_t *pp = &bottom[(sy + y) * SCREEN_W + sx + x];
             uint32_t p = *pp;
-            if (bestiary_text(p)) put(&main[(dy + y) * SCREEN_W + dx + x], pp);
+            if (bestiary_text(p)) put_text(&main[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -1261,7 +1270,7 @@ static void compose_arena_battle(uint32_t *main, const uint32_t *top, const uint
         for (int x = 96; x <= 107; x++) {
             const uint32_t *pp = &bottom[(by + y) * SCREEN_W + bx + x];
             uint32_t p = *pp;
-            if (p == AB_WHITE || p == BLACK) put(&main[(167 + y) * SCREEN_W + x + to], pp);
+            if (p == AB_WHITE || p == BLACK) put_text(&main[(167 + y) * SCREEN_W + x + to], pp);
         }
     }
 }
@@ -1364,7 +1373,7 @@ static void blit_shop_fg(uint32_t *main, int dx, int dy, const uint32_t *top, in
         for (int x = 0; x < w; x++) {
             const uint32_t *pp = &top[(sy + y) * SCREEN_W + sx + x];
             uint32_t p = *pp;
-            if (shop_fg(p)) put(&main[(dy + y) * SCREEN_W + dx + x], pp);
+            if (shop_fg(p)) put_text(&main[(dy + y) * SCREEN_W + dx + x], pp);
         }
     }
 }
@@ -1414,7 +1423,7 @@ static void compose_shop_panel(uint32_t *main, const uint32_t *bottom) {
             for (int x = at; x < end; x++) {
                 const uint32_t *pp = &bottom[(TEXT_Y + y) * SCREEN_W + x];
                 uint32_t p = *pp;
-                if (p == BLACK || p == 0xFFFFFFFFu) put(&main[(box + 4 + line * TEXT_H + y) * SCREEN_W + BOX_X + x - at], pp);
+                if (p == BLACK || p == 0xFFFFFFFFu) put_text(&main[(box + 4 + line * TEXT_H + y) * SCREEN_W + BOX_X + x - at], pp);
             }
         }
         at = end;
@@ -1634,9 +1643,9 @@ static void pause_hint(uint32_t *main, int w, int h) {
 }
 
 int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint32_t *wide, int wide_w, int wide_h,
-               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from, int32_t *origin) {
-    o_main = main, o_map = origin, o_top = top, o_bottom = bottom;
-    if (origin) for (int i = 0; i < SCREEN_W * SCREEN_H; i++) origin[i] = -1;
+               const uint32_t *bottom_shifted, const uint8_t *shifted_sprite, int *from, int32_t *origin, uint32_t *under) {
+    o_main = main, o_map = origin, o_under = under, o_top = top, o_bottom = bottom;
+    if (origin) for (int i = 0; i < SCREEN_W * SCREEN_H; i++) origin[i] = -1, under[i] = 0;
     Scene sc = current();
     *from = SS_FROM_NONE;
     read_design_backdrop();

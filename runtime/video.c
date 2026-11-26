@@ -248,6 +248,7 @@ static HdCache hd_cache[2][2][2]; /* by engine, sprite, 8 bits per pixel: VRAM a
 static VideoHd hd_frame[2][VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
 static VideoHd hd_ui[VIDEO_LINE_MAX * SCREEN_H]; /* the UI layer's (ui_frame) */
 static VideoHd present_hd[2][SCREEN_W * SCREEN_H], present_hd_wide[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
+static uint32_t present_under[SCREEN_W * SCREEN_H]; /* and the colours its moved letters were put over */
 static int32_t present_origin[SCREEN_W * SCREEN_H]; /* a main screen put together from both: its pixels' origins (ss_compose) */
 static VideoHd present_hd_main[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], present_hd_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX],
     present_hd_still[VIDEO_LINE_MAX * VIDEO_ROWS_MAX], present_hd_ui[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
@@ -2791,7 +2792,7 @@ void video_end_frame(void) {
     }
     int main_from;
     present_main_w = ss_compose(present_main, present[0], present[1], present_wide, w, h, present_shifted_on ? present_shifted : NULL,
-                                present_shifted_sprite, &main_from, hd_on ? present_origin : NULL);
+                                present_shifted_sprite, &main_from, hd_on ? present_origin : NULL, present_under);
     present_main_h = main_from == SS_FROM_WIDE ? h : SCREEN_H;
     present_party_on = et->party && present_main_w == w; /* the field: main is the wide picture */
     for (int y = 0; present_party_on && y < h; y++) {
@@ -2843,7 +2844,10 @@ void video_end_frame(void) {
                 if (o < 0) continue;
                 const uint32_t *px = o < N ? present[0] : present[1];
                 const VideoHd *src = o < N ? present_hd[0] : present_hd[1];
-                if (present_main[i] == px[o % N]) present_hd_main[i] = src[o % N];
+                if (present_main[i] != px[o % N]) continue;
+                present_hd_main[i] = src[o % N];
+                uint32_t u = present_under[i]; /* ABGR8888 to BGR555 */
+                if (u) present_hd_main[i].below = (uint16_t)((u >> 3 & 31) | (u >> 11 & 31) << 5 | (u >> 19 & 31) << 10);
             }
         }
         memcpy(present_palette, rt_palette, sizeof present_palette);

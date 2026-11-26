@@ -669,8 +669,10 @@ static inline uint32_t hd_mix(uint32_t c, int weight, uint32_t add, const uint8_
 
 /* Rows y0..y1-1, columns x0..x1-1 of a screen (w columns) drawn at k times its size into out, which holds the
  * rectangle from column x0, row top (job of compose_hd). Pixels without HD art are transparent (0: the texture is
- * premultiplied, so its linear filtering fades the HD art's edges into what is under it). */
-typedef struct HdJob { const VideoHd *src; const uint16_t *palette; const uint8_t *lut; uint32_t *out; int w, k, x0, x1, top, y0, y1; } HdJob;
+ * premultiplied, so its linear filtering fades the HD art's edges into what is under it), but those beside HD art: their
+ * own colour (px), so stretched past its 4x (TrueType letters at a larger view), the art's edge fades into that and not
+ * into its own background's colour (a box around each letter on the menus' stone moved from elsewhere). */
+typedef struct HdJob { const VideoHd *src; const uint32_t *px; const uint16_t *palette; const uint8_t *lut; uint32_t *out; int w, h, k, x0, x1, top, y0, y1; } HdJob;
 
 static void compose_rows(const HdJob *j) {
     int w = j->w, k = j->k, ow = (j->x1 - j->x0) * k;
@@ -682,7 +684,10 @@ static void compose_rows(const HdJob *j) {
             const GfxHdTile *t = r->tile ? gfxmod_tile(r->tile >> 8) : NULL;
             uint32_t *o = j->out + (size_t)(y - j->top) * k * ow + (size_t)(x - j->x0) * k;
             if (!t) {
-                for (int sy = 0; sy < k; sy++) memset(o + sy * ow, 0, (size_t)k * 4);
+                int beside = (x > 0 && r[-1].tile) || (x + 1 < w && r[1].tile) || (y > 0 && r[-w].tile) ||
+                             (y + 1 < j->h && r[w].tile);
+                uint32_t c = beside ? j->px[y * w + x] | 0xFF000000u : 0;
+                for (int sy = 0; sy < k; sy++) for (int sx = 0; sx < k; sx++) o[sy * ow + sx] = c;
                 continue;
             }
             int es = t->scale, n = 8 * es, tx = (r->tile >> 5) & 7, ty = (r->tile >> 2) & 7;
@@ -762,7 +767,7 @@ static const VideoHd *hd_source(const View *v, int tex) {
 /* Draws and uploads the HD art of screen `tex` (through the Color setting's curve) at k times its size,
  * to the view: the part `r` (native pixels) that has it, and what was drawn last time outside it (made transparent
  * again); 0 if it cannot. */
-static int upload_hd(View *v, int tex, const VideoHd *src, int k, SDL_Rect r) {
+static int upload_hd(View *v, int tex, const VideoHd *src, const uint32_t *px, int k, SDL_Rect r) {
     int w = screen_width(tex), h = screen_height(tex);
     float tw = 0, th = 0;
     SDL_Texture **hd_tex = v->hd_tex;
@@ -789,7 +794,7 @@ static int upload_hd(View *v, int tex, const VideoHd *src, int k, SDL_Rect r) {
         have = hd_px ? need : 0;
         if (!hd_px) return 0;
     }
-    compose_hd(&(HdJob){src, hd_frame->palette, SETTING(SET_COLOR) ? gamma_lut : NULL, hd_px, w, k, at.x, at.x + at.w,
+    compose_hd(&(HdJob){src, px, hd_frame->palette, SETTING(SET_COLOR) ? gamma_lut : NULL, hd_px, w, h, k, at.x, at.x + at.w,
                         at.y, at.y, at.y + at.h});
     SDL_UpdateTexture(hd_tex[tex], &(SDL_Rect){at.x * k, at.y * k, ow, at.h * k}, hd_px, ow * 4);
     return 1;
@@ -824,7 +829,7 @@ static void upload(View *v, int tex, const uint32_t *px, int shown) {
     int k = src ? SDL_min(gfxmod_hd_scale(), internal_scale(v, &dest)) : 0;
     if (k && v == &primary) gfxfont_view_scale(k); /* letters are drawn for the main window's scale */
     SDL_Rect part; /* only where it has HD art: that is drawn over the screen */
-    v->hd_k[tex] = k > 1 && hd_part(src, w, h, &part) && upload_hd(v, tex, src, k, part) ? k : 0;
+    v->hd_k[tex] = k > 1 && hd_part(src, w, h, &part) && upload_hd(v, tex, src, px, k, part) ? k : 0;
     SDL_UpdateTexture(v->native[tex], &(SDL_Rect){0, 0, w, h}, px, w * 4);
     if (SETTING(SET_FILTER) == FILTER_SMOOTH) {
         scale2x(px, w, h, scale2x_tmp);
