@@ -175,6 +175,7 @@ typedef struct Engine {
     uint8_t radial_bgs;      /* widescreen: text BGs of a radial picture stretched to the view's edges (see bg_radial) */
     WsRadial radial;         /* and its room, in this frame's view */
     uint8_t radial_built;    /* bit per BG: its picture is in radial_pic this frame */
+    uint8_t tile_rows[4];    /* by BG, this frame: the tile rows after which the rows its map shows repeat (map_period) */
     uint8_t radial_kept;     /* the room's other layers (512 x 256 maps), drawn as the DS screen shows them (bg_radial_kept) */
     uint8_t solid_bgs;       /* widescreen, this line: text BGs one opaque tile throughout (see solid_256) */
     uint8_t fill_bgs, fill_now; /* widescreen: text BGs the windows alone show that covered a whole screen line last
@@ -1699,6 +1700,31 @@ static int window_ellipse(int w, int y0, int y1, float cx, Ellipse *el) {
     return 1;
 }
 
+/* The fewest tile rows (up to 12) after which the rows a text BG's map shows on the screen repeat, every column of
+ * them the same tiles: a pattern tiled down the map (a triple tech's pillars on BG0), going on past the screen as it
+ * repeats. 0 for a picture (Luminaire's orb, a smaller disc in the rows above it) or an affine BG. */
+static int map_period(const Engine *e, int bg, uint32_t dispcnt) {
+    uint32_t mode = dispcnt & 7;
+    if ((bg == 3 && mode >= 1 && mode <= 5) || (bg == 2 && mode >= 2 && mode <= 5)) return 0;
+    uint16_t cnt = reg16(e, 0x08 + 2 * bg), hofs = reg16(e, 0x10 + 4 * bg) & 0x1FF, vofs = reg16(e, 0x12 + 4 * bg) & 0x1FF;
+    uint32_t w = (cnt & 0x4000) ? 512 : 256, h = (cnt & 0x8000) ? 512 : 256, scr = ((cnt >> 8) & 0x1F) * 0x800u;
+    if (e->id == 0) scr += ((dispcnt >> 27) & 7) * 0x10000u;
+    enum { ROWS = SCREEN_H / 8 + 1, COLS = SCREEN_W / 8 + 1 };
+    static uint16_t ent[ROWS][COLS];
+    for (int r = 0; r < ROWS; r++)
+        for (int c = 0; c < COLS; c++) {
+            uint32_t xx = (hofs + 8u * (uint32_t)c) & (w - 1), yy = (vofs + 8u * (uint32_t)r) & (h - 1);
+            uint32_t block = (xx >> 8) + (yy >> 8) * (w >> 8);
+            ent[r][c] = vr16(e->bg, e->bg_mask, scr + block * 0x800 + ((yy & 255) >> 3) * 64 + ((xx & 255) >> 3) * 2);
+        }
+    for (int p = 1; p <= 12; p++) {
+        int same = 1;
+        for (int r = 0; same && r + p < ROWS; r++) same = !memcmp(ent[r], ent[r + p], sizeof ent[r]);
+        if (same) return p;
+    }
+    return 0;
+}
+
 static float sym_mid[2];  /* by window: its shape's centre column, seen symmetric on the frames before */
 static uint8_t sym_seen;   /* the windows (bit per window) whose centre stands */
 /* By window and end: the half ellipse it went on as on the frame before, from that end line. A side of an end that
@@ -2054,6 +2080,7 @@ static void engine_frame_start(Engine *e) {
             e->shown_bgs = e->shown_now, e->shown_now = 0;
             e->fill_bgs = e->fill_now, e->fill_now = 0;
             e->void_col = e->void_now == 1 ? e->void_now_col : 0xFF000000u, e->void_now = 0;
+            for (int bg = 0; bg < 4; bg++) e->tile_rows[bg] = (uint8_t)(e->margin && (dispcnt & (0x100u << bg)) ? map_period(e, bg, dispcnt) : 0);
             e->radial_bgs = e->margin ? (uint8_t)ws_radial(&e->radial) : 0;
             e->radial_built = 0;
             /* Beside a radial picture stretched to the view's edges, the room's other layers stay in the room at their
@@ -2188,7 +2215,8 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
     int by = e->band_rows && !e->ring && !e->rays ? ly : y; /* and whose BG rows, for the BGs not the room's (own_bgs: the effect's map) */
     /* Where a window goes on beyond the screen (window_beyond), the effect's map goes on as its nearest line: its own
      * rows there hold less of it (the orb's red, a smaller disc above line 0, showed a narrower cap inside the dome). */
-    if (!e->band_rows && ((y < beyond_first && beyond_on[0]) || (y > beyond_last && beyond_on[1]))) by = ly;
+    int beyond_end = e->band_rows ? -1 : y < beyond_first && beyond_on[0] ? 0 : y > beyond_last && beyond_on[1] ? 1 : -1;
+    if (beyond_end >= 0) by = ly;
     /* The line whose windows it has: the view's shift at a room's end moves the picture, and the windows the game
      * placed on it with it, as for the columns (vx below). Shifted, the row's registers are another line's: its
      * window spans are then the HDMA table's for that line (the portal a monster of the Arena of the Ages comes back
@@ -2243,7 +2271,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
          * box's 256 wide), such as a battle effect on a 512x512 map (BG0's bubbles in an enemy's Rainbow Storm over
          * the starry one-screen room), or one the HDMA scrolls line by line (hdma_bgs: the rippling BG0 in Magus's
          * portal), go on as drawn. */
-        int own_bgs = 0;
+        int own_bgs = 0, row[4] = {y, y, y, y}; /* by BG, the row it is drawn from */
         for (int bg = 0; bg < 4; bg++) {
             if (!(dispcnt & (0x100u << bg))) continue;
             if (bg == 0 && e->id == 0 && (dispcnt & 8)) continue; /* 3D layer: not rendered yet */
@@ -2254,15 +2282,22 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             e->solid_bgs = (uint8_t)(e->solid_bgs & ~(1u << bg));
             e->half_rows[bg] = (uint8_t)(e->rows && !affine ? half_256(e, bg, dispcnt) : 0);
             if (m && !affine && solid_256(e, bg, dispcnt)) own_bgs |= 1 << bg, e->solid_bgs |= (uint8_t)(1u << bg);
+            row[bg] = (own_bgs >> bg & 1) ? by : y;
+            /* A map whose rows repeat (a pattern tiled down it: the pillars of a triple tech) goes on there as its
+             * pattern does, from the line the window goes on from: repeating that line, the pillars' tops were
+             * streaks. */
+            int p = e->tile_rows[bg] * 8;
+            if (beyond_end >= 0 && (own_bgs >> bg & 1) && p)
+                row[bg] = beyond_end ? y - (y - beyond_last + p - 1) / p * p : y + (beyond_first - y + p - 1) / p * p;
             if (mode == 6 && e->id == 0) {
                 if (bg == 2) bg_affine(e, 2, dispcnt, 1, bgline[2]);
                 else if (bg != 0) enabled[bg] = 0;
                 continue;
             }
             if (affine) bg_affine(e, bg, dispcnt, 0, bgline[bg]);
-            else bg_text(e, bg, (own_bgs >> bg & 1) ? by : y, dispcnt, bgline[bg], hd_on ? &bghd[bg] : NULL);
+            else bg_text(e, bg, row[bg], dispcnt, bgline[bg], hd_on ? &bghd[bg] : NULL);
         }
-        for (int bg = 0; bg < 4; bg++) if (enabled[bg] && m) fill_bg(e, bg, y, (own_bgs >> bg & 1) ? by : y, dispcnt, bgline[bg]);
+        for (int bg = 0; bg < 4; bg++) if (enabled[bg] && m) fill_bg(e, bg, y, row[bg], dispcnt, bgline[bg]);
         /* Camera smoothing: the text box stays still while the field slides. On its lines (BG0/BG1 switched to
          * one-screen maps, margin_bg) the box's pixels go to the party layer, and the slid picture shows the room
          * under the box (the layers as the frame started, as in the margins). */
