@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "gfx_mod.h"
+#include "recomp.h"
 
 /* At start, from gfxmod_load (host thread, before the game runs): */
 /* the HD glyphs of the font file at `path` (e.g. "msg/big/msgcmn.fnt"): px holds the dump's glyph sheet at
@@ -22,6 +23,12 @@ int gfxfont_has_ttf(int small);
 int gfxfont_hd_scale(void);
 /* The scale the screens are drawn at now: TrueType letters are drawn for it. Host thread. */
 void gfxfont_view_scale(int scale);
+
+/* Draws UTF-8 text with the game's glyph routine (main 0x0203d518, through the font mods): font slot as the game
+ * passes it (the address holding the font file's), into the 4 bpp buffer buf (wt tiles wide) from (x, y) in colour;
+ * wider than the buffer, its spaces narrowed to fit. 0, and nothing drawn, if the font has no glyph for one of its
+ * characters or it cannot fit. Game thread. */
+int gfxfont_game_text(CPU *cpu, uint32_t slot, uint32_t buf, int wt, const char *text, int x, int y, int colour);
 
 /* HD tiles of letters, numbered from GFXFONT_TILES (gfxmod_find, gfxmod_tile). Game thread, but for gfxfont_tile's
  * pixels, which stay readable. */

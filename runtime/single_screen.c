@@ -1618,6 +1618,12 @@ int ss_bottom_shift(int *rows) {
 static SDL_AtomicInt menu_place, minimap_rows;
 
 int ss_menu_place(void) { return SDL_GetAtomicInt(&menu_place); }
+static SDL_AtomicInt select_drawn;
+void ss_set_select_drawn(int drawn) { SDL_SetAtomicInt(&select_drawn, drawn ? (int)current().obj : 0); } /* for this scene */
+int ss_select_opens_menu(void) {
+    Scene sc = current();
+    return ss_enabled() && (sc.kind == SCENE_SETTINGS || sc.kind == SCENE_OPTIONS);
+}
 int ss_minimap_rows(void) { return SDL_GetAtomicInt(&minimap_rows); }
 
 /* The map panel is on the bottom screen: black just outside it, its parchment inside (red over blue whatever the
@@ -1655,7 +1661,7 @@ int ss_compose(uint32_t *main, const uint32_t *top, uint32_t *bottom, const uint
     int title_menu = sc.kind == SCENE_TITLE && rt_r16(sc.obj + TITLE_PHASE) == TITLE_MENU;
     /* SELECT relabelled "System settings" (off, it stays the game's "Defaults") */
     int settings = ss_enabled() && (sc.kind == SCENE_SETTINGS || sc.kind == SCENE_OPTIONS);
-    if (settings) relabel_select(bottom, sc.kind == SCENE_OPTIONS ? OPTIONS_SELECT_Y : SET_BUTTONS.y0);
+    if (settings && (uint32_t)SDL_GetAtomicInt(&select_drawn) != sc.obj) relabel_select(bottom, sc.kind == SCENE_OPTIONS ? OPTIONS_SELECT_Y : SET_BUTTONS.y0);
     SDL_SetAtomicInt(&menu_place, settings     ? SS_MENU_GAME_SETTINGS
                                   : paused     ? SS_MENU_PAUSE
                                   : title_menu ? SS_MENU_TITLE

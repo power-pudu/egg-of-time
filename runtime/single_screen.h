@@ -32,6 +32,10 @@ int ss_bottom_shift(int *rows);
  * Game Settings screen, the field paused, or the title screen's menu (New Game...). */
 enum { SS_MENU_NONE, SS_MENU_GAME_SETTINGS, SS_MENU_PAUSE, SS_MENU_TITLE };
 int ss_menu_place(void);
+/* SELECT opens the runtime's System Settings now (a settings scene, main screen alone). Game thread. */
+int ss_select_opens_menu(void);
+/* The game drew the SELECT button's label as "System settings" (patches.c): no label painted over it. */
+void ss_set_select_drawn(int drawn);
 /* The Minimap setting (display.c) shows this rectangle of the bottom screen: the field's and the world map's
  * map panel. Any thread: the rows at the top of the main screen the map may cover now (0: it is not shown). */
 enum { SS_MAP_X = 26, SS_MAP_Y = 26, SS_MAP_W = 204, SS_MAP_H = 140 };

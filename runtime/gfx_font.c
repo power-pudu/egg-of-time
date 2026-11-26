@@ -567,6 +567,48 @@ void rt_font_draw_glyph(CPU *cpu) {
     R[0] = (uint32_t)gl->adv;
 }
 
+static uint32_t utf8_next(const char **p) {
+    const uint8_t *s = (const uint8_t *)*p;
+    uint32_t c = *s++;
+    int more = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+    if (more) c &= 0x3Fu >> more;
+    while (more-- && (*s & 0xC0) == 0x80) c = c << 6 | (*s++ & 0x3F);
+    *p = (const char *)s;
+    return c;
+}
+
+int gfxfont_game_text(CPU *cpu, uint32_t slot, uint32_t buf, int wt, const char *text, int x, int y, int colour) {
+    uint32_t data = rt_r32(slot);
+    if (!data) return 0;
+    const Font *f = font_at(data);
+    int count = (int)rt_r16(data + 10), glyphs[64], adv[64], space[64], n = 0, width = x, spaces = 0;
+    for (const char *p = text; *p;) {
+        if (n == 64) return 0;
+        uint32_t c = utf8_next(&p), g = c < 128 ? rt_r16(data + 12 + 2 * c) : 0xFFFF;
+        for (int i = 0; f && f->chars && g == 0xFFFF && i < f->count; i++) if (f->chars[i] == c) g = (uint32_t)i;
+        if (g >= (uint32_t)count) return 0;
+        glyphs[n] = (int)g, adv[n] = (int)rt_call_game(cpu, ADVANCE, slot, g, 0), space[n] = c == ' ', spaces += c == ' ';
+        width += adv[n++];
+    }
+    /* Wider than the buffer (its last advance is the shadow's column): the spaces narrowed, down to a pixel. */
+    for (int i = 0; width > wt * 8 && spaces && i < n * 8; i++) {
+        int k = i % n;
+        if (space[k] && adv[k] > 1) adv[k]--, width--;
+    }
+    if (width > wt * 8) return 0;
+    for (int i = 0; i < n; i++) {
+        R[13] -= 12;
+        rt_w16(R[13], (uint16_t)x), rt_w16(R[13] + 4, (uint16_t)y), rt_w8(R[13] + 8, (uint8_t)colour);
+        uint32_t lr = R[14];
+        R[0] = slot, R[1] = buf, R[2] = (uint32_t)wt, R[3] = (uint32_t)glyphs[i];
+        RT_CALL_ADDR(DRAW_GLYPH, 0xFFFF0000u); /* a call from the runtime (thread.c's HOST_RETURN) */
+        R[14] = lr;
+        R[13] += 12;
+        x += adv[i];
+    }
+    return 1;
+}
+
 void rt_font_advance(CPU *cpu) {
     Font *f = display_setting_get(SET_MODS) ? font_at(rt_r32(R[0])) : NULL;
     Glyph *gl = f && f->ttf ? glyph(f, (int)R[1]) : NULL;

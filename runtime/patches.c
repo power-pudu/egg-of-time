@@ -3,9 +3,11 @@
 
 #include "dispatch.h"
 #include "display.h"
+#include "gfx_font.h"
 #include "rt.h"
 #include "single_screen.h"
 #include "system_menu.h"
+#include "ui_text.h"
 
 static void game_settings_defaults(CPU *cpu) { rt_call_wrapped(cpu, "ov007", GAME_ADDR(0x0212a3f0u, 0x0212a2c8u)); } /* the original */
 
@@ -99,4 +101,27 @@ void rt_menu_sounds(CPU *cpu) {
     rt_call_game(cpu, fn, 0, 0, 0);
     for (int i = 0; i < 4; i++) R[i] = saved[i];
     R[12] = saved[4];
+}
+
+/* Settings (the field menu's page and New Game's Game Settings), main screen alone: SELECT opens the runtime's System
+ * Settings, and the game itself draws its label there, so font mods and HD letters take it as they take the rest. Its
+ * text reader (main 0x020380b8: one letter a call, the box r1, the reader r2, 0 when done) draws "Defaults", entry 100
+ * of the scene's text, into its own 8 x 2 tile buffer: once done, the buffer is emptied and "System settings" drawn
+ * there in the small font (the big one is wider than the button's 64 columns). A character the small font lacks
+ * leaves "Defaults", painted over as before (single_screen.c relabel_select). */
+#define TEXT_DEFAULTS 100
+#define FONT_SMALL_SLOT 0x020711b0u /* USA / Europe; the Japanese game keeps the painted label */
+
+void rt_ct_text_step(CPU *cpu) {
+    uint32_t box = R[1], reader = R[2];
+    rt_call_wrapped(cpu, "main", 0x020380b8u);
+    if (RT_JAPAN || R[0] || rt_r32(reader + 8) != TEXT_DEFAULTS || !ss_select_opens_menu()) return;
+    uint32_t buf = rt_r32(box + 4), size = (uint32_t)(rt_r16(box + 0xc) * rt_r16(box + 0xe) * 32);
+    uint8_t was[1024];
+    if (size > sizeof was) return;
+    for (uint32_t a = 0; a < size; a++) was[a] = rt_r8(buf + a), rt_w8(buf + a, 0);
+    int drawn = gfxfont_game_text(cpu, FONT_SMALL_SLOT, buf, rt_r16(box + 0xc), ui_text_in(rt_language(), "System settings"), 0, 2, 0);
+    if (!drawn) for (uint32_t a = 0; a < size; a++) rt_w8(buf + a, was[a]); /* the small font cannot: "Defaults" */
+    ss_set_select_drawn(drawn);
+    R[0] = 0;
 }
