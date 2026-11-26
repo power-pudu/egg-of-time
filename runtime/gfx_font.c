@@ -14,7 +14,7 @@
  * at least half covered (a quarter at the original size) are the letter, the shadow follows it one pixel right
  * and down, the advance is the font's own plus that pixel. Their height is the font's ascent to descent: System
  * Settings' Big / Small font size in half pixels, else its folder's font.ini (gfxfont_set_size), else the line's
- * rows 1 to height - 2; centred there. Glyphs it does not replace stay the ROM's.
+ * rows 1 to height - 2 (a pixel font: the nearest height on its grid, letter_px); centred there. Glyphs it does not replace stay the ROM's.
  *
  * HD letters: what each draw puts in each tile is kept, by the tile's RAM address: the tile's pixels before the
  * first draw and the draws since (glyph, place, colour), started again when the tile no longer holds what the last
@@ -81,6 +81,7 @@ typedef struct Font {
     uint32_t gen, key, data;       /* key: what the glyphs were built for; data: the font file in RAM */
     int small;                     /* the small font (msg/small): its own size setting */
     int size;                      /* font.ini's height of the letters, in half pixels; 0 none */
+    int grid;                      /* TrueType: the pixel grid its outlines and advances keep, in units; 0 none */
 } Font;
 
 static Font fonts[FONTS];
@@ -123,6 +124,28 @@ void gfxfont_set_hd(const char *path, int scale, uint8_t *px) {
     f->png = px, f->png_scale = scale, f->png_w = GFX_FONT_COLUMNS * f->cell_w * scale;
 }
 
+static int gcd(int a, int b) {
+    a = SDL_abs(a), b = SDL_abs(b);
+    while (b) { int t = a % b; a = b, b = t; }
+    return a;
+}
+
+/* A pixel font's grid (units): what every printable ASCII letter's outline points and advance are a multiple of,
+ * with the letters' height (em, ascent to descent) at most 64 of it; 0 for other fonts. */
+static int pixel_grid(const stbtt_fontinfo *info, int em) {
+    int g = 0;
+    for (int c = 33; c < 127; c++) {
+        int aw, lsb;
+        stbtt_GetCodepointHMetrics(info, c, &aw, &lsb);
+        g = gcd(gcd(g, aw), lsb);
+        stbtt_vertex *v;
+        int n = stbtt_GetCodepointShape(info, c, &v);
+        for (int i = 0; i < n; i++) g = gcd(gcd(gcd(gcd(g, v[i].x), v[i].y), v[i].cx), v[i].cy);
+        stbtt_FreeShape(info, v);
+    }
+    return g && em / g <= 64 ? g : 0;
+}
+
 int gfxfont_set_ttf(const char *path, const char *file) {
     Font *f = font_for(path);
     size_t n;
@@ -139,6 +162,7 @@ int gfxfont_set_ttf(const char *path, const char *file) {
     int gap;
     stbtt_GetFontVMetrics(&info, &f->ascent, &f->descent, &gap);
     if (f->ascent <= f->descent) f->ascent = f->descent + 1;
+    f->grid = pixel_grid(&info, f->ascent - f->descent);
     any_ttf[f->small] = 1;
     return 1;
 }
@@ -163,10 +187,23 @@ int gfxfont_hd_scale(void) {
 
 void gfxfont_view_scale(int scale) { SDL_SetAtomicInt(&view_scale, SDL_clamp(scale, 1, SCALE_MAX)); }
 
-/* The height of a font file's letters (ascent to descent), in half pixels. */
-static int size_half_px(const Font *f) {
+/* The height of a font file's letters (ascent to descent), in pixels. By default the line's rows 1 to height - 2, or for
+ * a pixel font (pixel_grid) the nearest height at which its grid is a whole number of pixels, or a half, third or
+ * quarter of one: between, its letters rounded unevenly (ChronoType's 64-unit grid at the small font's 6 px: a 4 two
+ * pixels wider than a 5, so LV 51 came out squashed and LV 45 not; at 6.5 px each grid step is half a pixel). */
+static float letter_px(const Font *f) {
     int v = display_setting_get(f->small ? SET_FONT_SMALL : SET_FONT_BIG);
-    return v ? FONT_SIZE_MIN2 + v - 1 : f->size ? f->size : 2 * (f->height - 2);
+    if (v) return (float)(FONT_SIZE_MIN2 + v - 1) / 2;
+    if (f->size) return (float)f->size / 2;
+    float fit = (float)(f->height - 2);
+    if (!f->grid) return fit;
+    static const float per_cell[] = {1.0f / 4, 1.0f / 3, 1.0f / 2, 1, 2, 3};
+    float cells = (float)(f->ascent - f->descent) / (float)f->grid, best = fit, off = 1e9f;
+    for (size_t i = 0; i < SDL_arraysize(per_cell); i++) {
+        float px = cells * per_cell[i];
+        if (SDL_fabsf(px - fit) < off - 0.01f) best = px, off = SDL_fabsf(px - fit);
+    }
+    return best;
 }
 
 /* The scale a font's HD glyphs are drawn at (0: none). */
@@ -181,7 +218,7 @@ static int font_scale(const Font *f) {
 /* A TrueType glyph at `scale`, drawn into px (GLYPH_W * scale x height * scale, values 0-3); its advance. */
 static int ttf_glyph(const Font *f, int gi, int scale, uint8_t *px) {
     int h = f->height, w = GLYPH_W * scale, rows = h * scale;
-    float k = (float)size_half_px(f) / 2.0f / (float)(f->ascent - f->descent); /* pixels per unit */
+    float k = letter_px(f) / (float)(f->ascent - f->descent); /* pixels per unit */
     float base = (1 + (float)(h - 2) / 2 + (float)(f->ascent + f->descent) / 2 * k) * (float)scale; /* the baseline */
     float sc = k * (float)scale, shift = base - floorf(base);
     int x0, y0, x1, y1;
@@ -450,7 +487,7 @@ static Font *font_at(uint32_t data) {
     for (int i = 0; i < font_count; i++) {
         Font *f = &fonts[i];
         if (f->height != height || f->count != count) continue;
-        uint32_t key = (uint32_t)size_half_px(f) << 8 | (uint32_t)font_scale(f);
+        uint32_t key = (uint32_t)SDL_lroundf(letter_px(f) * 64) << 8 | (uint32_t)font_scale(f);
         f->data = data; /* the game may hold more than one copy of a font: the same file */
         if (f->key != key) {
             f->key = key;
