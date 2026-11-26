@@ -175,6 +175,7 @@ typedef struct Engine {
     uint8_t radial_bgs;      /* widescreen: text BGs of a radial picture stretched to the view's edges (see bg_radial) */
     WsRadial radial;         /* and its room, in this frame's view */
     uint8_t radial_built;    /* bit per BG: its picture is in radial_pic this frame */
+    uint8_t radial_screen;   /* those of radial_bgs laid out as another (same_layout): the screen's rows of the room alone */
     uint8_t tile_rows[4];    /* by BG, this frame: the tile rows after which the rows its map shows repeat (map_period) */
     uint8_t radial_kept;     /* the room's other layers (512 x 256 maps), drawn as the DS screen shows them (bg_radial_kept) */
     uint8_t solid_bgs;       /* widescreen, this line: text BGs one opaque tile throughout (see solid_256) */
@@ -523,6 +524,31 @@ static int bg_rows_repeat(const Engine *e, int bg, uint32_t dispcnt, int period)
     return 1;
 }
 
+/* Whether text BG bg's map lays its tiles out as one of the BGs in bgs does over the screen: where that BG has a tile
+ * (on half the screen's cells at least), 7/8 of them flipped the same way and a quarter a tile number the same
+ * distance from its. Lavos's core lights its rays by a brighter copy on BG3, their own tiles in BG2's layout (the
+ * same cells flipped, 704 of 768, half of them tiles 32 apart); its forest and the pictures of its past forms there
+ * matched on 86 to 212. BG1, its rays' few priority tiles, is no layout to go by. */
+static int same_layout(const Engine *e, int bg, int bgs, uint32_t dispcnt) {
+    enum { CELLS = (SCREEN_W / 8) * (SCREEN_H / 8) };
+    static uint16_t dist[1024];
+    for (int b = 0; b < 4; b++) {
+        if (b == bg || !(bgs >> b & 1)) continue;
+        int n = 0, flips = 0, best = 0;
+        memset(dist, 0, sizeof dist);
+        for (int y = 0; y < SCREEN_H; y += 8)
+            for (int x = 0; x < SCREEN_W; x += 8) {
+                uint16_t a = bg_entry(e, b, dispcnt, x, y), c = bg_entry(e, bg, dispcnt, x, y);
+                if (!(a & 0x3FF)) continue;
+                n++, flips += (a & 0xC00) == (c & 0xC00);
+                int d = ++dist[(c - a) & 0x3FF];
+                if (d > best) best = d;
+            }
+        if (n * 2 >= CELLS && flips * 8 >= n * 7 && best * 4 >= n) return 1;
+    }
+    return 0;
+}
+
 /* Widescreen: a radial picture centred in a one-screen room (ws_radial: the rays around the battle in Lavos's core),
  * stretched about the room's middle so that the room's edges reach the view's: each side by its own share, the
  * middle staying in place. A scale about the middle takes rays to rays, so the picture stays a burst from it, and
@@ -534,12 +560,35 @@ static uint16_t radial_pic[3][VIDEO_ROWS_MAX * VIDEO_LINE_MAX];
 static uint32_t radial_src[3][VIDEO_ROWS_MAX * VIDEO_LINE_MAX];
 static uint8_t radial_pal[3][VIDEO_ROWS_MAX * VIDEO_LINE_MAX];
 
+/* The room's rows of a radial picture on BG bg (-1: the room's own) drawn this frame: those beyond the screen too,
+ * but for a copy laid out as another BG's (radial_screen), the game's over the screen alone (the rows above it held
+ * other tiles, a strip stretched over the top of the view). */
+static void radial_rows(const Engine *e, int bg, int *y0, int *y1) {
+    int screen = bg >= 0 && (e->radial_screen >> bg & 1);
+    int top = screen ? 0 : -e->rows, bottom = screen ? SCREEN_H : SCREEN_H + e->rows;
+    *y0 = SDL_max(e->radial.y0, top), *y1 = SDL_min(e->radial.y1, bottom);
+}
+
+/* The room's pixel a radial picture on BG bg stretched to the view shows at (x, y): each side scaled by the view's
+ * edge to the middle over the room's edge to it (1 where the room reaches it), clamped into its rows (radial_rows). */
+static void radial_point(const Engine *e, int bg, int x, int y, int *sx, int *sy) {
+    const WsRadial *rd = &e->radial;
+    int m = e->margin, y0, y1;
+    int x0 = SDL_max(rd->x0, -m), x1 = SDL_min(rd->x1, SCREEN_W + m);
+    radial_rows(e, bg, &y0, &y1);
+    float cx = (rd->x0 + rd->x1) * 0.5f, cy = (rd->y0 + rd->y1) * 0.5f, fx = x + 0.5f, fy = y + 0.5f;
+    float sl = SDL_max((cx + m) / (cx - x0), 1.0f), sr = SDL_max((SCREEN_W + m - cx) / (x1 - cx), 1.0f);
+    float st = SDL_max((cy + e->rows) / (cy - y0), 1.0f), sb = SDL_max((SCREEN_H + e->rows - cy) / (y1 - cy), 1.0f);
+    *sx = SDL_clamp((int)SDL_floorf(cx + (fx - cx) / (fx < cx ? sl : sr)), x0, x1 - 1);
+    *sy = SDL_clamp((int)SDL_floorf(cy + (fy - cy) / (fy < cy ? st : sb)), y0, y1 - 1);
+}
+
 static void bg_radial(Engine *e, int bg, int y, uint32_t dispcnt, uint16_t cnt, uint16_t hofs, uint16_t vofs, uint16_t *out,
                       HdLine *hd) {
     int m = e->margin, k = bg - 1; /* BG1-3 */
     const WsRadial *rd = &e->radial;
-    int x0 = SDL_max(rd->x0, -m), x1 = SDL_min(rd->x1, SCREEN_W + m);
-    int y0 = SDL_max(rd->y0, -e->rows), y1 = SDL_min(rd->y1, SCREEN_H + e->rows);
+    int x0 = SDL_max(rd->x0, -m), x1 = SDL_min(rd->x1, SCREEN_W + m), y0, y1;
+    radial_rows(e, bg, &y0, &y1);
     if (x0 >= x1 || y0 >= y1) return;
     if (!(e->radial_built >> bg & 1)) {
         static HdLine row_hd;
@@ -554,14 +603,9 @@ static void bg_radial(Engine *e, int bg, int y, uint32_t dispcnt, uint16_t cnt, 
             }
         }
     }
-    /* Each side's scale: the view's edge to the middle over the room's edge to it (1 where the room reaches it). */
-    float cx = (rd->x0 + rd->x1) * 0.5f, cy = (rd->y0 + rd->y1) * 0.5f, fy = y + 0.5f;
-    float sl = SDL_max((cx + m) / (cx - x0), 1.0f), sr = SDL_max((SCREEN_W + m - cx) / (x1 - cx), 1.0f);
-    float st = SDL_max((cy + e->rows) / (cy - y0), 1.0f), sb = SDL_max((SCREEN_H + e->rows - cy) / (y1 - cy), 1.0f);
-    int sy = SDL_clamp((int)SDL_floorf(cy + (fy - cy) / (fy < cy ? st : sb)), y0, y1 - 1);
     for (int x = -m; x < SCREEN_W + m; x++) {
-        float fx = x + 0.5f;
-        int sx = SDL_clamp((int)SDL_floorf(cx + (fx - cx) / (fx < cx ? sl : sr)), x0, x1 - 1);
+        int sx, sy;
+        radial_point(e, bg, x, y, &sx, &sy);
         int at = FROW(e, sy) + sx + m;
         if (!(radial_pic[k][at] & OPAQUE)) continue;
         out[x + m] = radial_pic[k][at];
@@ -2094,6 +2138,10 @@ static void engine_frame_start(Engine *e) {
             for (int bg = 0; e->radial_bgs && bg < 4; bg++)
                 if (!(e->radial_bgs >> bg & 1) && (reg16(e, 0x08 + 2 * bg) & 0xC000) == 0x4000 && (dispcnt & (0x100u << bg)))
                     e->radial_kept |= (uint8_t)(1u << bg);
+            e->radial_screen = 0;
+            for (int bg = 1; bg < 4; bg++)
+                if ((e->radial_kept >> bg & 1) && same_layout(e, bg, e->radial_bgs, dispcnt))
+                    e->radial_kept &= (uint8_t)~(1u << bg), e->radial_bgs |= (uint8_t)(1u << bg), e->radial_screen |= (uint8_t)(1u << bg);
             e->repeat_bgs = e->margin && !(e->radial_bgs | e->radial_kept) ? ws_repeat_bgs() & e->shown_bgs : 0;
             for (int bg = 0; bg < 4; bg++)
                 e->row_period[bg] = e->margin && bg_rows_repeat(e, bg, dispcnt, ws_bg_row_period(bg)) ? ws_bg_row_period(bg) : 0;
@@ -2464,6 +2512,22 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 else if (in_w1y && in_window(vx, vwx, w1h, ext1)) ctl = (winin >> 8) & 0x3F;
                 else if (winobj && o->win[x]) ctl = (winout >> 8) & 0x3F;
                 else ctl = winout & 0x3F;
+            }
+            /* A radial picture stretched to the view (bg_radial) shows the windows the game set on it stretched with
+             * it: tested at the room's pixel it shows there, on that line. Lavos's core opens and closes its rays by
+             * WIN0 (BG2 left out inside it): an octagon from the middle out to the whole screen, a diamond in to it.
+             * Tested where they are drawn, the window carried on beyond the screen as its own shape, a ring cutting
+             * across the stretched rays. */
+            if (!ui_own && !box && e->radial_bgs && win_ext_on && (win0 || win1)) {
+                int rx, ry;
+                radial_point(e, -1, x - m, y, &rx, &ry);
+                int wl = SDL_clamp(ry, 0, SCREEN_H - 1), rwx = SDL_clamp(rx, 0, SCREEN_W - 1);
+                uint16_t rh0 = (uint16_t)win_lines[wl], rh1 = (uint16_t)(win_lines[wl] >> 16);
+                uint32_t rc = win0 && in_range(wl, w0v >> 8, w0v & 0xFF) && in_window(rwx, rwx, rh0, win_ext[wl][0]) ? winin & 0x3F
+                              : win1 && in_range(wl, w1v >> 8, w1v & 0xFF) && in_window(rwx, rwx, rh1, win_ext[wl][1]) ? (winin >> 8) & 0x3F
+                              : winobj && o->win[x] ? (winout >> 8) & 0x3F
+                                                    : winout & 0x3F;
+                ctl = (ctl & ~(uint32_t)e->radial_bgs) | (rc & e->radial_bgs);
             }
             /* Top two layers: 0-3 BG, 4 OBJ, 5 backdrop. */
             int layer[2] = {5, 5};
