@@ -47,6 +47,8 @@ void video_set_zoom(int rows, int margin);
 /* Widescreen: in the field, the margins show the room's map repeated beyond a room narrower than the view
  * (1), or black (0, the default; any thread). */
 void video_set_fill_sides(int on);
+/* Widescreen: the Steam release's room edges beside the rooms that have them (steam_edges.c), as far as they go. */
+void video_set_steam_edges(int on);
 /* Game thread: the top screen's first line of the field's text box in the frame just drawn (SCREEN_H: no box). */
 int video_box_top(void);
 /* What is on top at each pixel of the bottom screen: its layer (0-3 BG, 4 OBJ, 5 backdrop) and colour (BGR555, before

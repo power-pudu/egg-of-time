@@ -41,6 +41,7 @@
 #include "minimap.h"
 #include "movie.h"
 #include "rt.h"
+#include "steam_edges.h"
 #include "shader.h"
 #include "single_screen.h"
 #include "system_menu.h"
@@ -131,6 +132,9 @@ static Setting settings[SET_COUNT] = {
     [SET_ZOOM_UI] = {"zoomtext", "Zoomed out text", 2, 0, zoom_ui_names, zoom_ui_labels},
     /* Widescreen in rooms narrower than the view: No leaves the room as it is, black beside it (video.c). */
     [SET_FILL] = {"fillsides", "Fill screen sides", 2, 0, yesno_names, yesno_labels},
+    /* Widescreen: beside the rooms, the tiles the game's Steam release draws there, read from the player's Steam copy
+     * (steam_edges.c); listed when one is found. */
+    [SET_STEAM] = {"steamedges", "Steam room edges", 2, 1, yesno_names, yesno_labels},
     /* The bottom screen's map, small, over the main screen (single_screen.c). */
     [SET_MINIMAP] = {"minimap", "Minimap", 2, 1, onoff_names, onoff_labels},
     [SET_MINIMAP_SIZE] = {"minimapsize", "Minimap size", 3, 1, minimap_size_names, minimap_size_labels},
@@ -1173,6 +1177,7 @@ void display_frame(const uint32_t *const screens[3], const uint32_t *party, cons
     zoom_view(asked_guard, &asked_zoom_rows, &asked_zoom_margin);
     video_set_zoom(asked_zoom_rows, asked_zoom_margin);
     video_set_fill_sides(SETTING(SET_FILL));
+    video_set_steam_edges(SETTING(SET_STEAM));
     video_set_track_bottom(SETTING(SET_MINIMAP) && minimap_allowed(&primary));
     video_set_camera_smoothing(asked_guard != 0);
     video_set_ui_edges(ui_tall());
@@ -1281,6 +1286,7 @@ int display_setting_shown(int id) {
     case SET_LANGUAGE_JP: return RT_JAPAN;
     case SET_ZOOM_UI: return SETTING(SET_ZOOM) != 0;
     case SET_FILL: return SETTING(SET_ASPECT) != ASPECT_ORIGINAL || SETTING(SET_ZOOM);
+    case SET_STEAM: return (SETTING(SET_ASPECT) != ASPECT_ORIGINAL || SETTING(SET_ZOOM)) && se_available();
     case SET_MINIMAP: return minimap_allowed(&primary);
     case SET_MINIMAP_SIZE:
     case SET_MINIMAP_BG: return SETTING(SET_MINIMAP) && minimap_allowed(&primary);

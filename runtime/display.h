@@ -38,7 +38,7 @@ void display_capture(const char *path);
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
  * Setting one applies it at once and saves eggoftime.ini. The cheats (cheats.c), from SET_CHEATS on, are listed on
  * the menu's Cheats page instead. */
-enum { SET_LANGUAGE, SET_LANGUAGE_JP, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_ZOOM, SET_ZOOM_UI, SET_FILL, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FONT_BIG, SET_FONT_SMALL, SET_FF_MUSIC, SET_FF_SOUND, SET_SKIP_LOGOS, SET_SKIP_MOVIE,
+enum { SET_LANGUAGE, SET_LANGUAGE_JP, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_ZOOM, SET_ZOOM_UI, SET_FILL, SET_STEAM, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FONT_BIG, SET_FONT_SMALL, SET_FF_MUSIC, SET_FF_SOUND, SET_SKIP_LOGOS, SET_SKIP_MOVIE,
        SET_CHEAT_EXP, SET_CHEAT_TP, SET_CHEAT_HP, SET_CHEAT_MP, SET_CHEAT_GOLD,
        SET_COUNT };
 #define SET_CHEATS SET_CHEAT_EXP /* the first cheat */
@@ -55,7 +55,7 @@ int display_language(void);
 const char *display_setting_title(int id);
 int display_setting_count(int id);
 int display_setting_get(int id);
-/* The menu lists it: Fill screen sides only with a wide aspect ratio, Minimap only where the main screen of single
+/* The menu lists it: Fill screen sides only with a wide aspect ratio, Steam room edges also only with a Steam copy found, Minimap only where the main screen of single
  * screen mode is shown, Minimap size and background only with Minimap on, Shader only with shaders in mods/shaders,
  * Internal resolution and Graphics filter only without a shader, Big / Small font size only with a font file in
  * mods/graphics/fonts/msg/big (small) and Mods on. */

@@ -70,6 +70,7 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_ZOOM] = "More of the world, at a smaller scale.",
     [SET_ZOOM_UI] = "Text boxes zoom out too, or keep their size.",
     [SET_FILL] = "Repeat small rooms' tiles beside them.",
+    [SET_STEAM] = "Room sides as the Steam release draws them.",
     [SET_MINIMAP] = "The bottom screen's map, at the top left.",
     [SET_MINIMAP_SIZE] = "How much of the screen the map takes.",
     [SET_MINIMAP_BG] = "Behind the map: its parchment or a shadow.",

@@ -13,6 +13,7 @@
 #include "game_build.h"
 #include "gfx_mod.h"
 #include "rt.h"
+#include "steam_edges.h"
 #include "sound.h"
 #include "system_menu.h"
 #include "ui_text.h"
@@ -270,6 +271,7 @@ int main(int argc, char **argv) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL_Init: %s", SDL_GetError());
         return 1;
     }
+    se_init(); /* a Steam copy for Steam room edges: before display_init, which lists the setting */
     if (!display_init()) return 1;
     controls_init();
     if (!game_build_prepare(argc > 1 ? argv[1] : NULL)) return 1; /* the ROM and the game code */

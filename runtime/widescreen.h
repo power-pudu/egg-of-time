@@ -5,8 +5,9 @@
  * (margin columns each side, and rows above and below when zoomed out) and widens the sprite renderer's view to
  * them; elsewhere (or margin 0) puts the view back to the DS screen. limit: the columns a side actually shown, to
  * keep the view within the room's ends; 0 lets it pass them. limit_rows: the same for the rows above and below.
- * fill (Fill screen sides on): only at the ends beyond which the map is the void, with nothing to fill. */
-void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill);
+ * fill (Fill screen sides on): only at the ends beyond which the map is the void, with nothing to fill. steam (Steam room
+ * edges on): with the Steam release's edges beside the room, as far as they go (ws_view_span). */
+void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill, int steam);
 /* This frame's shift of the view from the camera at the room's ends (pixels, 0 normally), and the BGs that move by it. */
 void ws_view_shift(int *x, int *y, int *bgs);
 void ws_hold_scene(int bgs);
@@ -31,6 +32,12 @@ int ws_world_sprite_limit(int rows);
 /* In the field: the top screen's columns the room covers, x0..x1-1 (beyond them, other rooms or its map
  * repeated); 0 elsewhere. */
 int ws_room_span(int *x0, int *x1);
+/* The columns the view shows of the room: its own, with the Steam release's edges beside them while they are drawn
+ * (steam: Steam room edges on, in ws_fill_margins). */
+int ws_view_span(int *x0, int *x1);
+/* BG bg shows the Steam release's room edges this frame: *x, *y the world pixel at the screen's top-left on it (the
+ * view's shift at a room's end in it). */
+int ws_steam_bg(int bg, int *x, int *y);
 /* In the field: the rows the room covers, y0..y1-1 from the top of the DS screen; 0 elsewhere. */
 int ws_room_rows(int *y0, int *y1);
 /* Zoomed out, the room has fewer rows than the view: the rows beyond it are black bands. */

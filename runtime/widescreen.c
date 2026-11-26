@@ -54,6 +54,7 @@
 #include "dispatch.h"
 #include "rt.h"
 #include "single_screen.h"
+#include "steam_edges.h"
 #include "video.h"
 #include "widescreen.h"
 
@@ -75,6 +76,9 @@ static int view_bgs;       /* the BGs it moves */
 static int world_dx, world_dy; /* the world map's: the view's shift from the camera at the map's ends (0 normally) */
 static int drift;          /* the room's layers 1 (bit 0, BG3) and 2 (bit 1, BG0) drifting on their own (fill_field_margins) */
 static int drift_smooth[2]; /* by drifting layer: rows its scroll is drawn further than the game sets it (ws_drift_dy) */
+/* The Steam release's room edges (steam_edges.c), this frame: they are ready for the room (and Steam room edges is on),
+ * the BGs that show them (the filled layers' BGs but BG0), and by BG the world pixel at the screen's top-left. */
+static int steam_ready, steam_bgs, steam_ox[4], steam_oy[4];
 
 /* The room map's metatile rows (room + 0x1000: 0x100 a row) as the field last had them. */
 static struct {
@@ -432,6 +436,22 @@ int ws_room_span(int *x0, int *x1) {
     int view = (int16_t)rt_r16(CAMERA);
     *x0 = left * 16 - view;
     *x1 = (right + 1) * 16 - view;
+    return 1;
+}
+
+int ws_view_span(int *x0, int *x1) {
+    if (!ws_room_span(x0, x1)) return 0;
+    if (steam_ready) { /* the room and its edges */
+        int a, b, view = (int16_t)rt_r16(CAMERA);
+        se_span(&a, &b);
+        *x0 = a - view < *x0 ? a - view : *x0, *x1 = b - view > *x1 ? b - view : *x1;
+    }
+    return 1;
+}
+
+int ws_steam_bg(int bg, int *x, int *y) {
+    if (!steam_ready || !(steam_bgs >> bg & 1)) return 0;
+    *x = steam_ox[bg], *y = steam_oy[bg];
     return 1;
 }
 
@@ -1209,7 +1229,7 @@ void ws_bg_shift(int bg, int *x, int *y) {
 
 static void fill_field_margins(int margin, int rows, int shown_rows) {
     int seen = repeat_bgs;
-    repeat_bgs = picture_bgs = view_bgs = 0;
+    repeat_bgs = picture_bgs = view_bgs = steam_bgs = 0;
     row_period[0] = row_period[1] = row_period[2] = 0;
     if (!field_margin) return;
     uint32_t scroll = rt_r32(SCROLL), room = rt_r32(ROOM), tilesets = rt_r32(TILESETS);
@@ -1409,6 +1429,9 @@ static void fill_field_margins(int margin, int rows, int shown_rows) {
         left = l < left ? l : left, right = r > right ? r : right, bottom = b > bottom ? b : bottom, top = t < top ? t : top;
         int st = r0 + ((vfine - shown_rows + vy) >> 3), sb = r0 + ((vfine + SCREEN_H - 1 + shown_rows + vy) >> 3);
         shown_top = st < shown_top ? st : shown_top, shown_bottom = sb > shown_bottom ? sb : shown_bottom;
+        /* The screen's top-left in the world, on this BG's layer (layer 1 on its own camera: dc1, dr1). */
+        steam_ox[bg] = (c0 + (L == 1 ? dc1 : 0)) * 8 + fine + vx, steam_oy[bg] = (r0 + (L == 1 ? dr1 : 0)) * 8 + vfine + vy;
+        if (bg) steam_bgs |= 1 << bg; /* BG0 (layer 2) has none */
     }
     for (int c = left; c <= right; c++) {
         for (int r = top; r <= bottom; r++) {
@@ -1445,7 +1468,7 @@ static int view_shift(int lo, int hi, int size, int pad, int at_lo, int at_hi) {
     return at_lo && lo + pad > 0 ? lo + pad : at_hi && hi - size - pad < 0 ? hi - size - pad : 0;
 }
 
-void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) {
+void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill, int steam) {
     ws_frame++;
     world_margin = margin > 0 && ss_in_overworld() ? margin : 0;
     world_rows = world_margin ? rows : 0;
@@ -1467,8 +1490,18 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
     view_x = next_x, view_y = next_y;
     if (ss_in_field()) set_screen_view(field_margin);
     tent_back = 0;
+    /* The Steam release's edges of the room on screen, read once it has held (its tiles in VRAM). Not beside a layer
+     * repeating into the margins or a radial picture, which go on to the view's edges their own way. */
+    steam_ready = 0;
+    uint32_t tilesets = rt_r32(TILESETS);
+    if (field && steam && ram_ptr(scroll) && ram_ptr(tilesets) && ram_ptr(rt_r32(tilesets + 0xc))) {
+        uint32_t chr = 0x06000000u + ((io_get32(0) >> 24) & 7) * 0x10000u + ((io_get16(0x0c) >> 2) & 15) * 0x4000u; /* BG2's */
+        steam_ready = se_room(room_location(), rt_r8(scroll + 0x16), rt_r8(scroll + 0x17), rt_r32(tilesets + 0xc), chr);
+    }
     fill_field_margins(margin, rows, limit_rows);
     give_back(tent_back);
+    WsRadial radial;
+    if (repeat_bgs || ws_radial(&radial)) steam_ready = 0;
     next_x = next_y = 0;
     int lo, hi;
     short_room = 0;
@@ -1479,7 +1512,7 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill) 
         int fills = fill && !repeat_bgs;
         if (fills) void_beyond_ends(&at_lo, &at_hi);
         if (left_room()) at_lo = 1, at_hi = 0;
-        if (ws_room_span(&lo, &hi)) next_x = view_shift(lo, hi, SCREEN_W, limit, at_lo, at_hi);
+        if (ws_view_span(&lo, &hi)) next_x = view_shift(lo, hi, SCREEN_W, limit, at_lo, at_hi);
         if (limit_rows && room_rows(&lo, &hi, &at_lo, &at_hi)) {
             if (!fills) at_lo = at_hi = 1;
             next_y = view_shift(lo, hi, SCREEN_H, limit_rows, at_lo, at_hi);

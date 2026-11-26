@@ -5,6 +5,7 @@
 #include "gfx_mod.h"
 #include "rt.h"
 #include "single_screen.h"
+#include "steam_edges.h"
 #include "video.h"
 #include "widescreen.h"
 
@@ -226,6 +227,7 @@ static int frame_dx, frame_dy, frame_cut; /* camera motion into the frame being 
 static int frames_since_step = VIDEO_GLIDE_FRAMES; /* frames since the camera last moved (display gliding before that) */
 static SDL_AtomicInt party_wanted;  /* camera smoothing is on (video_set_camera_smoothing) */
 static SDL_AtomicInt fill_sides; /* video_set_fill_sides */
+static SDL_AtomicInt steam_edges; /* video_set_steam_edges */
 static uint8_t prev_oam[0x400];     /* the top screen's sprites in the previous frame */
 static uint32_t party_frame[VIDEO_LINE_MAX * VIDEO_ROWS_MAX]; /* party layer of the top screen (alpha 0: none) */
 static uint32_t present_party[VIDEO_LINE_MAX * VIDEO_ROWS_MAX];
@@ -2103,7 +2105,7 @@ static void engine_frame_start(Engine *e) {
             int shown_margin = e->margin - (SDL_GetAtomicInt(&party_wanted) ? VIDEO_SLIDE_MAX : 0);
             int shown_rows = SDL_max(e->rows - (SDL_GetAtomicInt(&party_wanted) ? VIDEO_SLIDE_ROWS : 0), 0);
             int fill = SDL_GetAtomicInt(&fill_sides);
-            ws_fill_margins(e->margin, e->rows, SDL_max(shown_margin, 0), shown_rows, fill);
+            ws_fill_margins(e->margin, e->rows, SDL_max(shown_margin, 0), shown_rows, fill, SDL_GetAtomicInt(&steam_edges));
             ws_view_shift(&e->view_x, &e->view_y, &e->view_bgs);
             for (int bg = 0; bg < 4; bg++) ws_bg_shift(bg, &e->bg_dx[bg], &e->bg_dy[bg]), e->drift_dy[bg] = ws_drift_dy(bg);
             ws_sprite_lag(&e->obj_dx, &e->obj_dy);
@@ -2149,7 +2151,7 @@ static void engine_frame_start(Engine *e) {
                 e->row_period[bg] = e->margin && bg_rows_repeat(e, bg, dispcnt, ws_bg_row_period(bg)) ? ws_bg_row_period(bg) : 0;
             e->wide_bgs = e->margin ? (uint8_t)ws_wide_picture_bgs() : 0;
             e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs || e->radial_bgs || e->radial_kept) &&
-                           ws_room_span(&e->room_x0, &e->room_x1);
+                           ws_view_span(&e->room_x0, &e->room_x1);
             int rx = 0, ry = 0, rk = ws_camera(&rx, &ry); /* camera motion into this frame (camera smoothing) */
             int cx = read_x, cy = read_y, known = read_known;
             /* The view's place: the world map's camera has its shift in it already (ws_camera). */
@@ -2204,7 +2206,7 @@ static void engine_frame_start(Engine *e) {
                 for (int bg = 0; bg < 4; bg++) if (e->held_bgs >> bg & 1) ws_bg_shift(bg, &e->bg_dx[bg], &e->bg_dy[bg]);
             }
             for (int bg = 0; bg < 4; bg++) held_vofs[bg] = reg16(e, 0x12 + 4 * bg);
-            /* ws_room_span goes by the camera in RAM, already the next frame's: the room's edge goes with this one's scroll. */
+            /* ws_view_span goes by the camera in RAM, already the next frame's: the room's edge goes with this one's scroll. */
             if (e->room_clip) {
                 int to = (known && rk && SDL_abs(rx - cx) <= VIDEO_SLIDE_MAX ? rx - cx : 0) - e->view_x;
                 e->room_x0 += to, e->room_x1 += to;
@@ -2267,6 +2269,46 @@ static void fill_bg(Engine *e, int bg, int y, int row, uint32_t dispcnt, uint16_
 /* By engine: BLDCNT, BLDALPHA of the room's lines last drawn outside the text box, its blending under the box. */
 static uint16_t room_bld[2][2];
 static int room_bld_seen[2];
+
+/* Widescreen: beside the room, the Steam release's edges on the BGs that hold the room's layers (ws_steam_bg), where
+ * it has them (se_at): a map entry from the BG's own tiles (animated, HD art), or its own picture in the BG palette. */
+static void steam_line(Engine *e, int y, uint32_t dispcnt, uint16_t bgline[4][VIDEO_LINE_MAX], HdLine *bghd, const int *enabled) {
+    int m = e->margin, width = SCREEN_W + 2 * m;
+    for (int bg = 1; bg < 4; bg++) {
+        int ox, oy, box = margin_bg(e, bg); /* a text box's lines: the margins keep the layer as the frame started */
+        uint16_t cnt = box ? e->frame_bg[bg][0] : reg16(e, 0x08 + 2 * bg);
+        if (!enabled[bg] || (cnt & 0xC080) != 0x4000 || !ws_steam_bg(bg, &ox, &oy)) continue; /* 512x256, 4 bits */
+        uint32_t chr = ((cnt >> 2) & 0xF) * 0x4000u + (e->id ? 0 : ((dispcnt >> 24) & 7) * 0x10000u);
+        int wy = oy + y;
+        for (int x = 0; x < width; x++) {
+            if (box && x == m) x = m + SCREEN_W;
+            if (x >= width) break;
+            int wx = ox + x - m;
+            int32_t code = se_at(bg, wx, wy);
+            if (code == SE_OUT) continue;
+            bgline[bg][x] = 0;
+            if (hd_on) bghd[bg].src[x] = 0;
+            if (!code) continue;
+            int px = wx & 7, py = wy & 7;
+            if (code & SE_PICTURE) {
+                uint8_t idx = se_picture(code)[py * 8 + px];
+                if (idx) bgline[bg][x] = pal16(e->pal + idx * 2u) | OPAQUE;
+                continue;
+            }
+            uint32_t ent = (uint32_t)code & 0xFFFF, tile = ent & 0x3FF, pal = ent >> 12;
+            if (ent & 0x400) px ^= 7;
+            if (ent & 0x800) py ^= 7;
+            uint32_t b = vr8(e->bg, e->bg_mask, chr + tile * 32 + (uint32_t)(py * 4 + px / 2));
+            uint32_t idx = (px & 1) ? b >> 4 : b & 0xF;
+            if (!idx) continue;
+            bgline[bg][x] = pal16(e->pal + pal * 32 + idx * 2) | OPAQUE;
+            if (hd_on) {
+                bghd[bg].src[x] = hd_src(hd_tile(e, 0, chr + tile * 32, 0), (uint32_t)px, (uint32_t)py, ent & 0x400, ent & 0x800);
+                bghd[bg].pal[x] = (uint8_t)(pal | e->id << 4);
+            }
+        }
+    }
+}
 
 static void render_engine_line(Engine *e, int y, uint32_t *out) {
     uint32_t dispcnt = reg32(e, 0);
@@ -2358,6 +2400,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             else bg_text(e, bg, row[bg], dispcnt, bgline[bg], hd_on ? &bghd[bg] : NULL);
         }
         for (int bg = 0; bg < 4; bg++) if (enabled[bg] && m) fill_bg(e, bg, y, row[bg], dispcnt, bgline[bg]);
+        if (m) steam_line(e, y, dispcnt, bgline, bghd, enabled);
         /* Camera smoothing: the text box stays still while the field slides. On its lines (BG0/BG1 switched to
          * one-screen maps, margin_bg) the box's pixels go to the party layer, and the slid picture shows the room
          * under the box (the layers as the frame started, as in the margins). */
@@ -2722,6 +2765,7 @@ void video_render_line(int line) {
 }
 
 void video_set_fill_sides(int on) { SDL_SetAtomicInt(&fill_sides, on); }
+void video_set_steam_edges(int on) { SDL_SetAtomicInt(&steam_edges, on); }
 
 void video_set_track_bottom(int on) { SDL_SetAtomicInt(&track_bottom, on); }
 

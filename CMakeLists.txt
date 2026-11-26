@@ -77,6 +77,7 @@ set(RUNTIME_SOURCES
     runtime/cheats.c
     runtime/cheevos.c
     runtime/hw.c
+    runtime/inflate.c
     runtime/memory.c
     runtime/movie.c
     runtime/music.c
@@ -91,6 +92,7 @@ set(RUNTIME_SOURCES
     runtime/snd.c
     runtime/spu.c
     runtime/state.c
+    runtime/steam_edges.c
     runtime/system_menu.c
     runtime/selftest.c
     runtime/shader.c

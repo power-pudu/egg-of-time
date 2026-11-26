@@ -138,6 +138,28 @@ original bytes, and caches the result per region until the region is written.
     room shows as the original. That camera is already the next frame's, so `video.c` moves the bounds to the frame's
     own: when a shake stepped it, a column beyond the room stayed unclipped, and with camera smoothing the prison
     bridge's sky (still layer) showed through it.
+  - Steam room edges (System Settings, shown with a wide aspect ratio when a Steam copy of the game is found; Yes by
+    default): beside a room, the tiles the game's Steam release draws there (`runtime/steam_edges.c`). It is read at
+    start-up from the player's own copy (`EGG_STEAM_DIR`, else Steam's registry key or home folders and every library
+    in `libraryfolders.vdf`): its `resources.bin`, blocks XORed with an LCG keystream and gzipped (`runtime/inflate.c`,
+    no zlib), keeps per location (the game's ids, the DS rooms' too: 635 of them, up to 668) the cells past the room's
+    sides (`Game/field/mapext_bin/mapext_<location>.bin`: four planes of 16-px cells, layers 1 and 0 below the sprites
+    and the tiles over them). Nothing of it is written to disk. A room's edges are a grid of 8x8 tiles per BG (layer 0
+    BG2, layer 1 BG3, priority tiles BG1, as the margins' fill lays them out), built (1-13 ms) on the frame its
+    location, bounds, metatile table or BG2 tiles change, from the Steam release's pixels alone, and again once they
+    have held 8 frames (the room's tiles in VRAM) with the room's own tiles where they are the same: built only then,
+    the sides were black through the fade into a room (the Millennial Fair into Gato's room). A cell names one of the
+    room's metatiles 0-511, defined as the DS game defines them (`ChipTable`: the same 3 bytes a corner; equal to the
+    DS RAM's in every room tried), so where they match and the DS tile in VRAM has pixels it is the DS map entry,
+    drawn from the BG's own tiles: animated, with HD art and the room's fades. A redefined metatile, a tile the DS does not load, and the pictures
+    the Steam release added (pages 2 and up, `cgext*` sheets) are drawn from its pixels (its chip sets, `cg<set>.bin`)
+    in the room's palette (`se_picture`). Two cells on one BG tile are merged into a picture. `steam_line` draws them
+    into the BG lines past the room's columns, at the world pixel each BG shows there (`ws_steam_bg`: the fill's
+    column and row on that layer, with the view's shift), and the room's span for the view's shift and the black
+    beyond it widens to the edges' outermost cells (`ws_view_span`), so the view stays centred where Steam's edges
+    go on. Not beside a layer repeating into the margins or a radial picture (Lavos's core), which keep their own
+    sides. Checked in the Millennial Fair's Gato room (0x6: the forest on both sides), the cave 0x1da (rendered
+    from the Steam data alone, the same cliffs), the Black Omen's battle room (0x134) and 2300 A.D.'s 0x10c.
     Beyond the room is black unless the screen's own side columns (8 each side, sprites left out) showed one
     colour alone the frame before (`void_col`): the Blackbird's halls are one screen wide, their map dark grey around
     them within the room's bounds, and the screen showed a grey box between black margins.
@@ -960,6 +982,8 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
   logs window and game frames per second;
   `EGG_LOG_PXI=1` logs ARM9 -> ARM7 messages and sound commands; `EGG_WATCH=1` logs the running game
   thread's return-address stack every 2 s; `EGG_DUMP_RAM=<file>` writes main RAM to a file 3 s after boot.
+  `EGG_STEAM_DIR=<folder or resources.bin>` names the Steam copy for Steam room edges; `EGG_STEAM_LOG=1` logs each
+  room's edges as they are built.
 - `python -I tools/recomp/disfunc.py . <module> <addr>...` disassembles the dsd function containing an
   address, with relocation targets (useful together with `EGG_WATCH`).
 - The ARM7 BIOS in `rom/` is only needed for byte-exact `dsd rom build`; the runtime emulates the ARM7 at a
