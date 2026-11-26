@@ -2541,15 +2541,15 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                                                     : winout & 0x3F;
                 ctl = (ctl & ~(uint32_t)e->radial_bgs) | (rc & e->radial_bgs);
             }
-            /* Top two layers: 0-3 BG, 4 OBJ, 5 backdrop. */
-            int layer[2] = {5, 5};
-            uint16_t col[2] = {backdrop, backdrop};
-            int found = 0;
-            for (int p = 0; p < 4 && found < 2; p++) {
+            /* Top two layers: 0-3 BG, 4 OBJ, 5 backdrop; with HD sources, the third too (under the second). */
+            int layer[3] = {5, 5, 5};
+            uint16_t col[3] = {backdrop, backdrop, backdrop};
+            int found = 0, want = hd ? 3 : 2;
+            for (int p = 0; p < 4 && found < want; p++) {
                 if (objs && (ctl & 0x10) && (o->color[x] & OPAQUE) && o->prio[x] == p) {
                     layer[found] = 4; col[found] = o->color[x] & 0x7FFF; found++;
                 }
-                for (int bg = 0; bg < 4 && found < 2; bg++) {
+                for (int bg = 0; bg < 4 && found < want; bg++) {
                     if (enabled[bg] && (bgs >> bg & 1) && pr[bg] == p && (ctl & (1u << bg)) && (src[bg][x] & OPAQUE)) {
                         layer[found] = bg; col[found] = src[bg][x] & 0x7FFF; found++;
                     }
@@ -2625,6 +2625,12 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
                 const HdLine *h = layer[0] == 4 ? &o->hd : layer[0] < 4 && src[layer[0]] == bgline[layer[0]] ? &bghd[layer[0]] : NULL;
                 uint32_t s = h && (dst[x] || to_still) && !cut ? h->src[x] : 0;
                 uint16_t below = found > 1 ? col[1] : backdrop;
+                /* What shows there without the top layer: the second blended with the third as the screen blends
+                 * them (a translucent cloud over the world map, under a place name: its letters' clear texels showed
+                 * the cloud's own colour, a box round each letter as the cloud went by). */
+                if (found > 1 && layer[1] < 4 && (ctl & 0x20) && effect == 1 && (bldcnt >> layer[1] & 1) &&
+                    (bldcnt >> (8 + layer[2]) & 1))
+                    below = blend(col[1], col[2], eva, evb);
                 /* Under a sprite: the sprite it covers, when that one is in front of the layer below (a text sprite
                  * on a panel sprite). */
                 if (layer[0] == 4 && (o->under[x] & OPAQUE) && (layer[1] > 3 || o->under_prio[x] <= pr[layer[1]]))

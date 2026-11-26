@@ -686,7 +686,8 @@ static void compose_rows(const HdJob *j) {
             if (!t) {
                 int beside = (x > 0 && r[-1].tile) || (x + 1 < w && r[1].tile) || (y > 0 && r[-w].tile) ||
                              (y + 1 < j->h && r[w].tile);
-                uint32_t c = beside ? j->px[y * w + x] | 0xFF000000u : 0;
+                uint32_t c = beside ? j->px[y * w + x] : 0; /* 0 where it is clear (the party layer around its sprites) */
+                if (c) c |= 0xFF000000u;
                 for (int sy = 0; sy < k; sy++) for (int sx = 0; sx < k; sx++) o[sy * ow + sx] = c;
                 continue;
             }
