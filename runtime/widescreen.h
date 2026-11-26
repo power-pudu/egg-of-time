@@ -45,6 +45,11 @@ int ws_wide_picture_bgs(void);
 /* In the field: the BGs (bit per BG: BG0, BG3) at scroll 0 that hold a picture of their own, not the room map's
  * layer (the prison bridge's sky); their margins show the screen reflected. 0 otherwise. */
 int ws_picture_bgs(void);
+/* A one-screen room holding a radial picture centred in it: the room's rectangle in screen coordinates (the camera's,
+ * x1 and y1 exclusive). */
+typedef struct WsRadial { int x0, y0, x1, y1; } WsRadial;
+/* In the field: the BGs of a one-screen room holding such a picture (Lavos's core), with *r; 0 otherwise. */
+int ws_radial(WsRadial *r);
 /* The field camera's position in the room, or the world map's view in the world (pixels); 0 elsewhere. */
 int ws_camera(int *x, int *y);
 /* The window positions of each line of the coming frame (WIN0H | WIN1H << 16), when the game's software HDMA

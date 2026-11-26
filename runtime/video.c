@@ -172,6 +172,9 @@ typedef struct Engine {
     uint16_t frame_win[7];   /* DISPCNT's window bits, WININ, WINOUT, WIN0H, WIN1H, WIN0V, WIN1V (see margin_bg) */
     uint16_t frame_bld[2];   /* BLDCNT, BLDALPHA (see margin_bg) */
     uint8_t mirror_bg;       /* widescreen: text BGs whose margins show the screen reflected (see picture_256) */
+    uint8_t radial_bgs;      /* widescreen: text BGs of a radial picture stretched to the view's edges (see bg_radial) */
+    WsRadial radial;         /* and its room, in this frame's view */
+    uint8_t radial_built;    /* bit per BG: its picture is in radial_pic this frame */
     uint8_t solid_bgs;       /* widescreen, this line: text BGs one opaque tile throughout (see solid_256) */
     uint8_t fill_bgs, fill_now; /* widescreen: text BGs the windows alone show that covered a whole screen line last
                                  * frame (fill_now: this frame so far), an effect's fill (see fill_bg) */
@@ -518,9 +521,59 @@ static int bg_rows_repeat(const Engine *e, int bg, uint32_t dispcnt, int period)
     return 1;
 }
 
-static void bg_text(const Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *out, HdLine *hd) {
+/* Widescreen: a radial picture centred in a one-screen room (ws_radial: the rays around the battle in Lavos's core),
+ * stretched about the room's middle so that the room's edges reach the view's: each side by its own share, the
+ * middle staying in place. A scale about the middle takes rays to rays, so the picture stays a burst from it, and
+ * its animation (the game cycling its colours) is its own throughout. Carried on beyond the room instead, each ray
+ * from the colour at the room's edge on along its cycle, the picture is not like itself further out (its colours at
+ * twice the distance no more alike than any two), and the margins showed blocks. The room's pixels are drawn once
+ * a frame into radial_pic (the BG's registers as the frame's first line has them: the room's are still). */
+static uint16_t radial_pic[3][VIDEO_ROWS_MAX * VIDEO_LINE_MAX];
+static uint32_t radial_src[3][VIDEO_ROWS_MAX * VIDEO_LINE_MAX];
+static uint8_t radial_pal[3][VIDEO_ROWS_MAX * VIDEO_LINE_MAX];
+
+static void bg_radial(Engine *e, int bg, int y, uint32_t dispcnt, uint16_t cnt, uint16_t hofs, uint16_t vofs, uint16_t *out,
+                      HdLine *hd) {
+    int m = e->margin, k = bg - 1; /* BG1-3 */
+    const WsRadial *rd = &e->radial;
+    int x0 = SDL_max(rd->x0, -m), x1 = SDL_min(rd->x1, SCREEN_W + m);
+    int y0 = SDL_max(rd->y0, -e->rows), y1 = SDL_min(rd->y1, SCREEN_H + e->rows);
+    if (x0 >= x1 || y0 >= y1) return;
+    if (!(e->radial_built >> bg & 1)) {
+        static HdLine row_hd;
+        e->radial_built |= (uint8_t)(1u << bg);
+        for (int r = y0; r < y1; r++) {
+            uint16_t *row = &radial_pic[k][FROW(e, r)];
+            memset(row, 0, VIDEO_LINE_MAX * sizeof *row);
+            bg_text_cols(e, bg, r, dispcnt, cnt, hofs, vofs, x0, x1, row, hd ? &row_hd : NULL);
+            if (hd) {
+                memcpy(&radial_src[k][FROW(e, r)], row_hd.src, sizeof row_hd.src);
+                memcpy(&radial_pal[k][FROW(e, r)], row_hd.pal, sizeof row_hd.pal);
+            }
+        }
+    }
+    /* Each side's scale: the view's edge to the middle over the room's edge to it (1 where the room reaches it). */
+    float cx = (rd->x0 + rd->x1) * 0.5f, cy = (rd->y0 + rd->y1) * 0.5f, fy = y + 0.5f;
+    float sl = SDL_max((cx + m) / (cx - x0), 1.0f), sr = SDL_max((SCREEN_W + m - cx) / (x1 - cx), 1.0f);
+    float st = SDL_max((cy + e->rows) / (cy - y0), 1.0f), sb = SDL_max((SCREEN_H + e->rows - cy) / (y1 - cy), 1.0f);
+    int sy = SDL_clamp((int)SDL_floorf(cy + (fy - cy) / (fy < cy ? st : sb)), y0, y1 - 1);
+    for (int x = -m; x < SCREEN_W + m; x++) {
+        float fx = x + 0.5f;
+        int sx = SDL_clamp((int)SDL_floorf(cx + (fx - cx) / (fx < cx ? sl : sr)), x0, x1 - 1);
+        int at = FROW(e, sy) + sx + m;
+        if (!(radial_pic[k][at] & OPAQUE)) continue;
+        out[x + m] = radial_pic[k][at];
+        if (hd) hd->src[x + m] = radial_src[k][at], hd->pal[x + m] = radial_pal[k][at];
+    }
+}
+
+static void bg_text(Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *out, HdLine *hd) {
     int m = e->margin;
     uint16_t cnt = reg16(e, 0x08 + 2 * bg), hofs = reg16(e, 0x10 + 4 * bg), vofs = reg16(e, 0x12 + 4 * bg);
+    if (m && (e->radial_bgs >> bg & 1) && bg && (cnt & 0xC000) == 0x4000) { /* the room's 512 x 256 maps */
+        bg_radial(e, bg, y, dispcnt, cnt, hofs, vofs, out, hd);
+        return;
+    }
     /* A picture reflected at the screen's sides is at its top and bottom too. */
     if (m && (e->mirror_bg >> bg & 1)) y = y < 0 ? -1 - y : y >= SCREEN_H ? 2 * SCREEN_H - 1 - y : y;
     /* A BG of a room that repeats down its rows, showing them so on the screen, repeats them beyond it: a layer the
@@ -1979,11 +2032,16 @@ static void engine_frame_start(Engine *e) {
             e->shown_bgs = e->shown_now, e->shown_now = 0;
             e->fill_bgs = e->fill_now, e->fill_now = 0;
             e->void_col = e->void_now == 1 ? e->void_now_col : 0xFF000000u, e->void_now = 0;
-            e->repeat_bgs = e->margin ? ws_repeat_bgs() & e->shown_bgs : 0;
+            e->radial_bgs = e->margin ? (uint8_t)ws_radial(&e->radial) : 0;
+            e->radial_built = 0;
+            /* A radial picture's room is stretched to the view's edges, its layers with it: none repeats. Repeated,
+             * Lavos's core's BG3 (its rows wavering by HDMA) showed the red at the screen's right side at both sides
+             * of the 4:3 picture; drawn as it is (an HDMA layer), the red line its map holds beyond that side. */
+            e->repeat_bgs = e->margin && !e->radial_bgs ? ws_repeat_bgs() & e->shown_bgs : 0;
             for (int bg = 0; bg < 4; bg++)
                 e->row_period[bg] = e->margin && bg_rows_repeat(e, bg, dispcnt, ws_bg_row_period(bg)) ? ws_bg_row_period(bg) : 0;
             e->wide_bgs = e->margin ? (uint8_t)ws_wide_picture_bgs() : 0;
-            e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs) &&
+            e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs || e->radial_bgs) &&
                            ws_room_span(&e->room_x0, &e->room_x1);
             int rx = 0, ry = 0, rk = ws_camera(&rx, &ry); /* camera motion into this frame (camera smoothing) */
             int cx = read_x, cy = read_y, known = read_known;
@@ -2034,8 +2092,14 @@ static void engine_frame_start(Engine *e) {
                 int to = (known && rk && SDL_abs(rx - cx) <= VIDEO_SLIDE_MAX ? rx - cx : 0) - e->view_x;
                 e->room_x0 += to, e->room_x1 += to;
             }
+            /* ws_radial goes by the camera in RAM too; its rays are drawn in the view, which the room's end moves. */
+            if (e->radial_bgs) {
+                int tx = (known && rk && SDL_abs(rx - cx) <= VIDEO_SLIDE_MAX ? rx - cx : 0) - e->view_x;
+                int ty = (known && rk && SDL_abs(ry - cy) <= VIDEO_SLIDE_MAX ? ry - cy : 0) - e->view_y;
+                e->radial.x0 += tx, e->radial.x1 += tx, e->radial.y0 += ty, e->radial.y1 += ty;
+            }
             e->room_y0 = -e->rows, e->room_y1 = SCREEN_H + e->rows;
-            e->short_rows = e->room_clip && shown_rows && ws_short_room();
+            e->short_rows = e->room_clip && shown_rows && ws_short_room() && !e->radial_bgs; /* its rays fill the rows beyond */
             if (e->room_clip && shown_rows && ws_room_rows(&e->room_y0, &e->room_y1)) {
                 int to = (known && rk && SDL_abs(ry - cy) <= VIDEO_SLIDE_MAX ? ry - cy : 0) - e->view_y;
                 e->room_y0 += to, e->room_y1 += to;
@@ -2298,7 +2362,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             int wx = SDL_clamp(x - m, 0, SCREEN_W - 1), side = x - m != wx || (!pass && box) || !on_screen;
             int still = 0; /* a text box pixel (the party layer keeps it) */
             int beyond = pass != 2 && e->room_clip && (x - m < e->room_x0 || x - m >= e->room_x1 || (e->rows && (y < e->room_y0 || y >= e->room_y1)));
-            int bgs = beyond ? e->repeat_bgs | own_bgs : 0xF; /* the BGs shown in this column */
+            int bgs = beyond ? e->repeat_bgs | own_bgs | e->radial_bgs : 0xF; /* the BGs shown in this column */
             for (int bg = 0; bg < 2; bg++) still |= (pass == 2 || !e->rows) && (box >> bg & 1) && x - m == wx && (bgline[bg][x] & OPAQUE);
             const int *pr = prio[side];
             uint16_t bldcnt = bld[side][0], bldalpha = bld[side][1];
@@ -2410,7 +2474,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
              * the margins black; on a text box's lines the margins show it as the frame started (under). */
             int solid = layer[0] < 4 && ((layer[0] < 2 && src[layer[0]] == under[layer[0]] ? e->frame_solid : e->solid_bgs) >> layer[0] & 1);
             int tint = solid && (ctl & 0x20) && first && effect == 1;
-            int cut = beyond && !e->repeat_bgs && !(layer[0] < 4 && (own_bgs >> layer[0] & 1) && !tint);
+            int cut = beyond && !e->repeat_bgs && !(layer[0] < 4 && ((own_bgs | e->radial_bgs) >> layer[0] & 1) && !tint);
             if (cut) dst[x] = pass ? 0 : e->void_col;
             /* The still layer: a pixel of a still BG or the backdrop on top, not blended with a layer that slides. */
             int to_still = !pass && e->still_bgs && !cut && still_layer(e, layer[0]) &&
