@@ -2153,9 +2153,19 @@ static void engine_frame_start(Engine *e) {
             /* The view's place: the world map's camera has its shift in it already (ws_camera). */
             int vx = ss_in_overworld() ? 0 : e->view_x, vy = ss_in_overworld() ? 0 : e->view_y;
             read_known = rk, read_x = rx, read_y = ry;
+            /* The world map: the camera is this frame's own layer 3 scroll (the land; layers 1-2 may be drifting clouds),
+             * with the view's shift. The world object in RAM is not always a frame ahead of the picture: in the intro's
+             * pan it already matches it, and the delta from the last read landed a frame late, so every step showed the
+             * map a pixel on, then back, then gliding on. */
+            int wrap = 0;
+            if (ss_in_overworld() && rk) {
+                cx = reg16(e, 0x10 + 4 * 3) & 0x1FF, cy = reg16(e, 0x12 + 4 * 3) & 0x1FF, known = 1;
+                vx = e->view_x, vy = e->view_y, wrap = 0x200;
+            }
             frame_dx = frame_dy = 0, frame_cut = 1;
             if (known && camera_known) {
                 frame_dx = cx + vx - camera_x, frame_dy = cy + vy - camera_y, frame_cut = 0; /* the view, shifted */
+                if (wrap) frame_dx = ((frame_dx + wrap / 2) & (wrap - 1)) - wrap / 2, frame_dy = ((frame_dy + wrap / 2) & (wrap - 1)) - wrap / 2;
                 if (SDL_abs(frame_dx) > VIDEO_SLIDE_MAX || SDL_abs(frame_dy) > VIDEO_SLIDE_MAX) frame_dx = frame_dy = 0, frame_cut = 1;
             }
             camera_known = known, camera_x = cx + vx, camera_y = cy + vy;
