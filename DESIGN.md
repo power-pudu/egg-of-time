@@ -157,8 +157,13 @@ original bytes, and caches the result per region until the region is written.
     into the BG lines past the room's columns, at the world pixel each BG shows there (`ws_steam_bg`: the fill's
     column and row on that layer, with the view's shift), and the room's span for the view's shift and the black
     beyond it widens to the edges' outermost cells (`ws_view_span`), so the view stays centred where Steam's edges
-    go on. Not beside a layer repeating into the margins or a radial picture (Lavos's core), which keep their own
-    sides. Checked in the Millennial Fair's Gato room (0x6: the forest on both sides), the cave 0x1da (rendered
+    go on. Not beside a radial picture (Lavos's core), nor where a layer they are drawn on (BG1-3) repeats into the
+    margins (the Epoch's flight, BG3's clouds): those keep their own sides. A layer they leave alone may repeat: the
+    Telepod's room (0x8) has its warp swirl drifting on BG0 under the room. Where the edges are is beyond the room for
+    the BGs they are not drawn on (BG0): they show there only what they show beyond the room (an effect's own map, a
+    layer repeating into the margins, not one repeating behind all of theirs). Shown as the room, BG0's ring beside
+    the screen, which the game never writes, showed through the holes of the Steam release's trees (the swirl, single
+    pixels moving every 16 rows) and as teal strips at the cave 0x1da's far sides. Checked in the Millennial Fair's Gato room (0x6: the forest on both sides), the cave 0x1da (rendered
     from the Steam data alone, the same cliffs), the Black Omen's battle room (0x134) and 2300 A.D.'s 0x10c.
     Beyond the room is black unless the screen's own side columns (8 each side, sprites left out) showed one
     colour alone the frame before (`void_col`): the Blackbird's halls are one screen wide, their map dark grey around

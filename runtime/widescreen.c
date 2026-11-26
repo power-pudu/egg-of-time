@@ -1490,8 +1490,10 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill, 
     view_x = next_x, view_y = next_y;
     if (ss_in_field()) set_screen_view(field_margin);
     tent_back = 0;
-    /* The Steam release's edges of the room on screen, read once it has held (its tiles in VRAM). Not beside a layer
-     * repeating into the margins or a radial picture, which go on to the view's edges their own way. */
+    /* The Steam release's edges of the room on screen (steam_edges.c). Not beside a radial picture, or where a layer
+     * they are drawn on (BG1-3) repeats into the margins, which go on to the view's edges their own way (the clouds
+     * of the Epoch's flight, BG3). A layer they leave alone may repeat: the Telepod's room (0x8) has its warp swirl
+     * drifting on BG0 under the room, and its edges showed for 3 frames, then went black as it was found drifting. */
     steam_ready = 0;
     uint32_t tilesets = rt_r32(TILESETS);
     if (field && steam && ram_ptr(scroll) && ram_ptr(tilesets) && ram_ptr(rt_r32(tilesets + 0xc))) {
@@ -1501,7 +1503,7 @@ void ws_fill_margins(int margin, int rows, int limit, int limit_rows, int fill, 
     fill_field_margins(margin, rows, limit_rows);
     give_back(tent_back);
     WsRadial radial;
-    if (repeat_bgs || ws_radial(&radial)) steam_ready = 0;
+    if ((repeat_bgs & 0xE) || ws_radial(&radial)) steam_ready = 0;
     next_x = next_y = 0;
     int lo, hi;
     short_room = 0;

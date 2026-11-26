@@ -2271,9 +2271,17 @@ static uint16_t room_bld[2][2];
 static int room_bld_seen[2];
 
 /* Widescreen: beside the room, the Steam release's edges on the BGs that hold the room's layers (ws_steam_bg), where
- * it has them (se_at): a map entry from the BG's own tiles (animated, HD art), or its own picture in the BG palette. */
-static void steam_line(Engine *e, int y, uint32_t dispcnt, uint16_t bgline[4][VIDEO_LINE_MAX], HdLine *bghd, const int *enabled) {
+ * it has them (se_at): a map entry from the BG's own tiles (animated, HD art), or its own picture in the BG palette.
+ * Where they are is beyond the room for the BGs they are not drawn on: such a BG shows there only what it would show
+ * beyond the room (kept: an effect's own map, a layer repeating into the margins), and a repeating layer behind all of
+ * theirs not even that. The Telepod's room (0x8) has its warp swirl drifting on BG0 under the room; its ring beside
+ * the screen, never written by the game, showed through the holes of the Steam release's trees, single pixels
+ * moving every 16 rows. A layer repeating in front of them (a fog drifting over a room) goes on. */
+static void steam_line(Engine *e, int y, uint32_t dispcnt, uint16_t bgline[4][VIDEO_LINE_MAX], HdLine *bghd, const int *enabled, int kept) {
     int m = e->margin, width = SCREEN_W + 2 * m;
+    static uint8_t edge[VIDEO_LINE_MAX]; /* the column is the edges' */
+    int drawn = 0;                       /* the BGs they are drawn on */
+    memset(edge, 0, (size_t)width);
     for (int bg = 1; bg < 4; bg++) {
         int ox, oy, box = margin_bg(e, bg); /* a text box's lines: the margins keep the layer as the frame started */
         uint16_t cnt = box ? e->frame_bg[bg][0] : reg16(e, 0x08 + 2 * bg);
@@ -2286,6 +2294,7 @@ static void steam_line(Engine *e, int y, uint32_t dispcnt, uint16_t bgline[4][VI
             int wx = ox + x - m;
             int32_t code = se_at(bg, wx, wy);
             if (code == SE_OUT) continue;
+            edge[x] = 1, drawn |= 1 << bg;
             bgline[bg][x] = 0;
             if (hd_on) bghd[bg].src[x] = 0;
             if (!code) continue;
@@ -2307,6 +2316,19 @@ static void steam_line(Engine *e, int y, uint32_t dispcnt, uint16_t bgline[4][VI
                 bghd[bg].pal[x] = (uint8_t)(pal | e->id << 4);
             }
         }
+    }
+    for (int bg = 0; bg < 4 && drawn; bg++) {
+        if (drawn >> bg & 1) continue;
+        int p = reg16(e, 0x08 + 2 * bg) & 3, hide = !(kept >> bg & 1);
+        if (!hide && (e->repeat_bgs >> bg & 1)) {
+            hide = 1;
+            for (int s = 1; s < 4; s++) { /* in front of s: a lower priority, or the same and a lower number */
+                int q = reg16(e, 0x08 + 2 * s) & 3;
+                if ((drawn >> s & 1) && (p < q || (p == q && bg < s))) hide = 0;
+            }
+        }
+        for (int x = 0; x < width && hide; x++)
+            if (edge[x]) bgline[bg][x] = 0;
     }
 }
 
@@ -2400,7 +2422,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             else bg_text(e, bg, row[bg], dispcnt, bgline[bg], hd_on ? &bghd[bg] : NULL);
         }
         for (int bg = 0; bg < 4; bg++) if (enabled[bg] && m) fill_bg(e, bg, y, row[bg], dispcnt, bgline[bg]);
-        if (m) steam_line(e, y, dispcnt, bgline, bghd, enabled);
+        if (m) steam_line(e, y, dispcnt, bgline, bghd, enabled, e->repeat_bgs | own_bgs | e->radial_bgs | e->radial_kept);
         /* Camera smoothing: the text box stays still while the field slides. On its lines (BG0/BG1 switched to
          * one-screen maps, margin_bg) the box's pixels go to the party layer, and the slid picture shows the room
          * under the box (the layers as the frame started, as in the margins). */
