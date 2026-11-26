@@ -175,6 +175,7 @@ typedef struct Engine {
     uint8_t radial_bgs;      /* widescreen: text BGs of a radial picture stretched to the view's edges (see bg_radial) */
     WsRadial radial;         /* and its room, in this frame's view */
     uint8_t radial_built;    /* bit per BG: its picture is in radial_pic this frame */
+    uint8_t radial_kept;     /* the room's other layers (512 x 256 maps), drawn as the DS screen shows them (bg_radial_kept) */
     uint8_t solid_bgs;       /* widescreen, this line: text BGs one opaque tile throughout (see solid_256) */
     uint8_t fill_bgs, fill_now; /* widescreen: text BGs the windows alone show that covered a whole screen line last
                                  * frame (fill_now: this frame so far), an effect's fill (see fill_bg) */
@@ -567,11 +568,32 @@ static void bg_radial(Engine *e, int bg, int y, uint32_t dispcnt, uint16_t cnt, 
     }
 }
 
+/* Widescreen: the other layers of a radial picture's room (radial_kept: the background under Lavos's core's rays, a
+ * forest in its last form), drawn line for line as the DS screen shows them, each line with its own scroll: the game
+ * waves the forest by HDMA, its lines' HOFS a few pixels either way of the room's (BG2's). Only the room's columns of
+ * the picture show, wherever a line's scroll takes them, so its sides wave as its lines do; beyond, the layer's map
+ * holds other tiles (a red line past the forest's right side, which the DS screen showed at its right edge where a
+ * line waved that far). Not stretched to the view as the rays are: drawn once a frame with one line's scroll for
+ * all, the forest lost its waves; zoomed, its lines repeated and its top and bottom waved out of step. */
+static void bg_radial_kept(Engine *e, int bg, int y, uint32_t dispcnt, uint16_t cnt, uint16_t hofs, uint16_t vofs, uint16_t *out,
+                           HdLine *hd) {
+    int m = e->margin;
+    const WsRadial *rd = &e->radial;
+    if (y < rd->y0 || y >= rd->y1) return;
+    int wave = (int)(((hofs - reg16(e, 0x18) + 256) & 511) - 256); /* the line's scroll against the room's */
+    int x0 = SDL_max(rd->x0 - wave, -m), x1 = SDL_min(rd->x1 - wave, SCREEN_W + m); /* the room's columns on this line */
+    if (x0 < x1) bg_text_cols(e, bg, y, dispcnt, cnt, hofs, vofs, x0, x1, out, hd);
+}
+
 static void bg_text(Engine *e, int bg, int y, uint32_t dispcnt, uint16_t *out, HdLine *hd) {
     int m = e->margin;
     uint16_t cnt = reg16(e, 0x08 + 2 * bg), hofs = reg16(e, 0x10 + 4 * bg), vofs = reg16(e, 0x12 + 4 * bg);
     if (m && (e->radial_bgs >> bg & 1) && bg && (cnt & 0xC000) == 0x4000) { /* the room's 512 x 256 maps */
         bg_radial(e, bg, y, dispcnt, cnt, hofs, vofs, out, hd);
+        return;
+    }
+    if (m && (e->radial_kept >> bg & 1) && (cnt & 0xC000) == 0x4000) {
+        bg_radial_kept(e, bg, y, dispcnt, cnt, hofs, vofs, out, hd);
         return;
     }
     /* A picture reflected at the screen's sides is at its top and bottom too. */
@@ -2034,14 +2056,22 @@ static void engine_frame_start(Engine *e) {
             e->void_col = e->void_now == 1 ? e->void_now_col : 0xFF000000u, e->void_now = 0;
             e->radial_bgs = e->margin ? (uint8_t)ws_radial(&e->radial) : 0;
             e->radial_built = 0;
-            /* A radial picture's room is stretched to the view's edges, its layers with it: none repeats. Repeated,
-             * Lavos's core's BG3 (its rows wavering by HDMA) showed the red at the screen's right side at both sides
-             * of the 4:3 picture; drawn as it is (an HDMA layer), the red line its map holds beyond that side. */
-            e->repeat_bgs = e->margin && !e->radial_bgs ? ws_repeat_bgs() & e->shown_bgs : 0;
+            /* Beside a radial picture stretched to the view's edges, the room's other layers stay in the room at their
+             * own size, as the DS screen shows them: none repeats, nor is drawn beyond as it is (an HDMA layer: Lavos's
+             * core's BG3 wavering line by line). Stretched with the rays, its forest lost its waves (one line's scroll
+             * for all of them); repeated, the red at the screen's right side showed at both sides of the 4:3 picture;
+             * drawn as it is, the red line its map holds beyond that side. They are drawn line for line as the DS
+             * screen shows them, each with its wave (bg_radial_kept): the core's last form shows its forest in the middle,
+             * wavering, the rays stretched over it and beyond, as the game's Steam release shows it. */
+            e->radial_kept = 0;
+            for (int bg = 0; e->radial_bgs && bg < 4; bg++)
+                if (!(e->radial_bgs >> bg & 1) && (reg16(e, 0x08 + 2 * bg) & 0xC000) == 0x4000 && (dispcnt & (0x100u << bg)))
+                    e->radial_kept |= (uint8_t)(1u << bg);
+            e->repeat_bgs = e->margin && !(e->radial_bgs | e->radial_kept) ? ws_repeat_bgs() & e->shown_bgs : 0;
             for (int bg = 0; bg < 4; bg++)
                 e->row_period[bg] = e->margin && bg_rows_repeat(e, bg, dispcnt, ws_bg_row_period(bg)) ? ws_bg_row_period(bg) : 0;
             e->wide_bgs = e->margin ? (uint8_t)ws_wide_picture_bgs() : 0;
-            e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs || e->radial_bgs) &&
+            e->room_clip = e->margin && (!SDL_GetAtomicInt(&fill_sides) || e->repeat_bgs || e->radial_bgs || e->radial_kept) &&
                            ws_room_span(&e->room_x0, &e->room_x1);
             int rx = 0, ry = 0, rk = ws_camera(&rx, &ry); /* camera motion into this frame (camera smoothing) */
             int cx = read_x, cy = read_y, known = read_known;
@@ -2362,7 +2392,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             int wx = SDL_clamp(x - m, 0, SCREEN_W - 1), side = x - m != wx || (!pass && box) || !on_screen;
             int still = 0; /* a text box pixel (the party layer keeps it) */
             int beyond = pass != 2 && e->room_clip && (x - m < e->room_x0 || x - m >= e->room_x1 || (e->rows && (y < e->room_y0 || y >= e->room_y1)));
-            int bgs = beyond ? e->repeat_bgs | own_bgs | e->radial_bgs : 0xF; /* the BGs shown in this column */
+            int bgs = beyond ? e->repeat_bgs | own_bgs | e->radial_bgs | e->radial_kept : 0xF; /* the BGs shown in this column */
             for (int bg = 0; bg < 2; bg++) still |= (pass == 2 || !e->rows) && (box >> bg & 1) && x - m == wx && (bgline[bg][x] & OPAQUE);
             const int *pr = prio[side];
             uint16_t bldcnt = bld[side][0], bldalpha = bld[side][1];

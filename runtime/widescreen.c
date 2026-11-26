@@ -665,12 +665,13 @@ int ws_wide_picture_bgs(void) {
 
 /* One-screen rooms whose BGs hold a radial picture centred in the room (BGs by location): video.c stretches it
  * about the room's middle to the view's edges. Lavos's core (0x1df): the green rays around the battle on BG2 (BG1
- * its priority tiles), added onto BG3 (near black, its rows wavering by HDMA; past the screen's right side its map
- * holds a red line, a few pixels of it at that side). Its map and tiles never change: the game cycles colours 1-14
- * of palettes 5-7 (one step every 2 frames), and along each ray a pixel's colour number goes up by one every ~5%
- * further out, so the colours flow along the rays. The room map beyond its 16 columns holds dark bands of other tiles, and beyond the
- * room the margins were black, BG3 alone repeating under nothing: a 4:3 box. */
-static const struct { uint16_t location; uint8_t bgs; } radial_rooms[] = {{0x1df, 1 << 1 | 1 << 2 | 1 << 3}};
+ * its priority tiles). Its map and tiles never change: the game cycles colours 1-14 of palettes 5-7 (one step every
+ * 2 frames), and along each ray a pixel's colour number goes up by one every ~5% further out, so the colours flow
+ * along the rays. The room map beyond its 16 columns holds dark bands of other tiles, and beyond the room the margins
+ * were black: a 4:3 box. The rays are added onto BG3, the core's background picture (near black at first, a forest in
+ * its last form), its lines wavering by HDMA (HOFS -2..2 against the room's, a wave 28 lines long): not stretched to
+ * the view, it is drawn as the DS screen shows it, in the room's middle (video.c radial_kept). */
+static const struct { uint16_t location; uint8_t bgs; } radial_rooms[] = {{0x1df, 1 << 1 | 1 << 2}};
 
 int ws_radial(WsRadial *r) {
     if (!ss_in_field() || !ws_room_span(&r->x0, &r->x1) || r->x1 - r->x0 != SCREEN_W) return 0;
