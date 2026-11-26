@@ -24,6 +24,10 @@ and mods.
   reverse-engineering analysis and wrote the recompiler, the runtime and the documentation, under the direction
   of the repository owner.
 
+## Save Editor
+
+To edit your in-game saves (`rom\CT.sav`), use **[EoT Save Editor](https://github.com/power-pudu/eot-save-editor)**.
+
 ## Playing on Windows
 
 > [!WARNING]
