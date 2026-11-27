@@ -122,6 +122,8 @@ static const Text texts[] = {
      "文字枠も縮小するか 元の大きさのままか。"},
     {"Repeat small rooms' tiles beside them.", "R\xC3\xA9p\xC3\xA8te les tuiles \xC3\xA0 c\xC3\xB4t\xC3\xA9 des petites pi\xC3\xA8" "ces.",
      "せまい部屋の両側に タイルを並べます。"},
+    {"Endings seen unlock Steam achievements.", "Les fins vues d\xC3\xA9" "bloquent les succ\xC3\xA8s Steam.",
+     "見た終わりを Steamの 実績に します。"},
     {"Room sides as the Steam release draws them.", "Les c\xC3\xB4t\xC3\xA9s des salles comme dans la version Steam.",
      "部屋の両側を Steam版のように描きます。"},
     {"The bottom screen's map, at the top left.", "La carte de l'\xC3\xA9" "cran du bas, en haut \xC3\xA0 gauche.",

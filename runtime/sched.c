@@ -10,6 +10,7 @@
 #include "cheevos.h"
 #include "rt.h"
 #include "single_screen.h"
+#include "steam_presence.h"
 #include "video.h"
 
 uint64_t rt_frame_count;
@@ -105,6 +106,7 @@ static void video_line_start(uint64_t abs_line) {
         rt_frame_count++;
         video_end_frame();
         cheevos_frame();
+        sp_frame();
         cheats_frame();
         uint32_t keys = ss_game_keys(rt_keys);
         /* PAD_Read ORs this into KEYINPUT: X = bit 10, Y = bit 11, debug = bit 13 (1 = released);

@@ -143,7 +143,7 @@ original bytes, and caches the result per region until the region is written.
     and the folder chosen is tried and kept as `steampath` in eggoftime.ini. Once connected the page lists what the
     copy is used for, each Yes by default: Import extended maps (`steamedges`, below), Trigger Steam achievements,
     Override cutscenes, music and sounds, Use Steam translation and, with it, Translation language (the copy's
-    `Localize/<code>/msg/` folders); all but the first are still to come.
+    `Localize/<code>/msg/` folders); cutscenes, music, sounds and translation are still to come.
   - Steam presence (`runtime/steam_presence.c`, Windows): with a Steam copy connected, Steam shows the player in
     the game while Egg of Time runs. The copy's `steam_api.dll` is 32-bit, so `egg-steam.exe`
     (`tools/steam_helper/egg_steam.c`, built 32-bit by the same llvm-mingw with `--target=i686-w64-mingw32`, shipped
@@ -151,6 +151,16 @@ original bytes, and caches the result per region until the region is written.
     `SteamAPI_Init`, then runs callbacks until its standard input closes; a job object (kill on close) ends it with
     Egg of Time. Its answer line (`ok <app id>`, or why not: Steam not running, game not owned) goes to the log.
     Nothing of Valve's is shipped: the DLL is the player's.
+  - Trigger Steam achievements (`steamcheevos`): the Steam release's 13 achievements are the 13 endings, in the
+    order of the Extras' Ending list (`ChronoTrigger_achievement001` = ending 1, Beyond Time, ... 013 = the
+    epilogue; the Steam copy's ending titles list them so). The game keeps the endings seen in its system data, a
+    bit each: u16 at 0x02074558 (JP 0x02074578; object 0x02072088 + 0x24d0, read by main 0x0202dfc0 for the Ending
+    list; loaded with the system data, all set in a completed save). Each frame (`sp_frame`, at VBlank) the bits not
+    yet sent go to the helper as `unlock <api name>` lines on its standard input, so endings a save had already seen
+    unlock once it loads. The helper asks for the player's stats (`RequestCurrentStats`), keeps unlocks until they
+    arrive (GetAchievement fails until then), then `SetAchievement` for each one not yet unlocked and `StoreStats`
+    (Steam shows its notification), answering `unlocked <name>` to the log. Flat API (`SteamAPI_SteamUserStats_v012`
+    and `SteamAPI_ISteamUserStats_*`) through GetProcAddress.
   - Import extended maps: beside a room, the tiles the game's Steam release draws there (`runtime/steam_edges.c`),
     in widescreen. It is read at start-up from the player's own copy (`steampath`, else `EGG_STEAM_DIR`, else Steam's
     registry key or home folders and every library in `libraryfolders.vdf`; a folder picked in the menu while none
