@@ -151,7 +151,10 @@ original bytes, and caches the result per region until the region is written.
     the sides were black through the fade into a room (the Millennial Fair into Gato's room). A cell names one of the
     room's metatiles 0-511, defined as the DS game defines them (`ChipTable`: the same 3 bytes a corner; equal to the
     DS RAM's in every room tried), so where they match and the DS tile in VRAM has pixels it is the DS map entry,
-    drawn from the BG's own tiles: animated, with HD art and the room's fades. A redefined metatile, a tile the DS does not load, and the pictures
+    drawn from the BG's own tiles: animated, with HD art and the room's fades. Leaving a room, the game sets the next scene's location
+    some frames before its room (the Telepod's room read the fair's 0x1b7 for 15 frames): a location whose edges do not
+    fit the room on screen (their width the room's and up to 8 columns a side) is not taken, and the room keeps its
+    edges; taken, the fair's map was laid against the Telepod's 16 columns and the sides went black until the fade. A redefined metatile, a tile the DS does not load, and the pictures
     the Steam release added (pages 2 and up, `cgext*` sheets) are drawn from its pixels (its chip sets, `cg<set>.bin`)
     in the room's palette (`se_picture`). Two cells on one BG tile are merged into a picture. `steam_line` draws them
     into the BG lines past the room's columns, at the world pixel each BG shows there (`ws_steam_bg`: the fill's

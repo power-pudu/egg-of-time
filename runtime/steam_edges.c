@@ -212,6 +212,7 @@ int se_available(void) { return SDL_GetAtomicInt(&found); }
  * this long (its tiles in VRAM), they are built again with the room's own tiles where they are the same (animated,
  * with HD art): the same pixels. */
 #define SETTLE_FRAMES 8
+#define MARGIN_MAX 8 /* the Steam release's edges: 4 to 6 columns a side */
 enum { SLOTS = 6, SET_SIZE = 128 * 64 }; /* a chip set: 128 tiles of 8x8, one colour index a pixel */
 
 static struct {
@@ -382,7 +383,7 @@ static void build_room(int own_tiles) {
     uint8_t *ext = steam_file(name, &ext_n);
     int w = ext && ext_n >= 2 ? ext[0] : 0, h = ext && ext_n >= 2 ? ext[1] : 0;
     int beyond = w - (room.right + 1);
-    if (!info || info_n < 6 || !w || !h || ext_n < 2 + (size_t)8 * w * h || beyond < 0 || beyond & 1) {
+    if (!info || info_n < 6 || !w || !h || ext_n < 2 + (size_t)8 * w * h || beyond < 0 || beyond & 1 || beyond > 2 * MARGIN_MAX) {
         free(info), free(ext);
         return;
     }
@@ -438,8 +439,30 @@ static void build_room(int own_tiles) {
                room.pictures_n, own_tiles ? ", the room's tiles" : "");
 }
 
+/* The location's edges fit a room whose last column is right: their width is the room's and up to MARGIN_MAX columns a
+ * side, or it has none (a room of its own all the same). Remembered for the last location asked. */
+static int fits(int location, int right) {
+    static int asked = -1, asked_right, answer;
+    if (location == asked && right == asked_right) return answer;
+    char name[96];
+    size_t n = 0;
+    snprintf(name, sizeof name, "Game/field/mapext_bin/mapext_%d.bin", location);
+    uint8_t *ext = steam_file(name, &n);
+    int beyond = ext && n >= 2 ? ext[0] - (right + 1) : 0;
+    free(ext);
+    asked = location, asked_right = right, answer = !ext || (beyond >= 0 && !(beyond & 1) && beyond <= 2 * MARGIN_MAX);
+    return answer;
+}
+
 int se_room(int location, int left, int right, uint32_t metatiles, uint32_t chr) {
     if (!se_available()) return 0;
+    /* Leaving a room, the game sets the next scene's location some frames before its room (the Telepod's room, 0x8,
+     * read the fair's 0x1b7 for 15 frames): a location whose edges do not fit the room on screen is not its own, and
+     * the room keeps its edges. Taken for the room, the fair's 48-column map was laid against the Telepod's 16
+     * columns, its strip far beyond the screen, and the sides went black until the fade. */
+    if (location != room.location && left == room.left && right == room.right && metatiles == room.metatiles && chr == room.chr &&
+        !fits(location, right))
+        location = room.location;
     if (location != room.location || left != room.left || right != room.right || metatiles != room.metatiles || chr != room.chr) {
         forget_room();
         room.location = location, room.left = left, room.right = right, room.metatiles = metatiles, room.chr = chr;
