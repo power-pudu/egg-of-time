@@ -60,10 +60,13 @@ int ws_radial(WsRadial *r);
 /* The field camera's position in the room, or the world map's view in the world (pixels); 0 elsewhere. */
 int ws_camera(int *x, int *y);
 /* The window positions of each line of the coming frame (WIN0H | WIN1H << 16), when the game's software HDMA
- * sets them line by line (battle effects, Magus's portal; a window it leaves alone keeps its register); else 0. */
-int ws_window_lines(uint32_t h[192]);
+ * sets them line by line (battle effects, Magus's portal; a window it leaves alone keeps its register); else 0.
+ * under: 1 on the lines the game blanked under the battle menu, given in h as the effect drew them. */
+int ws_window_lines(uint32_t h[192], uint8_t under[192]);
 /* The BGs (bit per BG) whose scroll the game's software HDMA sets line by line: an effect's own picture. */
 int ws_hdma_bgs(void);
+/* In a battle, 1 while its menu is at the bottom of the screen (Y moves it to the top and back), else 0. */
+int ws_battle_menu_bottom(void);
 /* 1 when it sets anything besides the windows line by line: a BG's scroll, another register, palette entries. */
 int ws_hdma_effect(void);
 /* Writes what the game's software HDMA writes before line `line` (registers, palette entries), keeping what was

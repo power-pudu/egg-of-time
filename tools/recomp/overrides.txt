@@ -50,6 +50,10 @@ main 020345dc rt_ws_draw_ui_entry wrap jp=020345e8
 # within the view's reach too (runtime/widescreen.c).
 ov000 0210efe4 rt_ws_effect_sprite wrap jp=0210f004
 
+# A battle effect's window table, blanked under the battle menu: kept as built, for the lines beyond the DS screen
+# in widescreen (runtime/widescreen.c).
+ov000 0210da58 rt_ws_window_blank wrap jp=0210da78
+
 # World map sprites (drawn while their screen X is within -15..255 of the 4:3 view) and objects (on screen while
 # within -16..271; the birds go away outside): in widescreen, the SNES-style compare those tests use is widened by
 # the margins at those calls, and the converted X of the right margin's pieces

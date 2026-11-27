@@ -1030,6 +1030,7 @@ static inline uint32_t to_rgba(uint16_t c) {
  * that do not lean out (the steps the game leaves under the battle menu) stops at the screen side. */
 enum { EDGE_RUN = 8 }; /* lines the slope is measured over */
 static uint32_t win_lines[SCREEN_H]; /* WIN0H | WIN1H << 16 by line, as the frame started */
+static uint8_t win_under_menu[SCREEN_H]; /* lines the game blanked under the battle menu, set back (ws_window_lines) */
 static int16_t win_ext[SCREEN_H][2][2]; /* by line, window: first column in it, first after it (screen columns) */
 static int win_ext_on;
 /* Lines before win_top are left out: in battles the game blanks the table's lines under the menu (2-45) but leaves
@@ -1235,6 +1236,13 @@ static void window_tail(int w, int end, int from, int dir) {
             far = i;
         if (far != y) win_span(far, w, &xf[0], &xf[1]), tail_dx[w][end][s] = (float)(x[s] - xf[s]) / (float)(y - far);
     }
+    /* Found inward of the end line (the band has the frame before's lines too): a shape whose sides meet before that
+     * line ends on its own lines. Carried on from its tip, a triple tech's pyramid, a face narrowing to a point above
+     * line 145, showed a strip of it under the line, apart from it. */
+    float d = (float)(from - y);
+    if (y != from && !tail_oval[w][end][0] && !tail_oval[w][end][1] &&
+        tail_x[w][end][0] + tail_dx[w][end][0] * d >= tail_x[w][end][1] + tail_dx[w][end][1] * d)
+        tail_y[w][end] = -1;
 }
 
 /* Column x of row y (beyond the band's end `end`) in window w's carried sides, or its oval. */
@@ -1765,9 +1773,13 @@ static int map_period(const Engine *e, int bg, uint32_t dispcnt) {
             uint32_t block = (xx >> 8) + (yy >> 8) * (w >> 8);
             ent[r][c] = vr16(e->bg, e->bg_mask, scr + block * 0x800 + ((yy & 255) >> 3) * 64 + ((xx & 255) >> 3) * 2);
         }
-    for (int p = 1; p <= 12; p++) {
+    /* Only the rows on the lines the effect is drawn on (window_beyond): under the line it ends on, the game leaves
+     * the map empty (a triple tech's pyramid, cut at line 145 by the battle panel, was taken for a picture and its
+     * texture ended flat there, under its window carried on). */
+    int r0 = (beyond_first + 7) / 8, r1 = SDL_min(ROWS, (beyond_last + 1) / 8);
+    for (int p = 1; p <= 12 && r1 - r0 >= 2 * p; p++) { /* the pattern seen twice at least */
         int same = 1;
-        for (int r = 0; same && r + p < ROWS; r++) same = !memcmp(ent[r], ent[r + p], sizeof ent[r]);
+        for (int r = r0; same && r + p < r1; r++) same = !memcmp(ent[r], ent[r + p], sizeof ent[r]);
         if (same) return p;
     }
     return 0;
@@ -2007,8 +2019,10 @@ static void effect_rows(Engine *e) {
             for (int w = 0; w < 2; w++)
                 if (win_span(y, w, &x[0], &x[1]) && (x[0] < 0 || x[1] >= SCREEN_W || x[1] - x[0] > BEAM_WIDTH)) beam = 0;
         e->rays_up = top <= 0 || (top == BATTLE_TOP && !beam);
+        /* Line 145 is the menu's edge only with the menu at the bottom: a triple tech's pyramid, lines 56-145, was taken
+         * for a shape ending there (its top under line 46 the only sign of the menu's place) and ended flat. */
         e->rays_down = bottom >= SCREEN_H - 1 || bottom == BATTLE_BOTTOM - 1 ||
-                       (bottom == SCREEN_H - BATTLE_TOP - 1 && top < BATTLE_TOP); /* the menu at the bottom, not the top */
+                       (bottom == SCREEN_H - BATTLE_TOP - 1 && ws_battle_menu_bottom());
         return;
     }
     /* A shape the windows cut out of the room alone (the HDMA sets nothing else line by line) is not stretched: it
@@ -2109,7 +2123,7 @@ static void engine_frame_start(Engine *e) {
             ws_view_shift(&e->view_x, &e->view_y, &e->view_bgs);
             for (int bg = 0; bg < 4; bg++) ws_bg_shift(bg, &e->bg_dx[bg], &e->bg_dy[bg]), e->drift_dy[bg] = ws_drift_dy(bg);
             ws_sprite_lag(&e->obj_dx, &e->obj_dy);
-            win_ext_on = e->margin && ws_window_lines(win_lines);
+            win_ext_on = e->margin && ws_window_lines(win_lines, win_under_menu);
             if (win_ext_on) window_margins();
             if (win_ext_on && e->rows) effect_rows(e);
             top_box_rows = top_box_now, top_box_now = 0;
@@ -2410,9 +2424,13 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             /* A map whose rows repeat (a pattern tiled down it: the pillars of a triple tech) goes on there as its
              * pattern does, from the line the window goes on from: repeating that line, the pillars' tops were
              * streaks. */
-            int p = e->tile_rows[bg] * 8;
-            if (beyond_end >= 0 && (own_bgs >> bg & 1) && p)
-                row[bg] = beyond_end ? y - (y - beyond_last + p - 1) / p * p : y + (beyond_first - y + p - 1) / p * p;
+            /* Shifted with the view at a room's end, the map's row is the game's line the row shows (gy), as for the
+             * windows: tested at the screen's row, a triple tech's pyramid, the view 16 rows down in Lavos's room,
+             * showed its map's empty rows under its last line (145) down to line 161, cut flat above the panel. */
+            int p = e->tile_rows[bg] * 8, dy = (reg16(e, 0x08 + 2 * bg) & 0x4000) && (e->view_bgs >> bg & 1) ? e->bg_dy[bg] : 0, gy = y + dy;
+            int bend = e->band_rows ? -1 : gy < beyond_first && beyond_on[0] ? 0 : gy > beyond_last && beyond_on[1] ? 1 : -1;
+            if (bend >= 0 && (own_bgs >> bg & 1) && p)
+                row[bg] = bend ? y - (gy - beyond_last + p - 1) / p * p : y + (beyond_first - gy + p - 1) / p * p;
             if (mode == 6 && e->id == 0) {
                 if (bg == 2) bg_affine(e, 2, dispcnt, 1, bgline[2]);
                 else if (bg != 0) enabled[bg] = 0;
@@ -2481,7 +2499,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         int win0 = dispcnt & 0x2000, win1 = dispcnt & 0x4000, winobj = dispcnt & 0x8000;
         uint16_t winin = reg16(e, 0x48), winout = reg16(e, 0x4A);
         uint16_t w0h = reg16(e, 0x40), w1h = reg16(e, 0x42), w0v = reg16(e, 0x44), w1v = reg16(e, 0x46);
-        if (shifted) w0h = (uint16_t)win_lines[wy], w1h = (uint16_t)(win_lines[wy] >> 16);
+        if (shifted || (win_ext_on && wy >= 0 && wy < SCREEN_H && win_under_menu[wy])) w0h = (uint16_t)win_lines[wy], w1h = (uint16_t)(win_lines[wy] >> 16);
         int in_w0y = win0 && in_range(wy, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(wy, w1v >> 8, w1v & 0xFF);
         int ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h); /* the line as the table has it */
         const int16_t *ext0 = ext ? win_ext[wy][0] : NULL, *ext1 = ext ? win_ext[wy][1] : NULL;
@@ -2506,7 +2524,23 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
         float ray_sp[2][2] = {{0, 0}, {0, 0}}; /* rays: the windows' spans on a row beyond their lines */
         int ray_row = e->rays && (vy < e->band_top || vy >= e->band_top + e->band_rows);
         for (int w = 0; w < 2 && ray_row; w++) {
-            if (e->rays >> w & 1) ray_span(&ray_a[w], &ray_b[w], vy < e->band_top ? ray_first_part[w] : ray_last_part[w], vy, &ray_sp[w][0], &ray_sp[w][1]);
+            if (!(e->rays >> w & 1)) continue;
+            int part = vy < e->band_top ? ray_first_part[w] : ray_last_part[w];
+            ray_span(&ray_a[w], &ray_b[w], part, vy, &ray_sp[w][0], &ray_sp[w][1]);
+            /* Between the edges, past where they meet, the game drawing the window on the band's side of that point
+             * alone: the wedge closed there (a triple tech's pyramid, a face narrowing to its point above line 145,
+             * opened again under it as a second wedge, apart from it). Rays crossing at their centre go on. */
+            float ddx = ray_a[w].dx - ray_b[w].dx;
+            if (!part && SDL_fabsf(ddx) > 1e-4f) {
+                int yc = (int)SDL_floorf(-(ray_a[w].x0 - ray_b[w].x0) / ddx), dir = vy > yc ? 1 : -1, near = 0, far = 0, xs[2];
+                for (int i = 1; i <= 4; i++) {
+                    int yn = yc - dir * i, yf = yc + dir * i;
+                    near |= yn >= 0 && yn < SCREEN_H && win_span(yn, w, &xs[0], &xs[1]) > 0;
+                    far |= yf >= 0 && yf < SCREEN_H && win_span(yf, w, &xs[0], &xs[1]) > 0;
+                }
+                if (yc > -SCREEN_H && yc < 2 * SCREEN_H && (vy - yc) * (vy < e->band_top ? -1 : 1) > 0 && near && !far)
+                    ray_sp[w][0] = ray_sp[w][1] = 0;
+            }
         }
 
         /* Pass 0: the picture (without the party when it has its own layer); pass 1: the shifted picture of the
@@ -2537,7 +2571,7 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             win0 = dispcnt & 0x2000, win1 = dispcnt & 0x4000, winobj = dispcnt & 0x8000;
             winin = reg16(e, 0x48), winout = reg16(e, 0x4A);
             w0h = reg16(e, 0x40), w1h = reg16(e, 0x42), w0v = reg16(e, 0x44), w1v = reg16(e, 0x46);
-            if (shifted) w0h = (uint16_t)win_lines[wy], w1h = (uint16_t)(win_lines[wy] >> 16);
+            if (shifted || (win_ext_on && wy >= 0 && wy < SCREEN_H && win_under_menu[wy])) w0h = (uint16_t)win_lines[wy], w1h = (uint16_t)(win_lines[wy] >> 16);
             in_w0y = win0 && in_range(wy, w0v >> 8, w0v & 0xFF), in_w1y = win1 && in_range(wy, w1v >> 8, w1v & 0xFF);
             ext = m && win_ext_on && win_lines[wy] == ((uint32_t)w1h << 16 | w0h);
             ext0 = ext ? win_ext[wy][0] : NULL, ext1 = ext ? win_ext[wy][1] : NULL;

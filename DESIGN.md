@@ -388,6 +388,24 @@ original bytes, and caches the result per region until the region is written.
       writes for it (`row_line`): Lavos's room (location 0x1a7) lights Schala with WIN0 from line 97 down, and the
       text box above took line 97's BG0 scroll, its text sliding out of the box in a zig-zag, and BG0's glow lit a
       band under it.
+      An effect's map that repeats down it (`map_period`) goes on beyond the line its windows end on as its pattern
+      does, from the line the map shows on the row: with the view shifted at a room's end, the row's line plus the
+      BG's shift, as the windows have it. Tested at the screen's row, a triple tech's rotating pyramid (BG0 in a
+      WIN0 polygon ending at line 145, the view 16 rows down in Lavos's battle) showed the map's empty rows down
+      to line 161, cut flat above the battle panel; with the panel at the top (Y) the game does not cut it.
+      The pattern is looked for on the effect's own lines only (down to the line its windows end on): the map is empty
+      under them, and taken whole the pyramid's texture was a picture on some frames, ending flat. Its straight faces
+      fit as rays on some frames; rays go on below line 145 only with the battle menu at the bottom, which is ov003's
+      flag (`ws_battle_menu_bottom`, 0x021de0ec, 1 at the bottom, 0 at the top, found by toggling it with Y): guessed
+      from the effect's top being above line 46, the pyramid (lines 56-145) ended flat there. A face narrowing to its
+      point above line 145 is not carried on past that point: its edges, crossed, opened as a second wedge under it
+      (the band's lines from the frame before reaching 145), and a window's sides found inward of the band's end that
+      meet before it are not carried on either (`window_tail`).
+      The game draws an effect's window table for all 192 lines and only then blanks the 44 under the menu (ov000
+      0x0210da58, overridden as `rt_ws_window_blank`): the table is kept as built for the two tables it takes turns
+      with, and with the menu at the bottom `ws_window_lines` gives those lines back as drawn (marked so the render
+      takes them from the table, the registers holding the blanked values). Carried on from line 145 along its
+      slopes, the pyramid's corners under it went on to the end of the view.
       A ring is not stretched (its circle would turn into an ellipse), nor are its edges carried on beyond the
       screen's sides (its arcs became straight bars): an enemy's "Rainbow Beam: Blind" grows a ring made of WIN0
       (the left arc) and WIN1 (the right arc), coloured line by line through the backdrop. When the window edges

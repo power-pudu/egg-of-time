@@ -1549,7 +1549,35 @@ void ws_sprite_lag(int *x, int *y) {
 #define HDMA_CHANNELS 0x027e0068u
 #define HDMA_END GAME_ADDR(0x02057944u, 0x02057974u)
 
-int ws_window_lines(uint32_t h[SCREEN_H]) {
+/* The table a battle effect's windows are set from (ov000 0x0210da58, r0 = the effects, the table at +0x1c90: WIN0H |
+ * WIN1H << 16 by line) as built, before the game blanks its lines under the battle menu (44 from the menu's first
+ * line) and under a box. Kept for the two tables the game takes turns with, so the lines under the menu at the
+ * bottom are the effect's own beyond the DS screen: carried on from line 145 instead, a triple tech's pyramid had
+ * its corners there thrown to the end of the view. */
+static uint32_t built_at[2], built[2][SCREEN_H];
+static int built_next;
+void rt_ws_window_blank(CPU *cpu) {
+    uint32_t table = rt_r32(R[0] + 0x1c90);
+    if (!cpu->resume_pc && ram_ptr(table) && ram_ptr(table + 4u * (SCREEN_H - 1))) {
+        int k = table == built_at[0] ? 0 : table == built_at[1] ? 1 : (built_next ^= 1);
+        built_at[k] = table;
+        for (int y = 0; y < SCREEN_H; y++) built[k][y] = rt_r32(table + 4u * (uint32_t)y);
+    }
+    rt_call_wrapped(cpu, "ov000", GAME_ADDR(0x0210da58u, 0x0210da78u));
+}
+
+/* The lines of table src (as ws_window_lines read them into h) blanked under the battle menu at the bottom: set
+ * back as built, marked in under (1). Only while the rest of the table is as it was built. */
+static void window_unblank(uint32_t src, uint32_t h[SCREEN_H], uint8_t under[SCREEN_H]) {
+    enum { MENU_FIRST = SCREEN_H - 46 };
+    int k = src == built_at[0] ? 0 : src == built_at[1] ? 1 : -1;
+    if (k < 0 || !ws_battle_menu_bottom()) return;
+    for (int y = 0; y < MENU_FIRST; y++) if (h[y] != built[k][y]) return;
+    for (int y = MENU_FIRST; y < SCREEN_H; y++) if (!h[y] && built[k][y]) h[y] = built[k][y], under[y] = 1;
+}
+
+int ws_window_lines(uint32_t h[SCREEN_H], uint8_t under[SCREEN_H]) {
+    memset(under, 0, SCREEN_H);
     uint32_t end = rt_r32(HDMA_END);
     if (end < HDMA_CHANNELS || end > HDMA_CHANNELS + 0x28 * 32) return 0;
     int found = 0; /* bit per window set by a halfword channel */
@@ -1560,6 +1588,7 @@ int ws_window_lines(uint32_t h[SCREEN_H]) {
             continue;
         if ((flags & 2) && dst == 0x04000040u && rt_r32(c + 0x14) == 4) {
             for (int y = 0; y < SCREEN_H; y++) h[y] = rt_r32(src + 4u * (uint32_t)y);
+            window_unblank(src, h, under);
             return 1;
         }
         if (!(flags & 2) && (dst == 0x04000040u || dst == 0x04000042u) && rt_r32(c + 0x14) == 2) {
@@ -1610,6 +1639,11 @@ int ws_hdma_bgs(void) {
     }
     return bgs;
 }
+
+/* ov003's flag for its menu's place: 1 at the bottom, 0 at the top (found by toggling it with Y, the menu's sprites
+ * moving from line 146 to line 2 with it). */
+#define BATTLE_MENU_BOTTOM 0x021de0ecu
+int ws_battle_menu_bottom(void) { return rt_overlay_resident(3) && rt_r8(BATTLE_MENU_BOTTOM) == 1; }
 
 /* 1 when the game's software HDMA draws something of its own line by line besides the windows: a BG's scroll
  * (ws_hdma_bgs), or another register or palette entry that changes from line to line (Rainbow Storm's stars,
