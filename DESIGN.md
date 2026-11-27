@@ -166,7 +166,7 @@ original bytes, and caches the result per region until the region is written.
     the BGs they are not drawn on (BG0): they show there only what they show beyond the room (an effect's own map, a
     layer repeating into the margins, not one repeating behind all of theirs). Shown as the room, BG0's ring beside
     the screen, which the game never writes, showed through the holes of the Steam release's trees (the swirl, single
-    pixels moving every 16 rows) and as teal strips at the cave 0x1da's far sides. Checked in the Millennial Fair's Gato room (0x6: the forest on both sides), the cave 0x1da (rendered
+    pixels moving every 16 rows) and as teal strips at the cave 0x1da's far sides. With zoom out, a text box's lines draw BG1 from the room as the frame started (under the box while the field slides); its margins are the BG's own line there, edges included: rebuilt from the frame's map, Guardia Forest's (0x13) right side showed the room's trees beside "Obtained Strength Capsule!". Checked in the Millennial Fair's Gato room (0x6: the forest on both sides), the cave 0x1da (rendered
     from the Steam data alone, the same cliffs), the Black Omen's battle room (0x134) and 2300 A.D.'s 0x10c.
     Beyond the room is black unless the screen's own side columns (8 each side, sprites left out) showed one
     colour alone the frame before (`void_col`): the Blackbird's halls are one screen wide, their map dark grey around

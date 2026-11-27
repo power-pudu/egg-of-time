@@ -2435,7 +2435,10 @@ static void render_engine_line(Engine *e, int y, uint32_t *out) {
             const uint16_t *f = e->frame_bg[bg];
             memset(under[bg], 0, sizeof under[bg]);
             int uy = (e->frame_solid >> bg & 1) && !on_screen ? y & 7 : y; /* a one-tile overlay: as bg_text has it */
-            bg_text_cols(e, bg, uy, dispcnt, f[0], f[1], f[2], -m, SCREEN_W + m, under[bg], NULL);
+            bg_text_cols(e, bg, uy, dispcnt, f[0], f[1], f[2], 0, SCREEN_W, under[bg], NULL);
+            /* The margins: the layer's own line there, already the frame's layer with the room's edges on it. */
+            memcpy(under[bg], bgline[bg], (size_t)m * sizeof *under[bg]);
+            memcpy(under[bg] + m + SCREEN_W, bgline[bg] + m + SCREEN_W, (size_t)m * sizeof *under[bg]);
             box |= 1 << bg;
         }
         if (box && !e->party && !e->rows) { /* the party layer starts here: the lines above have nothing on it */
