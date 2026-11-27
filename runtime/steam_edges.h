@@ -10,6 +10,8 @@ int se_available(void);
 /* Main thread, with the game running: the Steam copy in dir (its folder or its resources.bin), when none was found
  * yet. 1 once there is one (an earlier one kept: another applies at the next start). */
 int se_connect(const char *dir);
+/* The Steam copy's folder (NULL without one): where its resources.bin is. */
+const char *se_dir(void);
 /* The translations the copy holds (0 without one), by their folder's code (en, ja, zh-Hans...). */
 int se_language_count(void);
 const char *se_language(int i);

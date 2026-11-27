@@ -3,7 +3,8 @@
 The release holds no game code or data: runtime/game_build.c makes the game library from the player's ROM with
 the tools in kit/ (see DESIGN.md, "Release builds"). This script copies
 
-  <build>/Egg of Time.exe, SDL3, FFmpeg and libcurl DLLs,  the runtime (a build with -DEGG_RUNTIME_ONLY=OFF or ON)
+  <build>/Egg of Time.exe, SDL3, FFmpeg and libcurl DLLs,  the runtime (a build with -DEGG_RUNTIME_ONLY=OFF or ON),
+  egg-steam.exe                                           and the Steam helper (32-bit, Windows)
   mods/
   librashader.dll (--librashader)                         librashader, which runs Slang shader mods
   kit/lib/libeggoftime.a                                  its import library, which the game library links against
@@ -228,7 +229,7 @@ def main():
     # The runtime.
     exe = "Egg of Time.exe" if WINDOWS else "Egg of Time"
     if WINDOWS:
-        for pattern in (exe, "SDL3.dll", "av*.dll", "sw*.dll", "libcurl*.dll"):
+        for pattern in (exe, "SDL3.dll", "av*.dll", "sw*.dll", "libcurl*.dll", "egg-steam.exe"):
             for f in glob.glob(os.path.join(args.build, pattern)):
                 copy(f, os.path.join(out, os.path.basename(f)))
     else:

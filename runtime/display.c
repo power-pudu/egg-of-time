@@ -42,6 +42,7 @@
 #include "movie.h"
 #include "rt.h"
 #include "steam_edges.h"
+#include "steam_presence.h"
 #include "shader.h"
 #include "single_screen.h"
 #include "system_menu.h"
@@ -1082,6 +1083,7 @@ int display_steam_picked(int *ok) {
         snprintf(steam_path, sizeof steam_path, "%s", dir);
         list_steam_languages();
         save_settings();
+        sp_start();
     }
     return 1;
 }

@@ -330,6 +330,16 @@ int se_connect(const char *dir) {
     return 1;
 }
 
+const char *se_dir(void) {
+    static char dir[sizeof archive];
+    if (!se_available()) return NULL;
+    snprintf(dir, sizeof dir, "%s", archive);
+    char *a = strrchr(dir, '/'), *b = strrchr(dir, '\\');
+    if (b > a) a = b;
+    if (a) *a = 0;
+    return dir;
+}
+
 int se_language_count(void) { return se_available() ? language_count : 0; }
 const char *se_language(int i) { return languages[i]; }
 

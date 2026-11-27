@@ -93,6 +93,7 @@ set(RUNTIME_SOURCES
     runtime/spu.c
     runtime/state.c
     runtime/steam_edges.c
+    runtime/steam_presence.c
     runtime/system_menu.c
     runtime/selftest.c
     runtime/shader.c
@@ -163,6 +164,16 @@ if(WIN32)
         add_custom_command(TARGET eggoftime POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CURL_DLLS} $<TARGET_FILE_DIR:eggoftime>)
     endif()
+endif()
+
+# The Steam helper (tools/steam_helper): a 32-bit program that loads the player's Steam copy's steam_api.dll, built
+# with the same compiler for 32-bit Windows (llvm-mingw targets both), next to the executable.
+if(WIN32)
+    set(EGG_STEAM_HELPER $<TARGET_FILE_DIR:eggoftime>/egg-steam.exe)
+    add_custom_command(TARGET eggoftime POST_BUILD
+        COMMAND ${CMAKE_C_COMPILER} --target=i686-w64-mingw32 -O2 -Wall -Wextra -mwindows -s
+                -o ${EGG_STEAM_HELPER} ${CMAKE_SOURCE_DIR}/tools/steam_helper/egg_steam.c -lshell32
+        COMMENT "Building the Steam helper (32-bit)")
 endif()
 
 # Movie, music, sound, translation, shader and graphics mods: empty mods/cutscenes, mods/music, mods/sounds,

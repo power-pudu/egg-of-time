@@ -144,6 +144,13 @@ original bytes, and caches the result per region until the region is written.
     copy is used for, each Yes by default: Import extended maps (`steamedges`, below), Trigger Steam achievements,
     Override cutscenes, music and sounds, Use Steam translation and, with it, Translation language (the copy's
     `Localize/<code>/msg/` folders); all but the first are still to come.
+  - Steam presence (`runtime/steam_presence.c`, Windows): with a Steam copy connected, Steam shows the player in
+    the game while Egg of Time runs. The copy's `steam_api.dll` is 32-bit, so `egg-steam.exe`
+    (`tools/steam_helper/egg_steam.c`, built 32-bit by the same llvm-mingw with `--target=i686-w64-mingw32`, shipped
+    next to the executable) loads it, sets `SteamAppId` from the copy's `steam_appid.txt` (613830) and calls
+    `SteamAPI_Init`, then runs callbacks until its standard input closes; a job object (kill on close) ends it with
+    Egg of Time. Its answer line (`ok <app id>`, or why not: Steam not running, game not owned) goes to the log.
+    Nothing of Valve's is shipped: the DLL is the player's.
   - Import extended maps: beside a room, the tiles the game's Steam release draws there (`runtime/steam_edges.c`),
     in widescreen. It is read at start-up from the player's own copy (`steampath`, else `EGG_STEAM_DIR`, else Steam's
     registry key or home folders and every library in `libraryfolders.vdf`; a folder picked in the menu while none

@@ -14,6 +14,7 @@
 #include "gfx_mod.h"
 #include "rt.h"
 #include "sound.h"
+#include "steam_presence.h"
 #include "system_menu.h"
 #include "ui_text.h"
 #include "video.h"
@@ -271,6 +272,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (!display_init()) return 1;
+    sp_start(); /* Steam shows the game played, with a Steam copy connected */
     controls_init();
     if (!game_build_prepare(argc > 1 ? argv[1] : NULL)) return 1; /* the ROM and the game code */
     cheevos_init(); /* RetroAchievements: logs in with the saved login */
