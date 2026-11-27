@@ -33,7 +33,7 @@ int ws_world_sprite_limit(int rows);
  * repeated); 0 elsewhere. */
 int ws_room_span(int *x0, int *x1);
 /* The columns the view shows of the room: its own, with the Steam release's edges beside them while they are drawn
- * (steam: Steam room edges on, in ws_fill_margins). */
+ * (steam: Import extended maps on, in ws_fill_margins). */
 int ws_view_span(int *x0, int *x1);
 /* BG bg shows the Steam release's room edges this frame: *x, *y the world pixel at the screen's top-left on it (the
  * view's shift at a room's end in it). */

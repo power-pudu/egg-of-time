@@ -115,6 +115,9 @@ static const char *const off_names[] = {"off"};
 static const char *const font_size_names[] = {"default", "3", "3.5", "4", "4.5", "5", "5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12", "12.5", "13", "13.5", "14"};
 static const char *const font_size_labels[] = {"Default", "3 px", "3.5 px", "4 px", "4.5 px", "5 px", "5.5 px", "6 px", "6.5 px", "7 px", "7.5 px", "8 px", "8.5 px", "9 px", "9.5 px", "10 px", "10.5 px", "11 px", "11.5 px", "12 px", "12.5 px", "13 px", "13.5 px", "14 px"};
 static const char **shader_names; /* "off", then shader_key() of each listed shader */
+static const char *const steam_lang_default[] = {"en"};
+static const char **steam_lang_names; /* the Steam copy's translations (se_language) */
+static char saved_steam_lang[16] = "en", steam_path[1024]; /* as eggoftime.ini has them */
 
 static Setting settings[SET_COUNT] = {
     /* The DS's system language, which the game reads at power-on (boot.c): changes apply at the next start. */
@@ -132,9 +135,6 @@ static Setting settings[SET_COUNT] = {
     [SET_ZOOM_UI] = {"zoomtext", "Zoomed out text", 2, 0, zoom_ui_names, zoom_ui_labels},
     /* Widescreen in rooms narrower than the view: No leaves the room as it is, black beside it (video.c). */
     [SET_FILL] = {"fillsides", "Fill screen sides", 2, 0, yesno_names, yesno_labels},
-    /* Widescreen: beside the rooms, the tiles the game's Steam release draws there, read from the player's Steam copy
-     * (steam_edges.c); listed when one is found. */
-    [SET_STEAM] = {"steamedges", "Steam room edges", 2, 1, yesno_names, yesno_labels},
     /* The bottom screen's map, small, over the main screen (single_screen.c). */
     [SET_MINIMAP] = {"minimap", "Minimap", 2, 1, onoff_names, onoff_labels},
     [SET_MINIMAP_SIZE] = {"minimapsize", "Minimap size", 3, 1, minimap_size_names, minimap_size_labels},
@@ -156,6 +156,15 @@ static Setting settings[SET_COUNT] = {
     /* At power-on, the "Licensed by Nintendo" and Square Enix logos left out, and the intro movie (patches.c). */
     [SET_SKIP_LOGOS] = {"skiplogos", "Skip intro logos", 2, 0, onoff_names, onoff_labels},
     [SET_SKIP_MOVIE] = {"skipintro", "Skip intro movie", 2, 0, onoff_names, onoff_labels},
+    /* The Steam version, read from the player's own copy (steam_edges.c), listed once one is connected. Import extended
+     * maps: in widescreen, beside the rooms, the tiles the Steam release draws there. The others are still to come. */
+    [SET_STEAM] = {"steamedges", "Import extended maps", 2, 1, yesno_names, yesno_labels},
+    [SET_STEAM_CHEEVOS] = {"steamcheevos", "Trigger Steam achievements", 2, 1, yesno_names, yesno_labels},
+    [SET_STEAM_MOVIES] = {"steammovies", "Override cutscenes", 2, 1, yesno_names, yesno_labels},
+    [SET_STEAM_MUSIC] = {"steammusic", "Override music", 2, 1, yesno_names, yesno_labels},
+    [SET_STEAM_SOUNDS] = {"steamsounds", "Override sounds", 2, 1, yesno_names, yesno_labels},
+    [SET_STEAM_TEXT] = {"steamtext", "Use Steam translation", 2, 1, yesno_names, yesno_labels},
+    [SET_STEAM_LANG] = {"steamlang", "Translation language", 1, 0, steam_lang_default, NULL}, /* the list: list_steam_languages */
     /* Cheats (cheats.c): EXP and TP won in battle multiplied, the party's HP and MP kept full, the gold at its most. */
     [SET_CHEAT_EXP] = {"cheatexp", "EXP multiplier", 5, 0, multiplier_names, multiplier_labels},
     [SET_CHEAT_TP] = {"cheattp", "TP multiplier", 5, 0, multiplier_names, multiplier_labels},
@@ -345,6 +354,8 @@ static void load_settings(void) {
         val[len] = 0;
         int v;
         if (!strcmp(key, "shader")) snprintf(saved_shader, sizeof saved_shader, "%s", val);
+        if (!strcmp(key, "steamlang")) snprintf(saved_steam_lang, sizeof saved_steam_lang, "%s", val);
+        if (!strcmp(key, "steampath")) snprintf(steam_path, sizeof steam_path, "%s", val);
         if (!strcmp(key, "swap")) swapped = val[0] == '1';
         else if (!strcmp(key, "secondplace")) {
             SDL_Rect r;
@@ -365,7 +376,12 @@ static void save_settings(void) {
     fprintf(f, "# Egg of Time display settings (System Settings menu; F2 layout, F3 swap screens, F4 filter)\n");
     fprintf(f, "swap = %d\n", swapped);
     if (second_rect.w) fprintf(f, "secondplace = %d, %d, %d, %d\n", second_rect.x, second_rect.y, second_rect.w, second_rect.h);
-    for (int i = 0; i < SET_COUNT; i++) fprintf(f, "%s = %s\n", settings[i].key, settings[i].names[settings[i].value]);
+    if (steam_path[0]) fprintf(f, "steampath = %s\n", steam_path);
+    for (int i = 0; i < SET_COUNT; i++) {
+        /* without the copy, the translation chosen with it is kept */
+        const char *v = i == SET_STEAM_LANG && !steam_lang_names ? saved_steam_lang : settings[i].names[settings[i].value];
+        fprintf(f, "%s = %s\n", settings[i].key, v);
+    }
     fclose(f);
 }
 
@@ -1017,6 +1033,59 @@ static void list_shaders(void) {
     settings[SET_SHADER] = (Setting){"shader", "Shader", n + 1, v > 0 ? v : 0, shader_names, NULL};
 }
 
+/* The Translation language setting's choices: the Steam copy's translations, the saved one chosen if listed (else
+ * English). */
+static void list_steam_languages(void) {
+    int n = se_language_count();
+    if (!n || steam_lang_names) return;
+    steam_lang_names = SDL_calloc((size_t)n, sizeof *steam_lang_names);
+    if (!steam_lang_names) return;
+    for (int i = 0; i < n; i++) steam_lang_names[i] = se_language(i);
+    int v = lookup(steam_lang_names, n, saved_steam_lang);
+    if (v < 0) v = SDL_max(lookup(steam_lang_names, n, "en"), 0);
+    settings[SET_STEAM_LANG] = (Setting){"steamlang", "Translation language", n, v, steam_lang_names, NULL};
+}
+
+/* Connect Steam version's folder picker: the folder chosen, handed to the main thread (the dialog may answer on a
+ * thread of its own). */
+static SDL_Mutex *pick_lock;
+static char picked[1024];
+static int pick_done, pick_open;
+static void SDLCALL steam_folder_chosen(void *data, const char *const *list, int filter) {
+    (void)data, (void)filter;
+    SDL_LockMutex(pick_lock);
+    picked[0] = 0;
+    if (list && list[0]) snprintf(picked, sizeof picked, "%s", list[0]);
+    pick_done = 1;
+    SDL_UnlockMutex(pick_lock);
+}
+
+void display_steam_pick(void) {
+    if (pick_open || (!pick_lock && !(pick_lock = SDL_CreateMutex()))) return;
+    pick_open = 1;
+    SDL_ShowOpenFolderDialog(steam_folder_chosen, NULL, primary.win, steam_path[0] ? steam_path : NULL, false);
+}
+
+int display_steam_picked(int *ok) {
+    if (!pick_lock) return 0;
+    char dir[sizeof picked];
+    SDL_LockMutex(pick_lock);
+    int done = pick_done;
+    snprintf(dir, sizeof dir, "%s", picked);
+    pick_done = 0;
+    SDL_UnlockMutex(pick_lock);
+    if (!done) return 0;
+    pick_open = 0;
+    if (!dir[0]) return 0; /* cancelled */
+    *ok = se_connect(dir);
+    if (*ok) {
+        snprintf(steam_path, sizeof steam_path, "%s", dir);
+        list_steam_languages();
+        save_settings();
+    }
+    return 1;
+}
+
 /* The view's screen textures (the first count of top, bottom, main, party, still, UI). The main screen is opaque
  * except where the still layer shows through it; the party, still and UI layers are transparent elsewhere. */
 static int create_textures(View *v, int count) {
@@ -1131,6 +1200,8 @@ void display_event(const SDL_Event *e) {
 int display_init(void) {
     snprintf(ini_path, sizeof ini_path, "%seggoftime.ini", rt_data_dir());
     load_settings();
+    se_init(steam_path); /* the Steam copy: the menu lists its settings */
+    list_steam_languages();
     shader_scan();
     force_windowed = SDL_getenv("EGG_WINDOWED") != NULL;
     int cw, ch;
@@ -1286,7 +1357,13 @@ int display_setting_shown(int id) {
     case SET_LANGUAGE_JP: return RT_JAPAN;
     case SET_ZOOM_UI: return SETTING(SET_ZOOM) != 0;
     case SET_FILL: return SETTING(SET_ASPECT) != ASPECT_ORIGINAL || SETTING(SET_ZOOM);
-    case SET_STEAM: return (SETTING(SET_ASPECT) != ASPECT_ORIGINAL || SETTING(SET_ZOOM)) && se_available();
+    case SET_STEAM:
+    case SET_STEAM_CHEEVOS:
+    case SET_STEAM_MOVIES:
+    case SET_STEAM_MUSIC:
+    case SET_STEAM_SOUNDS:
+    case SET_STEAM_TEXT: return se_available();
+    case SET_STEAM_LANG: return se_available() && SETTING(SET_STEAM_TEXT);
     case SET_MINIMAP: return minimap_allowed(&primary);
     case SET_MINIMAP_SIZE:
     case SET_MINIMAP_BG: return SETTING(SET_MINIMAP) && minimap_allowed(&primary);
@@ -1306,8 +1383,19 @@ int display_language(void) {
 
 const char *display_shader_path(void) { return SETTING(SET_SHADER) ? settings[SET_SHADER].names[SETTING(SET_SHADER)] : NULL; }
 
+/* A Steam translation's name, by its folder's code. */
+static const char *steam_language_label(const char *code) {
+    static const char *const known[][2] = {
+        {"en", "English"}, {"ja", "Japanese"}, {"fr", "French"}, {"de", "German"}, {"it", "Italian"}, {"es", "Spanish"},
+        {"ko", "Korean"}, {"zh-Hans", "Chinese (Simplified)"}, {"zh-Hant", "Chinese (Traditional)"},
+    };
+    for (size_t i = 0; i < SDL_arraysize(known); i++) if (!strcmp(code, known[i][0])) return known[i][1];
+    return code;
+}
+
 const char *display_setting_label(int id, int v) {
     if (id == SET_SHADER) return v ? shader_label(v - 1) : "Off";
+    if (id == SET_STEAM_LANG) return steam_language_label(settings[id].names[v]);
     if (id == SET_ZOOM && v == 3 && camera_smoothing()) return "80%"; /* the guard rows take 8 of its 248 (zoom_view) */
     if (id != SET_RESOLUTION) return settings[id].labels[v];
     if (v == 0) return "Auto";

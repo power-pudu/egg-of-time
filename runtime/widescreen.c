@@ -76,7 +76,7 @@ static int view_bgs;       /* the BGs it moves */
 static int world_dx, world_dy; /* the world map's: the view's shift from the camera at the map's ends (0 normally) */
 static int drift;          /* the room's layers 1 (bit 0, BG3) and 2 (bit 1, BG0) drifting on their own (fill_field_margins) */
 static int drift_smooth[2]; /* by drifting layer: rows its scroll is drawn further than the game sets it (ws_drift_dy) */
-/* The Steam release's room edges (steam_edges.c), this frame: they are ready for the room (and Steam room edges is on),
+/* The Steam release's room edges (steam_edges.c), this frame: they are ready for the room (and Import extended maps is on),
  * the BGs that show them (the filled layers' BGs but BG0), and by BG the world pixel at the screen's top-left. */
 static int steam_ready, steam_bgs, steam_ox[4], steam_oy[4];
 

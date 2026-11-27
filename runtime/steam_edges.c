@@ -177,12 +177,29 @@ static int try_registry(HKEY hive, const char *key, const char *value) {
 }
 #endif
 
-void se_init(void) {
+/* The translations the copy holds: the codes of its Localize/<code>/msg/ folders, in the archive's order. */
+static char languages[16][16];
+static int language_count;
+static void list_languages(void) {
+    language_count = 0;
+    for (int i = 0; i < entry_count && language_count < (int)SDL_arraysize(languages); i++) {
+        const char *n = entries[i].name, *slash;
+        if (strncmp(n, "Localize/", 9) || !(slash = strchr(n + 9, '/')) || strncmp(slash, "/msg/", 5)) continue;
+        size_t len = (size_t)(slash - n - 9);
+        if (!len || len >= sizeof languages[0]) continue;
+        if (language_count && !strncmp(languages[language_count - 1], n + 9, len) && !languages[language_count - 1][len]) continue;
+        memcpy(languages[language_count], n + 9, len);
+        languages[language_count++][len] = 0;
+    }
+}
+
+void se_init(const char *dir) {
     const char *env = getenv("EGG_STEAM_DIR");
     int ok = 0;
-    if (env) {
+    if (dir && *dir) ok = try_copy(dir);
+    if (!ok && env) {
         ok = try_copy(env);
-    } else {
+    } else if (!ok) {
 #ifdef _WIN32
         ok = try_registry(HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath") ||
              try_registry(HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Valve\\Steam", "InstallPath") ||
@@ -199,11 +216,24 @@ void se_init(void) {
         }
 #endif
     }
-    if (ok) rt_log("Steam room edges: %s", archive);
+    if (ok) rt_log("Steam version: %s", archive);
+    if (ok) list_languages();
     SDL_SetAtomicInt(&found, ok);
 }
 
 int se_available(void) { return SDL_GetAtomicInt(&found); }
+
+int se_connect(const char *dir) {
+    if (se_available()) return 1;
+    if (!try_copy(dir)) return 0;
+    rt_log("Steam version: %s", archive);
+    list_languages();
+    SDL_SetAtomicInt(&found, 1); /* after the file list: the game thread reads it once this is set */
+    return 1;
+}
+
+int se_language_count(void) { return se_available() ? language_count : 0; }
+const char *se_language(int i) { return languages[i]; }
 
 /* ---- a room's edges ---- */
 

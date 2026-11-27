@@ -2,11 +2,17 @@
 #pragma once
 #include <stdint.h>
 
-/* At start-up, before the game thread: finds a Steam copy of the game (EGG_STEAM_DIR, else Steam's libraries) and
- * reads its archive's file list. */
-void se_init(void);
+/* At start-up, before the game thread: finds a Steam copy of the game (dir, the folder set in the menu, else
+ * EGG_STEAM_DIR, else Steam's libraries) and reads its archive's file list. */
+void se_init(const char *dir);
 /* Any thread: a Steam copy was found. */
 int se_available(void);
+/* Main thread, with the game running: the Steam copy in dir (its folder or its resources.bin), when none was found
+ * yet. 1 once there is one (an earlier one kept: another applies at the next start). */
+int se_connect(const char *dir);
+/* The translations the copy holds (0 without one), by their folder's code (en, ja, zh-Hans...). */
+int se_language_count(void);
+const char *se_language(int i);
 
 /* Game thread, each field frame: the room on screen. Its edges are built once the room has held for a few frames
  * (its tiles in VRAM): location (the game's id), the room's bounds left..right (metatile columns, inclusive), the

@@ -19,6 +19,11 @@
  * while it downloads), title, points and description; Left/Right turn a page. The password shows as stars and is
  * forgotten once sent. B or SELECT goes back.
  *
+ * A on Connect Steam version (after Language) opens its page: Steam version path, Connected! once a Steam copy of the
+ * game is found (in Steam's libraries, or the folder eggoftime.ini names), else A opens the system's folder picker to
+ * point at one; once connected, what the copy is used for (display.c's SET_STEAMS), each Yes or No, and with Use
+ * Steam translation the translation, among those the copy holds. B or SELECT goes back to the settings.
+ *
  * A on Cheats opens their page: the EXP and TP multipliers and Infinite HP, MP and money (cheats.c), changed with Left/Right
  * like the settings; B or SELECT goes back to the settings.
  *
@@ -39,6 +44,7 @@
 #include "rt.h"
 #include "sound_dump.h"
 #include "single_screen.h"
+#include "steam_edges.h"
 #include "system_menu.h"
 #include "ui_font.h"
 #include "ui_text.h"
@@ -48,12 +54,14 @@
 #define REPEAT_MS 110
 #define RESUME_MS 100 /* START held for the game after closing from the pause */
 
-#define ROW_CONTROLS SET_COUNT /* after the display settings */
-#define ROW_CHEATS (SET_COUNT + 1)
-#define ROW_CHEEVOS (SET_COUNT + 2)
-#define ROW_DUMP (SET_COUNT + 3)
-#define ROW_DUMP_AUDIO (SET_COUNT + 4)
-#define ROW_COUNT (SET_COUNT + 5)
+#define ROW_STEAM SET_COUNT /* listed after Language (page_rows) */
+#define ROW_CONTROLS (SET_COUNT + 1) /* after the display settings */
+#define ROW_CHEATS (SET_COUNT + 2)
+#define ROW_CHEEVOS (SET_COUNT + 3)
+#define ROW_DUMP (SET_COUNT + 4)
+#define ROW_DUMP_AUDIO (SET_COUNT + 5)
+#define ROW_STEAM_PATH (SET_COUNT + 6) /* the Connect Steam version page's first row */
+#define ROW_COUNT (SET_COUNT + 7)
 #define ROW_RESET CTL_COUNT /* the Controls page's last row */
 #define ROWS_SHOWN 8        /* between the header and the footer */
 #define CH_SLOT 2           /* rows an achievement takes on the RetroAchievements page */
@@ -71,6 +79,14 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_ZOOM_UI] = "Text boxes zoom out too, or keep their size.",
     [SET_FILL] = "Repeat small rooms' tiles beside them.",
     [SET_STEAM] = "Room sides as the Steam release draws them.",
+    [SET_STEAM_CHEEVOS] = "Coming in a later version.",
+    [SET_STEAM_MOVIES] = "Coming in a later version.",
+    [SET_STEAM_MUSIC] = "Coming in a later version.",
+    [SET_STEAM_SOUNDS] = "Coming in a later version.",
+    [SET_STEAM_TEXT] = "Coming in a later version.",
+    [SET_STEAM_LANG] = "Coming in a later version.",
+    [ROW_STEAM] = "Use your copy of the Steam release.",
+    [ROW_STEAM_PATH] = "The folder of the Steam release.",
     [SET_MINIMAP] = "The bottom screen's map, at the top left.",
     [SET_MINIMAP_SIZE] = "How much of the screen the map takes.",
     [SET_MINIMAP_BG] = "Behind the map: its parchment or a shadow.",
@@ -105,7 +121,7 @@ static SDL_AtomicInt open_now; /* place != SS_MENU_NONE, for the game thread */
 #define PLACE_ANY 0x100 /* opened with F1 where the game offers no place: the game's moving on does not close it */
 static int f1_pressed; /* F1 since the last input */
 static int top;           /* the first row shown (rows: the shown settings, in order) */
-static int cheats_page, settings_cursor, settings_top; /* the Cheats page, and the settings' row and top to go back to */
+static int cheats_page, steam_page, settings_cursor, settings_top; /* the Cheats and Connect Steam version pages, and the settings' row and top to go back to */
 static int confirm, yes;  /* the question open (CONFIRM_*); Yes is chosen */
 static Uint64 dump_since; /* when the graphics or audio dump started */
 static int controls_page, ctl_cursor, ctl_pad, ctl_top; /* ctl_pad: the gamepad column is chosen */
@@ -116,10 +132,31 @@ static int released_wait; /* a rebinding or typing ended: the menu ignores input
 static uint32_t prev_keys, blocked; /* blocked: held since the menu closed, kept from the game until released */
 static Uint64 repeat_at, resume_until;
 
-/* The rows of the page shown: the cheats on the Cheats page, else the settings and the actions after them. */
+/* The rows of the page shown: the cheats on the Cheats page, the Steam version's on its page, else the settings and
+ * the actions after them. */
 static int row_shown(int i) {
     if (cheats_page) return i >= SET_CHEATS && i < SET_COUNT;
-    return i >= SET_COUNT || (i < SET_CHEATS && display_setting_shown(i));
+    if (steam_page) return i == ROW_STEAM_PATH || (i >= SET_STEAMS && i < SET_CHEATS && display_setting_shown(i));
+    return (i >= SET_COUNT && i != ROW_STEAM_PATH) || (i < SET_STEAMS && display_setting_shown(i));
+}
+
+/* The page's rows in the order listed (Connect Steam version right after Language); returns how many. */
+static int page_rows(int *rows) {
+    int n = 0;
+    if (steam_page) rows[n++] = ROW_STEAM_PATH;
+    for (int i = 0; i < ROW_COUNT; i++) {
+        if (i == ROW_STEAM || i == ROW_STEAM_PATH || !row_shown(i)) continue;
+        rows[n++] = i;
+        if (!cheats_page && !steam_page && (i == SET_LANGUAGE || i == SET_LANGUAGE_JP)) rows[n++] = ROW_STEAM;
+    }
+    return n;
+}
+
+/* The cursor moved by dir rows on its page. */
+static void cursor_step(int dir) {
+    int rows[ROW_COUNT], n = page_rows(rows), at = 0;
+    for (int r = 0; r < n; r++) if (rows[r] == cursor) at = r;
+    cursor = rows[(at + dir + n) % n];
 }
 
 /* A dump runs (graphics or audio: one at a time), and its progress. */
@@ -237,8 +274,9 @@ static uint32_t input(uint32_t keys) {
     if (place == SS_MENU_NONE) {
         if (f1 && (place = ss_menu_place()) == SS_MENU_NONE) place = PLACE_ANY;
         if (f1 || ((pressed & KEY_SELECT) && (place = ss_menu_place()) != SS_MENU_NONE)) {
-            cursor = top = confirm = controls_page = cheevos_page = cheats_page = 0;
-            while (!row_shown(cursor)) cursor++;
+            cursor = top = confirm = controls_page = cheevos_page = cheats_page = steam_page = 0;
+            int rows[ROW_COUNT];
+            page_rows(rows), cursor = rows[0];
             return 0;
         }
         blocked &= keys;
@@ -256,7 +294,7 @@ static uint32_t input(uint32_t keys) {
         if (typing) typing_end();
         if (controls_capturing()) controls_capture_cancel();
         confirm = CONFIRM_NONE, released_wait = 0;
-        act = KEY_B, controls_page = cheevos_page = cheats_page = 0;
+        act = KEY_B, controls_page = cheevos_page = cheats_page = steam_page = 0;
     }
     if (typing) {
         if (!left) return 0;
@@ -301,8 +339,8 @@ static uint32_t input(uint32_t keys) {
         cheevos_input(act);
         return 0;
     }
-    if (cheats_page && (act & (KEY_B | KEY_SELECT)) && !left) {
-        cheats_page = 0, cursor = settings_cursor, top = settings_top;
+    if ((cheats_page || steam_page) && (act & (KEY_B | KEY_SELECT)) && !left) {
+        cheats_page = steam_page = 0, cursor = settings_cursor, top = settings_top;
         return 0;
     }
     if ((act & (KEY_B | KEY_SELECT)) || left) {
@@ -312,9 +350,13 @@ static uint32_t input(uint32_t keys) {
         return 0;
     }
     if (dumping()) return 0; /* the progress covers the rows */
-    if (act & KEY_UP) do cursor = (cursor + ROW_COUNT - 1) % ROW_COUNT; while (!row_shown(cursor));
-    if (act & KEY_DOWN) do cursor = (cursor + 1) % ROW_COUNT; while (!row_shown(cursor));
-    if (cursor == ROW_CONTROLS) {
+    if (act & KEY_UP) cursor_step(-1);
+    if (act & KEY_DOWN) cursor_step(1);
+    if (cursor == ROW_STEAM) {
+        if (act & KEY_A) settings_cursor = cursor, settings_top = top, steam_page = 1, cursor = ROW_STEAM_PATH, top = 0;
+    } else if (cursor == ROW_STEAM_PATH) {
+        if ((act & KEY_A) && !se_available()) display_steam_pick();
+    } else if (cursor == ROW_CONTROLS) {
         if (act & KEY_A) controls_page = 1, ctl_cursor = ctl_pad = ctl_top = 0;
     } else if (cursor == ROW_CHEATS) {
         if (act & KEY_A) settings_cursor = cursor, settings_top = top, cheats_page = 1, cursor = SET_CHEATS, top = 0;
@@ -339,7 +381,7 @@ static uint32_t input(uint32_t keys) {
 /* Where the cursor is, on whichever page: when it moves, the game's cursor sound plays (rt_menu_cursor_sound), as it
  * does when Left/Right change a setting's value. */
 static int cursor_at(void) {
-    int page = controls_page ? 1 : cheevos_page ? 2 : cheats_page ? 3 : 0;
+    int page = controls_page ? 1 : cheevos_page ? 2 : cheats_page ? 3 : steam_page ? 4 : 0;
     int at = controls_page ? ctl_cursor * 2 + ctl_pad : cheevos_page ? ch_cursor : cursor;
     return place == SS_MENU_NONE ? -1 : confirm ? 0x40000 | yes : page << 16 | at;
 }
@@ -355,6 +397,11 @@ uint32_t sysmenu_input(uint32_t keys) {
         char text[96];
         SDL_snprintf(text, sizeof text, ui_text("Audio: %d files in mods/sounds/dump"), files);
         display_message(text, 4000);
+    }
+    int ok;
+    if (display_steam_picked(&ok)) {
+        display_message(ui_text(ok ? "Steam version connected" : "No Steam version in that folder"), 3000);
+        if (ok) rt_menu_cursor_sound();
     }
     int was = cursor_at();
     uint32_t game_keys = input(keys);
@@ -476,6 +523,8 @@ static void centered(uint32_t *s, const char *text, Rect r, uint32_t color) {
 
 /* A row's label and value: a display setting's, or an action's (Controls, Cheats, RetroAchievements, the dumps). */
 static const char *row_title(int i) {
+    if (i == ROW_STEAM) return ui_text("Connect Steam version");
+    if (i == ROW_STEAM_PATH) return ui_text("Steam version path");
     if (i == ROW_CONTROLS) return ui_text("Controls");
     if (i == ROW_CHEATS) return ui_text("Cheats");
     if (i == ROW_CHEEVOS) return "RetroAchievements";
@@ -487,6 +536,8 @@ static const char *row_value(int i, int w) {
     static char buf[16];
     int done, total;
     float share;
+    if (i == ROW_STEAM) return ui_text("A: Go to Config");
+    if (i == ROW_STEAM_PATH) return fit(ui_text(se_available() ? "Connected!" : "Press A to search folder"), w);
     if (i == ROW_CONTROLS) return ui_text("A: change");
     if (i == ROW_CHEATS) { /* On while any cheat is */
         int on = 0;
@@ -726,22 +777,24 @@ void sysmenu_draw(uint32_t *s) {
     } else if (cheevos_page) {
         draw_cheevos(s);
     } else {
-        const char *title = ui_text(cheats_page ? "Cheats" : "System Settings");
+        const char *title = ui_text(cheats_page ? "Cheats" : steam_page ? "Connect Steam version" : "System Settings");
         ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
 
-        int rows[ROW_COUNT], n = 0, at = 0;
-        for (int i = 0; i < ROW_COUNT; i++) {
-            if (row_shown(i)) at = i == cursor ? n : at, rows[n++] = i;
-        }
+        int rows[ROW_COUNT], n = page_rows(rows), at = 0;
+        for (int r = 0; r < n; r++) if (rows[r] == cursor) at = r;
         scroll_to(s, &top, at, n);
+        /* The labels as wide as the page's longest needs ("Trigger Steam achievements"), the values the rest */
+        int lw = 112;
+        for (int r = 0; r < n; r++) lw = SDL_max(lw, ui_text_width(row_title(rows[r])) + 12);
+        lw = SDL_min(lw, 140);
         for (int r = top; r < n && r < top + ROWS_SHOWN; r++) {
             int i = rows[r], y = ROW_Y + (r - top) * ROW_PITCH, ty = y + 4, sel = i == cursor;
-            Rect lr = {6, y, 112, ROW_H}, vr = {122, y, 128, ROW_H};
+            Rect lr = {6, y, lw, ROW_H}, vr = {lw + 10, y, 240 - lw, ROW_H};
             panel(s, lr, sel ? &BUTTON_LIT : &BUTTON);
             panel(s, vr, &BUTTON);
             if (sel) frame(s, vr, TEAL);
-            ui_draw_text(s, row_title(i), lr.x + 6, ty, sel ? WHITE : GREY);
-            const char *v = row_value(i, vr.w - 24);
+            ui_draw_text(s, fit(row_title(i), lw - 12), lr.x + 6, ty, sel ? WHITE : GREY);
+            const char *v = row_value(i, vr.w - (i < SET_COUNT ? 24 : 12)); /* a setting's arrows beside it */
             ui_draw_text(s, v, vr.x + (vr.w - ui_text_width(v)) / 2, ty, sel ? YELLOW : WHITE);
             if (sel && i < SET_COUNT) {
                 ui_draw_text(s, "<", vr.x + 5, ty, WHITE);

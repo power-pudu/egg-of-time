@@ -138,10 +138,16 @@ original bytes, and caches the result per region until the region is written.
     room shows as the original. That camera is already the next frame's, so `video.c` moves the bounds to the frame's
     own: when a shake stepped it, a column beyond the room stayed unclipped, and with camera smoothing the prison
     bridge's sky (still layer) showed through it.
-  - Steam room edges (System Settings, shown with a wide aspect ratio when a Steam copy of the game is found; Yes by
-    default): beside a room, the tiles the game's Steam release draws there (`runtime/steam_edges.c`). It is read at
-    start-up from the player's own copy (`EGG_STEAM_DIR`, else Steam's registry key or home folders and every library
-    in `libraryfolders.vdf`): its `resources.bin`, blocks XORed with an LCG keystream and gzipped (`runtime/inflate.c`,
+  - Connect Steam version (System Settings, after Language, a page of its own): Steam version path says Connected!
+    once a Steam copy of the game is found, else A opens the system's folder picker (`SDL_ShowOpenFolderDialog`)
+    and the folder chosen is tried and kept as `steampath` in eggoftime.ini. Once connected the page lists what the
+    copy is used for, each Yes by default: Import extended maps (`steamedges`, below), Trigger Steam achievements,
+    Override cutscenes, music and sounds, Use Steam translation and, with it, Translation language (the copy's
+    `Localize/<code>/msg/` folders); all but the first are still to come.
+  - Import extended maps: beside a room, the tiles the game's Steam release draws there (`runtime/steam_edges.c`),
+    in widescreen. It is read at start-up from the player's own copy (`steampath`, else `EGG_STEAM_DIR`, else Steam's
+    registry key or home folders and every library in `libraryfolders.vdf`; a folder picked in the menu while none
+    is connected is read then): its `resources.bin`, blocks XORed with an LCG keystream and gzipped (`runtime/inflate.c`,
     no zlib), keeps per location (the game's ids, the DS rooms' too: 635 of them, up to 668) the cells past the room's
     sides (`Game/field/mapext_bin/mapext_<location>.bin`: four planes of 16-px cells, layers 1 and 0 below the sprites
     and the tiles over them). Nothing of it is written to disk. A room's edges are a grid of 8x8 tiles per BG (layer 0
@@ -1008,7 +1014,7 @@ cmake --build "$LOCALAPPDATA/EggOfTime-build"
   logs window and game frames per second;
   `EGG_LOG_PXI=1` logs ARM9 -> ARM7 messages and sound commands; `EGG_WATCH=1` logs the running game
   thread's return-address stack every 2 s; `EGG_DUMP_RAM=<file>` writes main RAM to a file 3 s after boot.
-  `EGG_STEAM_DIR=<folder or resources.bin>` names the Steam copy for Steam room edges; `EGG_STEAM_LOG=1` logs each
+  `EGG_STEAM_DIR=<folder or resources.bin>` names the Steam copy (when eggoftime.ini names none); `EGG_STEAM_LOG=1` logs each
   room's edges as they are built.
 - `python -I tools/recomp/disfunc.py . <module> <addr>...` disassembles the dsd function containing an
   address, with relocation targets (useful together with `EGG_WATCH`).

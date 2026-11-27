@@ -36,11 +36,14 @@ void display_text_input(int on);
 void display_capture(const char *path);
 
 /* Settings of the System Settings menu, in its order; values are indexes into each setting's choices.
- * Setting one applies it at once and saves eggoftime.ini. The cheats (cheats.c), from SET_CHEATS on, are listed on
- * the menu's Cheats page instead. */
-enum { SET_LANGUAGE, SET_LANGUAGE_JP, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_ZOOM, SET_ZOOM_UI, SET_FILL, SET_STEAM, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FONT_BIG, SET_FONT_SMALL, SET_FF_MUSIC, SET_FF_SOUND, SET_SKIP_LOGOS, SET_SKIP_MOVIE,
+ * Setting one applies it at once and saves eggoftime.ini. The Steam version's (steam_edges.c), from SET_STEAMS on,
+ * are listed on the menu's Connect Steam version page, and the cheats (cheats.c), from SET_CHEATS on, on its Cheats
+ * page. */
+enum { SET_LANGUAGE, SET_LANGUAGE_JP, SET_WINDOW, SET_LAYOUT, SET_SECOND, SET_RESOLUTION, SET_ASPECT, SET_ZOOM, SET_ZOOM_UI, SET_FILL, SET_MINIMAP, SET_MINIMAP_SIZE, SET_MINIMAP_BG, SET_FRAMERATE, SET_VSYNC, SET_FILTER, SET_SHADER, SET_COLOR, SET_MODS, SET_FONT_BIG, SET_FONT_SMALL, SET_FF_MUSIC, SET_FF_SOUND, SET_SKIP_LOGOS, SET_SKIP_MOVIE,
+       SET_STEAM, SET_STEAM_CHEEVOS, SET_STEAM_MOVIES, SET_STEAM_MUSIC, SET_STEAM_SOUNDS, SET_STEAM_TEXT, SET_STEAM_LANG,
        SET_CHEAT_EXP, SET_CHEAT_TP, SET_CHEAT_HP, SET_CHEAT_MP, SET_CHEAT_GOLD,
        SET_COUNT };
+#define SET_STEAMS SET_STEAM      /* the first of the Steam version's, up to the cheats */
 #define SET_CHEATS SET_CHEAT_EXP /* the first cheat */
 enum { LANGUAGE_ENGLISH, LANGUAGE_FRENCH }; /* SET_LANGUAGE values: the USA and European games' languages */
 enum { LANGUAGE_JP_JAPANESE, LANGUAGE_JP_ENGLISH }; /* SET_LANGUAGE_JP values: the Japanese game's */
@@ -55,7 +58,8 @@ int display_language(void);
 const char *display_setting_title(int id);
 int display_setting_count(int id);
 int display_setting_get(int id);
-/* The menu lists it: Fill screen sides only with a wide aspect ratio, Steam room edges also only with a Steam copy found, Minimap only where the main screen of single
+/* The menu lists it: Fill screen sides only with a wide aspect ratio, the Steam version's only with a Steam copy
+ * connected (Translation language only with Use Steam translation), Minimap only where the main screen of single
  * screen mode is shown, Minimap size and background only with Minimap on, Shader only with shaders in mods/shaders,
  * Internal resolution and Graphics filter only without a shader, Big / Small font size only with a font file in
  * mods/graphics/fonts/msg/big (small) and Mods on. */
@@ -67,6 +71,11 @@ int display_main_only(void);
 const char *display_shader_path(void);
 const char *display_setting_label(int id, int value); /* may use a buffer shared by every call */
 void display_setting_set(int id, int value);
+/* Connect Steam version (main thread): opens the system's folder picker for the folder of a Steam copy. */
+void display_steam_pick(void);
+/* Main thread, each frame: 1 when a folder was picked since (not when cancelled); *ok: it holds a Steam copy, kept in
+ * eggoftime.ini as the copy's place (connected now, or at the next start when another one already is). */
+int display_steam_picked(int *ok);
 /* Window frame interval for the chosen framerate, in nanoseconds; 0 for unlimited. */
 uint64_t display_frame_ns(void);
 /* The framerate is the game's own: a frame is presented as it arrives (60 fps). */
