@@ -20,6 +20,10 @@
  * the font's HD glyphs, and a .ttf or .otf in the font's folder replaces its letters; both are drawn as the game
  * draws text (gfx_font.c), which also reads the characters the .txt's third column gives each glyph.
  *
+ * The Steam release's tile sheets (steam/<archive path>.png, as the dump writes them, with a Steam copy connected)
+ * change the pixels it adds beside the rooms (steam_edges.c): at the same size its sheet's pixels (indexed images:
+ * the index, or its low 4 bits in a 4-bit sheet), larger as HD art for the sheet's tiles.
+ *
  * Images are read in two passes: palettes and same-size images first, then the HD ones, keyed by the tiles as the
  * first pass left them. */
 #include <stdio.h>
@@ -32,6 +36,7 @@
 #include "gfx_mod.h"
 #include "gfx_rom.h"
 #include "rt.h"
+#include "steam_edges.h"
 
 #define SCALE_MAX 8
 
@@ -399,6 +404,70 @@ static int hd_tiles(const Png *png, const Item *it, int s) {
     return added;
 }
 
+/* ---- the Steam release's sheets ---- */
+
+/* steam/<archive path>.png: pass 0 at the same size replaces the sheet's pixels, pass 1 larger gives its tiles HD
+ * art (keyed on the tiles as pass 0 left them). Returns the image's scale (0: not usable), *n what it changed. */
+static int steam_sheet(const char *rel, const Png *png, int pass, int *n) {
+    char name[512];
+    snprintf(name, sizeof name, "%.*s.bin", (int)strlen(rel) - 4 - 6, rel + 6);
+    int w, h, bpp8;
+    uint8_t *sheet = se_sheet(name, &w, &h, &bpp8);
+    *n = 0;
+    if (!sheet) {
+        if (!pass) rt_log("gfxmod: %s: no such Steam sheet%s", rel, se_available() ? "" : " (no Steam version connected)");
+        return 0;
+    }
+    int s = png->w / w;
+    if (s < 1 || s > SCALE_MAX || png->w != w * s || png->h != h * s) {
+        if (!pass) rt_log("gfxmod: %s: %dx%d, not %dx%d times 1 to %d", rel, png->w, png->h, w, h, SCALE_MAX);
+        free(sheet);
+        return 0;
+    }
+    if (!pass && s == 1) {
+        if (!png->indexed) {
+            rt_log("gfxmod: %s: same size needs an indexed image (the Steam sheets have no palette of their own)", rel);
+        } else {
+            for (int ty = 0; ty + 8 <= h; ty += 8) /* counted by tile, as the ROM's */
+                for (int tx = 0; tx + 8 <= w; tx += 8) {
+                    int changed = 0;
+                    for (int v = 0; v < 8; v++)
+                        for (int u = 0; u < 8; u++) {
+                            int i = (ty + v) * w + tx + u;
+                            uint8_t c = bpp8 ? png->idx[i] : png->idx[i] & 15;
+                            changed |= c != sheet[i], sheet[i] = c;
+                        }
+                    *n += changed;
+                }
+            se_sheet_set(name, w, h, sheet);
+        }
+    } else if (pass && s > 1) {
+        int k = 8 * s;
+        for (int ty = 0; ty + 8 <= h; ty += 8)
+            for (int tx = 0; tx + 8 <= w; tx += 8) {
+                uint8_t t[64];
+                se_sheet_tile_bytes(sheet, w, tx, ty, bpp8, t);
+                int blank = 1;
+                for (int i = 0; i < (bpp8 ? 64 : 32); i++) blank &= !t[i];
+                if (blank) continue;
+                void *px = malloc((size_t)k * k * (png->indexed ? 1 : 4));
+                if (!px) continue;
+                uint8_t *ix = px;
+                uint32_t *cx = px;
+                for (int v = 0; v < k; v++)
+                    for (int u = 0; u < k; u++) {
+                        int i = (ty * s + v) * png->w + tx * s + u;
+                        if (png->indexed) ix[v * k + u] = (uint8_t)(bpp8 ? png->idx[i] : png->idx[i] & 15);
+                        else cx[v * k + u] = (png->rgba[i] >> 24) < 128 ? 0 : png->rgba[i] | 0xFF000000u;
+                    }
+                *n += add_hd(t, bpp8, s, png->indexed, px);
+            }
+        hd_scale = SDL_max(hd_scale, s);
+    }
+    free(sheet);
+    return s;
+}
+
 /* ---- fonts ---- */
 
 /* A font being edited: each glyph's advance width (-1: none), bytes per row as it was (some glyphs have more than
@@ -661,7 +730,7 @@ void gfxmod_load(void) {
     char root[1024];
     snprintf(root, sizeof root, "%smods/graphics/", rt_data_dir());
     List list = {0};
-    static const char *const kinds[] = {"sheets", "frames", "screens", "fonts"};
+    static const char *const kinds[] = {"sheets", "frames", "screens", "fonts", "steam"};
     for (size_t k = 0; k < SDL_arraysize(kinds); k++) {
         char dir[1100];
         snprintf(dir, sizeof dir, "%s%s/", root, kinds[k]);
@@ -704,6 +773,19 @@ void gfxmod_load(void) {
                     if (gfx_ends_with(rel, ".png")) glyphs += font_png(rel, list.paths[i], f);
                     else widths += font_txt(rel, list.paths[i], f);
                 }
+                continue;
+            }
+            if (!strncmp(rel, "steam/", 6)) {
+                Png png;
+                int changed = 0;
+                if (!png_load(list.paths[i], &png)) {
+                    if (!pass) rt_log("gfxmod: %s: cannot read: %s", rel, SDL_GetError());
+                    continue;
+                }
+                int s = steam_sheet(rel, &png, pass, &changed);
+                if (!pass) scale[i] = s, images += s != 0, same_tiles += changed;
+                else hd += changed;
+                png_free(&png);
                 continue;
             }
             Item it;

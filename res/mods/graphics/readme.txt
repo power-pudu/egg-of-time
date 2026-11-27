@@ -18,6 +18,8 @@ is done.
     dump\screens\    the backgrounds stored as whole pictures (menus, title, minimaps...)
     dump\fonts\      the message fonts (msg\big and msg\small: the game's text), with a .txt
                      of their letter widths (see Fonts below)
+    dump\steam\      with a Steam version connected (System Settings > Connect Steam version):
+                     its tile sheets (Gameield\map_bin\cg*.png), in a grey ramp
     dump\palettes.txt  the palette each image was drawn with
 
 The PNGs are indexed (palette) images: each pixel keeps the game's own colour number.
@@ -117,6 +119,17 @@ Small font size (shown while that font has a font file), from 3 to 14 pixels; De
 the font.ini's size. The lines are 10 pixels apart (8 for the small font), so larger
 letters are cut off at the top and bottom.
 Glyphs the font has no character for (symbols, icons) stay the game's.
+
+Steam version
+-------------
+With a Steam version connected and Import extended maps on, the sides of the rooms come
+from it. Most of their tiles are the game's own, so your mods above change them too. The
+rest are the Steam version's own drawings: change those in steam\, from dump\steam(steam\Gameield\map_bin\cg130.png). Their palettes are the rooms', so the dump shows
+them in a grey ramp: the colour numbers are exact (0-15 in the map's row for cg<number>,
+0-255 of the whole palette for cg_bg and cgext).
+- Same size: indexed PNGs only. Your colour numbers replace the Steam version's pixels.
+- HD (2x to 8x): as above. HD art is found by the tile's pixels, so where a room tile of
+  the game has the same pixels, it gets your art too.
 
 Sharing
 -------

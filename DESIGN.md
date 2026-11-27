@@ -785,6 +785,9 @@ original bytes, and caches the result per region until the region is written.
   letter (1) in colour 2, white; shadow (3) in colour 1, black (seen in screenshots, not traced in the code).
   The ROM reading, decoding and layouts (sheet, cell in reverse OAM order, screen) are `runtime/gfx_rom.c`,
   shared with the loader.
+  With a Steam version connected, its tile sheets too (`steam/<archive path>.png`, `se_sheet`): `cg<set>.bin`
+  (a 4-byte header, 4 bits a pixel 128 wide, high nibble first), `cg_bg.bin` and `cgext*.bin` (u32 width and
+  height, a byte a pixel), in a grey ramp since the rooms give their palettes.
 - **Graphics mods** (`runtime/gfx_mod.c`, Mods on, read once after the game build is prepared, so the build id
   is the ROM's): PNGs in `mods/graphics/{sheets,frames,screens}/<ROM path>.png` (the dump's paths), in path
   order. Each image is mapped back onto its 8x8 tiles through the same layouts as the dump; a pixel belongs to
@@ -801,6 +804,12 @@ original bytes, and caches the result per region until the region is written.
   frame's palette RAM, RGBA as painted, both through the recorded blend and the Color setting. Not with a shader; the one-screen menus (built by
   `runtime/single_screen.c`) keep native tiles, the field, warp, world map and race passing their sources on, and
   so does the zoom out's UI layer (text boxes, battle panels: `hd_ui`, moved with its pixels by `ui_to_edges`).
+  `steam/<archive path>.png` (a Steam version connected) changes the pixels the Steam release adds beside
+  the rooms: at 1x an indexed image's indexes replace the sheet's (`se_sheet_set`, read by `steam_edges.c` as
+  it loads the sheet), larger ones are HD art keyed on the sheet's tiles as the DS keeps tiles (4 bits low nibble
+  first, or a byte a pixel), so a room's own tile with the same pixels takes it too. Each pixel of a picture the
+  edges compose (layers merged into one 8x8 picture) keeps its source tile, texel, flips and palette row
+  (`se_picture_hd`), which the renderer records for the HD pass as for any BG pixel.
   Fonts (`fonts/<ROM path>.png` and `.txt`, first pass) rebuild the font file: glyph pixels at 1x, advance widths,
   new glyphs where none were; each glyph keeps its bytes per row unless its pixels need more (some originals are
   wider than their pixels), so unchanged files rebuild byte for byte. A font .png at 2x to 8x, a `.ttf` / `.otf` in

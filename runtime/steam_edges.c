@@ -22,7 +22,12 @@
  * The archive (resources.bin, "ARC1"): every block is XORed with a keystream of the LCG n = n * 0x41C64E6D + 12345
  * (the byte n >> 24), n starting at 0x19000000 + the block's offset in the file; a block is a big-endian u32 length,
  * then a gzip member. The header's first 16 bytes are such a block's: "ARC1", u32, the file list's offset, its size.
- * The file list: u32 count, then count entries of 12 bytes (name's offset in the list, data offset, data size). */
+ * The file list: u32 count, then count entries of 12 bytes (name's offset in the list, data offset, data size).
+ *
+ * Graphics mods reach the Steam release's own pixels through its sheets (se_sheet: the dump writes them, gfx_mod.c
+ * reads mods/graphics/steam/<archive path>.png): one the same size replaces the sheet's pixels (se_sheet_set), a
+ * larger one is HD art keyed on the sheet's tiles. Each pixel of an added picture keeps where it came from (a sheet's
+ * tile or the room's, se_picture_hd), so the renderer finds that tile's HD art. */
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +38,7 @@
 #include <windows.h>
 #endif
 
+#include "gfx_mod.h"
 #include "inflate.h"
 #include "rt.h"
 #include "steam_edges.h"
@@ -86,6 +92,98 @@ static uint8_t *steam_file(const char *name, size_t *len) {
     Entry key = {name, 0, 0};
     const Entry *e = entries ? bsearch(&key, entries, (size_t)entry_count, sizeof *entries, by_name) : NULL;
     return e ? unpack(archive, e->off, e->size, len) : NULL;
+}
+
+/* ---- the sheets ---- */
+
+/* A sheet's pixels set by a graphics mod, by its name. */
+typedef struct Override { char name[96]; int w, h; uint8_t *px; } Override;
+static Override *overrides;
+static int override_count;
+
+/* The sheets: map_bin/cg<set>.bin, a 4-byte header and 4 bits a pixel 128 px wide (the high nibble first); cg_bg.bin
+ * and cgext*.bin, a u32 width and height and a byte a pixel. */
+static int sheet_bpp8(const char *name) {
+    const char *base = strrchr(name, '/');
+    base = base ? base + 1 : name;
+    return !strncmp(base, "cg_bg", 5) || !strncmp(base, "cgext", 5);
+}
+
+/* The archive's sheets, by entry: listed once connected (list_sheets). */
+static int *sheets, sheet_count;
+static void list_sheets(void) {
+    free(sheets);
+    sheets = malloc((size_t)(entry_count ? entry_count : 1) * sizeof *sheets);
+    sheet_count = 0;
+    for (int i = 0; sheets && i < entry_count; i++) {
+        const char *n = entries[i].name;
+        size_t len = strlen(n);
+        if (!strncmp(n, "Game/field/map_bin/cg", 21) && len > 4 && !strcmp(n + len - 4, ".bin")) sheets[sheet_count++] = i;
+    }
+}
+
+int se_sheet_count(void) { return se_available() ? sheet_count : 0; }
+const char *se_sheet_name(int i) { return i >= 0 && i < sheet_count ? entries[sheets[i]].name : NULL; }
+
+uint8_t *se_sheet(const char *name, int *w, int *h, int *bpp8) {
+    *bpp8 = sheet_bpp8(name);
+    for (int i = 0; i < override_count; i++) {
+        if (strcmp(overrides[i].name, name)) continue;
+        uint8_t *px = malloc((size_t)overrides[i].w * overrides[i].h);
+        if (px) memcpy(px, overrides[i].px, (size_t)overrides[i].w * overrides[i].h);
+        *w = overrides[i].w, *h = overrides[i].h;
+        return px;
+    }
+    size_t n = 0;
+    uint8_t *d = steam_file(name, &n), *px = NULL;
+    *w = *h = 0;
+    if (d && *bpp8 && n >= 8) {
+        uint32_t sw = d[0] | (uint32_t)d[1] << 8 | (uint32_t)d[2] << 16 | (uint32_t)d[3] << 24;
+        uint32_t sh = d[4] | (uint32_t)d[5] << 8 | (uint32_t)d[6] << 16 | (uint32_t)d[7] << 24;
+        if (sw && sh && sw <= 4096 && sh <= 4096 && 8 + (size_t)sw * sh <= n && (px = malloc((size_t)sw * sh))) {
+            memcpy(px, d + 8, (size_t)sw * sh);
+            *w = (int)sw, *h = (int)sh;
+        }
+    } else if (d && n > 4) {
+        int sh = (int)((n - 4) * 2 / 128) / 8 * 8;
+        if (sh && (px = malloc((size_t)128 * sh))) {
+            for (size_t i = 0; i < (size_t)128 * sh; i++) px[i] = i & 1 ? d[4 + i / 2] & 15 : d[4 + i / 2] >> 4;
+            *w = 128, *h = sh;
+        }
+    }
+    free(d);
+    return px;
+}
+
+void se_sheet_set(const char *name, int w, int h, const uint8_t *px) {
+    Override *o = NULL;
+    for (int i = 0; i < override_count && !o; i++) if (!strcmp(overrides[i].name, name)) o = &overrides[i];
+    if (!o) {
+        Override *more = realloc(overrides, (size_t)(override_count + 1) * sizeof *overrides);
+        if (!more) return;
+        overrides = more, o = &overrides[override_count++];
+        snprintf(o->name, sizeof o->name, "%s", name);
+        o->px = NULL;
+    }
+    free(o->px);
+    o->w = w, o->h = h;
+    if ((o->px = malloc((size_t)w * h))) memcpy(o->px, px, (size_t)w * h);
+}
+
+/* The tile at (x, y) of a sheet as the DS keeps tiles (4 bits a pixel, the low nibble first; else a byte a pixel). */
+static void sheet_tile(const uint8_t *px, int w, int x, int y, int bpp8, uint8_t *t) {
+    for (int v = 0; v < 8; v++)
+        for (int u = 0; u < 8; u++) {
+            uint8_t c = px[(y + v) * w + x + u];
+            if (bpp8) t[v * 8 + u] = c;
+            else if (u & 1) t[v * 4 + u / 2] |= (uint8_t)(c << 4);
+            else t[v * 4 + u / 2] = c;
+        }
+}
+
+uint8_t *se_sheet_tile_bytes(const uint8_t *px, int w, int x, int y, int bpp8, uint8_t *t) {
+    sheet_tile(px, w, x, y, bpp8, t);
+    return t;
 }
 
 /* path is the Steam release's resources.bin: reads its file list. */
@@ -217,7 +315,7 @@ void se_init(const char *dir) {
 #endif
     }
     if (ok) rt_log("Steam version: %s", archive);
-    if (ok) list_languages();
+    if (ok) list_languages(), list_sheets();
     SDL_SetAtomicInt(&found, ok);
 }
 
@@ -227,7 +325,7 @@ int se_connect(const char *dir) {
     if (se_available()) return 1;
     if (!try_copy(dir)) return 0;
     rt_log("Steam version: %s", archive);
-    list_languages();
+    list_languages(), list_sheets();
     SDL_SetAtomicInt(&found, 1); /* after the file list: the game thread reads it once this is set */
     return 1;
 }
@@ -254,25 +352,29 @@ static struct {
     int x0, x1;          /* the world columns from the first cell beside the room to the last (pixels) */
     int32_t *grid[4];    /* by BG: (2w x 2h) 8x8 tiles, se_at's codes */
     uint8_t *pictures;   /* 64 bytes each */
+    SeSource *sources;   /* with HD art loaded: 64 each, where each picture pixel came from */
     int pictures_n, pictures_cap;
 } room;
 
 static uint8_t *chips[SLOTS];     /* the tileset's chip sets, loaded when a tile needs them */
+static uint32_t *chips_hd[SLOTS]; /* with HD art: each chip's HD tile (gfxmod_find) */
 static int chips_loaded;
 static uint8_t *pages[16];        /* page 1..15: the added pictures (256 x 256), loaded when a tile needs them */
+static uint32_t *pages_hd[16];    /* with HD art: each 8x8 tile's, 32 a row */
 static int pages_loaded[16];
 static int tileset, room_location_id;
 
 static void forget_edges(void) {
     for (int b = 0; b < 4; b++) free(room.grid[b]), room.grid[b] = NULL;
     free(room.pictures), room.pictures = NULL, room.pictures_n = room.pictures_cap = 0;
+    free(room.sources), room.sources = NULL;
     room.ready = 0;
 }
 
 static void forget_room(void) {
     forget_edges();
-    for (int i = 0; i < SLOTS; i++) free(chips[i]), chips[i] = NULL;
-    for (int i = 0; i < 16; i++) free(pages[i]), pages[i] = NULL, pages_loaded[i] = 0;
+    for (int i = 0; i < SLOTS; i++) free(chips[i]), chips[i] = NULL, free(chips_hd[i]), chips_hd[i] = NULL;
+    for (int i = 0; i < 16; i++) free(pages[i]), pages[i] = NULL, free(pages_hd[i]), pages_hd[i] = NULL, pages_loaded[i] = 0;
     chips_loaded = 0;
     room.ready = 0;
 }
@@ -287,18 +389,21 @@ static void load_chips(void) {
         if (table[s] == 0xFF) continue;
         size_t len = 0;
         snprintf(name, sizeof name, "Game/field/map_bin/cg%d.bin", table[s]);
-        uint8_t *raw = steam_file(name, &len);
-        if (!raw) continue;
+        int w, h, bpp8;
+        uint8_t *sheet = se_sheet(name, &w, &h, &bpp8);
+        if (!sheet) continue;
         uint8_t *set = calloc(1, SET_SIZE);
-        /* The sheet: 128 px wide, two pixels a byte (the high nibble first); tile t at (t % 16, t / 16) * 8. */
-        for (int t = 0; set && t < 128; t++)
+        uint32_t *hd = gfxmod_hd_scale() ? calloc(128, sizeof *hd) : NULL;
+        /* tile t at (t % 16, t / 16) * 8 */
+        for (int t = 0; set && t < 128 && t / 16 * 8 + 8 <= h; t++) {
             for (int y = 0; y < 8; y++)
-                for (int x = 0; x < 8; x++) {
-                    size_t px = (size_t)((t / 16 * 8 + y) * 128 + t % 16 * 8 + x), at = 4 + px / 2;
-                    set[t * 64 + y * 8 + x] = at < len ? (px & 1 ? raw[at] & 15 : raw[at] >> 4) : 0;
-                }
-        free(raw);
-        chips[s] = set;
+                for (int x = 0; x < 8; x++) set[t * 64 + y * 8 + x] = sheet[(t / 16 * 8 + y) * w + t % 16 * 8 + x];
+            uint8_t bytes[32];
+            if (hd) hd[t] = gfxmod_find(se_sheet_tile_bytes(sheet, w, t % 16 * 8, t / 16 * 8, 0, bytes), 0);
+        }
+        (void)len;
+        free(sheet);
+        chips[s] = set, chips_hd[s] = hd;
     }
     free(table);
 }
@@ -319,23 +424,44 @@ static uint8_t *load_page(int page) {
     } else {
         snprintf(name, sizeof name, "Game/field/map_bin/cgext%d_%d.bin", loc, page - 2);
     }
-    size_t n = 0;
-    uint8_t *d = steam_file(name, &n);
+    int w, h, bpp8;
+    uint8_t *d = se_sheet(name, &w, &h, &bpp8);
     if (!d && page == 2) {
         snprintf(name, sizeof name, "Game/field/map_bin/cgext%d.bin", loc);
-        d = steam_file(name, &n);
+        d = se_sheet(name, &w, &h, &bpp8);
     }
-    if (d && n >= 8 + 65536 && d[0] == 0 && d[1] == 1 && d[4] == 0 && d[5] == 1) { /* 256 x 256 */
-        pages[page] = malloc(65536);
-        if (pages[page]) memcpy(pages[page], d + 8, 65536);
+    if (d && w == 256 && h == 256) {
+        pages[page] = d, d = NULL;
+        if (gfxmod_hd_scale() && (pages_hd[page] = calloc(1024, sizeof *pages_hd[page]))) {
+            uint8_t bytes[64];
+            for (int t = 0; t < 1024; t++)
+                pages_hd[page][t] = gfxmod_find(se_sheet_tile_bytes(pages[page], 256, t % 32 * 8, t / 32 * 8, 1, bytes), 1);
+        }
     }
     free(d);
     return pages[page];
 }
 
-/* A DS map entry (tile, flips, palette) as an 8x8 picture, from the room's tiles in VRAM (4 bits a pixel). */
-static void entry_pixels(uint32_t entry, uint8_t px[64]) {
+/* Each pixel of an 8x8 picture from one tile: its HD tile, texel (y * 8 + x within it) and flips, palette row. */
+static void same_source(SeSource *src, uint32_t tile, int hflip, int vflip, int pal) {
+    for (int i = 0; src && i < 64; i++) {
+        int x = i % 8, y = i / 8;
+        src[i] = (SeSource){tile, (uint8_t)(hflip ? 7 - x : x), (uint8_t)(vflip ? 7 - y : y), (uint8_t)((hflip ? 1 : 0) | (vflip ? 2 : 0)), (uint8_t)pal};
+    }
+}
+
+/* A DS map entry (tile, flips, palette) as an 8x8 picture, from the room's tiles in VRAM (4 bits a pixel); src (with
+ * HD art) where its pixels come from. */
+static void entry_pixels(uint32_t entry, uint8_t px[64], SeSource *src) {
     uint32_t tile = entry & 0x3FF, pal = (entry >> 12) & 15;
+    if (src) {
+        uint8_t bytes[32];
+        for (uint32_t i = 0; i < 32; i++) {
+            const uint8_t *p = video_vram_ptr(room.chr + tile * 32 + i);
+            bytes[i] = p ? *p : 0;
+        }
+        same_source(src, gfxmod_find(bytes, 0), entry & 0x400, entry & 0x800, (int)pal);
+    }
     for (int y = 0; y < 8; y++)
         for (int x = 0; x < 8; x++) {
             int sx = entry & 0x400 ? 7 - x : x, sy = entry & 0x800 ? 7 - y : y;
@@ -355,10 +481,12 @@ static int entry_blank(uint32_t entry) {
 }
 
 /* A metatile corner of the Steam release's (3 bytes) as an 8x8 picture, from its chip sets. */
-static void corner_pixels(const uint8_t *d, uint8_t px[64]) {
+static void corner_pixels(const uint8_t *d, uint8_t px[64], SeSource *src) {
     if (!chips_loaded) load_chips();
     int chip = d[0] | (d[1] & 3) << 8, pal = d[1] >> 4;
     const uint8_t *set = chip >> 7 < SLOTS ? chips[chip >> 7] : NULL;
+    const uint32_t *hd = chip >> 7 < SLOTS ? chips_hd[chip >> 7] : NULL;
+    same_source(src, hd ? hd[chip & 127] : 0, d[1] & 4, d[1] & 8, pal);
     for (int y = 0; y < 8; y++)
         for (int x = 0; x < 8; x++) {
             int sx = d[1] & 4 ? 7 - x : x, sy = d[1] & 8 ? 7 - y : y;
@@ -367,35 +495,61 @@ static void corner_pixels(const uint8_t *d, uint8_t px[64]) {
         }
 }
 
-static int32_t new_picture(const uint8_t px[64]) {
+static int32_t new_picture(const uint8_t px[64], const SeSource *src) {
     if (room.pictures_n == room.pictures_cap) {
         int cap = room.pictures_cap ? room.pictures_cap * 2 : 256;
         uint8_t *p = realloc(room.pictures, (size_t)cap * 64);
         if (!p) return 0;
-        room.pictures = p, room.pictures_cap = cap;
+        room.pictures = p;
+        if (src) {
+            SeSource *ps = realloc(room.sources, (size_t)cap * 64 * sizeof *ps);
+            if (!ps) return 0;
+            if (!room.sources) memset(ps, 0, (size_t)cap * 64 * sizeof *ps);
+            room.sources = ps;
+        }
+        room.pictures_cap = cap;
     }
     memcpy(room.pictures + (size_t)room.pictures_n * 64, px, 64);
+    if (src && room.sources) memcpy(room.sources + (size_t)room.pictures_n * 64, src, 64 * sizeof *src);
     return SE_PICTURE | room.pictures_n++;
 }
 
 const uint8_t *se_picture(int32_t code) { return room.pictures + (size_t)(code & 0xFFFF) * 64; }
+const SeSource *se_picture_hd(int32_t code) { return room.sources ? room.sources + (size_t)(code & 0xFFFF) * 64 : NULL; }
 
-/* Lays an 8x8 tile on BG bg at tile (tx, ty) of the grid: a DS map entry (px NULL) or a picture, over what is there. */
-static void lay(int bg, int tx, int ty, uint32_t entry, const uint8_t *px) {
+/* Lays an 8x8 tile on BG bg at tile (tx, ty) of the grid: a DS map entry (px NULL) or a picture (src: where its
+ * pixels come from, with HD art), over what is there. */
+static void lay(int bg, int tx, int ty, uint32_t entry, const uint8_t *px, const SeSource *src) {
     int32_t *at = &room.grid[bg][ty * 2 * room.w + tx];
     if (!*at) {
-        *at = px ? new_picture(px) : (int32_t)(SE_ENTRY | entry);
+        *at = px ? new_picture(px, src) : (int32_t)(SE_ENTRY | entry);
         return;
     }
+    int hd = gfxmod_hd_scale() != 0;
     uint8_t under[64], over[64];
-    if (*at & SE_PICTURE) memcpy(under, se_picture(*at), 64);
-    else entry_pixels((uint32_t)*at & 0xFFFF, under);
-    if (px) memcpy(over, px, 64);
-    else entry_pixels(entry, over);
+    SeSource under_src[64], over_src[64];
+    if (*at & SE_PICTURE) {
+        memcpy(under, se_picture(*at), 64);
+        if (se_picture_hd(*at)) memcpy(under_src, se_picture_hd(*at), sizeof under_src);
+        else memset(under_src, 0, sizeof under_src);
+    } else {
+        entry_pixels((uint32_t)*at & 0xFFFF, under, hd ? under_src : NULL);
+    }
+    if (px) {
+        memcpy(over, px, 64);
+        if (src) memcpy(over_src, src, sizeof over_src);
+        else memset(over_src, 0, sizeof over_src);
+    } else {
+        entry_pixels(entry, over, hd ? over_src : NULL);
+    }
     for (int i = 0; i < 64; i++)
-        if (over[i]) under[i] = over[i];
-    if (*at & SE_PICTURE) memcpy(room.pictures + (size_t)(*at & 0xFFFF) * 64, under, 64);
-    else *at = new_picture(under);
+        if (over[i]) under[i] = over[i], under_src[i] = over_src[i];
+    if (*at & SE_PICTURE) {
+        memcpy(room.pictures + (size_t)(*at & 0xFFFF) * 64, under, 64);
+        if (room.sources) memcpy(room.sources + (size_t)(*at & 0xFFFF) * 64, under_src, sizeof under_src);
+    } else {
+        *at = new_picture(under, hd ? under_src : NULL);
+    }
 }
 
 static uint16_t le16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
@@ -437,11 +591,13 @@ static void build_room(int own_tiles) {
                 for (int k = 0; k < 4; k++) {
                     int tx = 2 * c + (k & 1), ty = 2 * r + (k >> 1);
                     uint8_t px[64];
+                    SeSource src[64], *hd_src = gfxmod_hd_scale() ? src : NULL;
                     if (sheet || page >= 2) {
+                        int sx = item % 16 * 16 + (k & 1) * 8, sy = item / 16 * 16 + (k >> 1) * 8;
                         for (int y = 0; y < 8; y++)
-                            for (int x = 0; x < 8; x++)
-                                px[y * 8 + x] = sheet ? sheet[(item / 16 * 16 + (k >> 1) * 8 + y) * 256 + item % 16 * 16 + (k & 1) * 8 + x] : 0;
-                        lay(below[plane], tx, ty, 0, px);
+                            for (int x = 0; x < 8; x++) px[y * 8 + x] = sheet ? sheet[(sy + y) * 256 + sx + x] : 0;
+                        same_source(hd_src, sheet && pages_hd[page] ? pages_hd[page][sy / 8 * 32 + sx / 8] : 0, 0, 0, 0);
+                        lay(below[plane], tx, ty, 0, px, hd_src);
                         continue;
                     }
                     size_t at = (size_t)(v - 1) * 12 + (size_t)k * 3;
@@ -452,10 +608,10 @@ static void build_room(int own_tiles) {
                     uint8_t own[3] = {0}; /* the DS game's definition of that corner */
                     for (int i = 0; i < 3 && own_tiles; i++) own[i] = (uint8_t)rt_r8(room.metatiles + (uint32_t)at + (uint32_t)i);
                     if (own_tiles && !memcmp(own, d, 3) && !entry_blank(entry)) {
-                        lay(bg, tx, ty, entry, NULL);
+                        lay(bg, tx, ty, entry, NULL, NULL);
                     } else {
-                        corner_pixels(d, px);
-                        lay(bg, tx, ty, 0, px);
+                        corner_pixels(d, px, hd_src);
+                        lay(bg, tx, ty, 0, px, hd_src);
                     }
                 }
             }

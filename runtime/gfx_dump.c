@@ -8,6 +8,8 @@
  *   screens/<file>.png     each _nsc.bin, drawn from the _ncg.bin of the same name
  *   fonts/<file>.png       each message font (.fnt), its glyphs 16 to a row in cells of one size; pixel values 0-3
  *   fonts/<file>.txt       the font's advance widths and ASCII characters, by glyph
+ *   steam/<path>.png       with a Steam version connected, each of its tile sheets (Game/field/map_bin/cg*.bin), in
+ *                          a grey ramp: their palettes are the rooms' (indexes 0-15, or 0-255 at 8 bits a pixel)
  *   palettes.txt           the palette each image was drawn with
  * The images are indexed: the pixels keep the game's palette indexes, with index 0 of each 16-colour row (of the
  * palette, for 8 bits per pixel) transparent. Without a palette for a sheet (character sprites: the game picks
@@ -22,6 +24,7 @@
 #include "gfx_dump.h"
 #include "gfx_rom.h"
 #include "rt.h"
+#include "steam_edges.h"
 
 static SDL_AtomicInt running, finished, done_count, total_count, image_count;
 /* Progress by the bytes of the files done (sprites with many frames take longest), for the time left. */
@@ -167,6 +170,23 @@ static int unit_bytes(const GfxFile *f) {
     return (int)SDL_min(n, 1u << 24);
 }
 
+/* The Steam release's sheet `name` (an archive path) as steam/<name without .bin>.png. */
+static void dump_steam(const char *name) {
+    int w, h, bpp8;
+    uint8_t *px = se_sheet(name, &w, &h, &bpp8);
+    if (!px) return;
+    GfxPalette p;
+    memset(&p, 0, sizeof p);
+    for (int i = 0; i < 256; i++) {
+        uint8_t v = (uint8_t)(bpp8 ? i : (i & 15) * 17);
+        p.c[i] = (SDL_Color){v, v, v, 255};
+    }
+    char rel[300];
+    snprintf(rel, sizeof rel, "%.*s", (int)strlen(name) - 4, name);
+    save_png("steam", rel, w, h, px, bpp8, &p, name);
+    free(px);
+}
+
 static int worker(void *arg) {
     (void)arg;
     Uint64 t0 = SDL_GetTicks();
@@ -180,6 +200,9 @@ static int worker(void *arg) {
     for (int i = 0; i < files; i++) {
         if (is_unit(gfx_file(i))) total++, bytes += unit_bytes(gfx_file(i));
     }
+    enum { STEAM_SHEET_BYTES = 32768 }; /* a Steam sheet's share of the work */
+    int steam = se_available() ? se_sheet_count() : 0;
+    total += steam, bytes += steam * STEAM_SHEET_BYTES;
     SDL_SetAtomicInt(&total_bytes, bytes);
     SDL_SetAtomicInt(&total_count, total);
     for (int i = 0; i < files; i++) {
@@ -189,6 +212,11 @@ static int worker(void *arg) {
         else if (gfx_ends_with(f->path, ".fnt")) dump_font(f);
         else dump_graphics(f);
         SDL_AddAtomicInt(&done_bytes, unit_bytes(f));
+        SDL_AddAtomicInt(&done_count, 1);
+    }
+    for (int i = 0; i < steam; i++) {
+        dump_steam(se_sheet_name(i));
+        SDL_AddAtomicInt(&done_bytes, STEAM_SHEET_BYTES);
         SDL_AddAtomicInt(&done_count, 1);
     }
     if (palette_log) fclose(palette_log);

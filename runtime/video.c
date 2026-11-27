@@ -2316,6 +2316,12 @@ static void steam_line(Engine *e, int y, uint32_t dispcnt, uint16_t bgline[4][VI
             if (code & SE_PICTURE) {
                 uint8_t idx = se_picture(code)[py * 8 + px];
                 if (idx) bgline[bg][x] = pal16(e->pal + idx * 2u) | OPAQUE;
+                const SeSource *hs = idx && hd_on ? se_picture_hd(code) : NULL; /* the HD art of the tile it came from */
+                if (hs && hs[py * 8 + px].tile) {
+                    hs += py * 8 + px;
+                    bghd[bg].src[x] = hd_src(hs->tile, hs->x, hs->y, hs->flips & 1, hs->flips & 2);
+                    bghd[bg].pal[x] = (uint8_t)(hs->pal | e->id << 4);
+                }
                 continue;
             }
             uint32_t ent = (uint32_t)code & 0xFFFF, tile = ent & 0x3FF, pal = ent >> 12;
