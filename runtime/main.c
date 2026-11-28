@@ -6,6 +6,10 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #include "cheevos.h"
 #include "controls.h"
@@ -145,8 +149,47 @@ _Noreturn void rt_fatal(CPU *cpu, const char *fmt, ...) {
 /* RetroAchievements logged in or logging in: Egg of Time's own achievements wait meanwhile. */
 static int ra_active(void) { return cheevos_state() != CHEEVOS_LOGGED_OUT; }
 
+/* On a CPU of several core types, keeps the calling thread on the fastest (Windows). Windows ran the game thread on
+ * the efficiency cores for minutes at a time, at random and until Egg of Time quit (a state load kept it there): it
+ * sleeps between its lines and frames and passes for light work. On a Core Ultra 7 258V on battery, drawing the
+ * lines left the game too little time on its low-power cores, the game at 40-50 frames a second, 60 on the
+ * performance cores. Opting out of power throttling and preferring those cores (CPU sets) left it there all the
+ * same: only an affinity does. */
+static void keep_on_fast_cores(void) {
+#ifdef _WIN32
+    typedef BOOL(WINAPI * GetSets)(PSYSTEM_CPU_SET_INFORMATION, ULONG, PULONG, HANDLE, ULONG);
+    HMODULE k = GetModuleHandleW(L"kernel32.dll");
+    GetSets get_sets = k ? (GetSets)(void (*)(void))GetProcAddress(k, "GetSystemCpuSetInformation") : NULL; /* Windows 10 */
+    ULONG len = 0;
+    if (!get_sets) return;
+    get_sets(NULL, 0, &len, GetCurrentProcess(), 0);
+    uint8_t *buf = len ? malloc(len) : NULL;
+    if (!buf || !get_sets((PSYSTEM_CPU_SET_INFORMATION)buf, len, &len, GetCurrentProcess(), 0)) {
+        free(buf);
+        return;
+    }
+    int lo = 255, hi = 0;
+    DWORD_PTR mask = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        for (ULONG at = 0; at < len;) {
+            const SYSTEM_CPU_SET_INFORMATION *c = (const SYSTEM_CPU_SET_INFORMATION *)(buf + at);
+            at += c->Size;
+            if (c->Type != CpuSetInformation) continue;
+            int cls = c->CpuSet.EfficiencyClass;
+            if (!pass) lo = SDL_min(lo, cls), hi = SDL_max(hi, cls);
+            else if (cls == hi && c->CpuSet.Group == 0 && c->CpuSet.LogicalProcessorIndex < sizeof mask * 8)
+                mask |= (DWORD_PTR)1 << c->CpuSet.LogicalProcessorIndex;
+        }
+    }
+    free(buf);
+    if (lo < hi && mask && SetThreadAffinityMask(GetCurrentThread(), mask))
+        rt_log("cores: the game thread on the fastest ones (%llx)", (unsigned long long)mask);
+#endif
+}
+
 static int SDLCALL game_thread(void *arg) {
     (void)arg;
+    keep_on_fast_cores();
     rt_threads_run(rt_boot);
     SDL_SetAtomicInt(&game_finished, 1);
     return 0;

@@ -643,6 +643,12 @@ original bytes, and caches the result per region until the region is written.
   - Framerate paces only the host loop's presentation (`display_frame_ns`, `SDL_DelayPrecise`): the game thread
     keeps its emulated 60 Hz clock. Measured with `EGG_LOG_FPS=1`: 30/60/90/144 exact, unlimited ~1000-2000 with
     V-Sync off, the display's rate with it on; the game stays at 60 in every case.
+  - On a CPU of several core types (Windows), the game thread is kept on the fastest (`keep_on_fast_cores` in
+    `main.c`: an affinity to the highest `EfficiencyClass` of `GetSystemCpuSetInformation`). Drawing the lines takes
+    most of a core with HD art and zoom out, and the thread sleeps between them, so Windows took it for light work and
+    ran it on the efficiency cores for minutes at a time, until quitting: on a Core Ultra 7 258V on battery the game
+    went at 40-50 frames a second there (`EGG_LOG_FPS`), 60 on the performance cores. Opting out of power
+    throttling and preferring the fast cores (CPU sets) did not move it; an affinity does.
   - At 60 fps the host loop presents each game frame as it arrives (`display_follows_game`), up to a quarter frame
     late, not on a timer of its own: the game's 59.83 Hz against 60 Hz drifted through each other every 5.8 s, a burst of
     repeated and skipped frames each time, seen as a camera stutter. A state load moves the next burst to about 1.6 s
