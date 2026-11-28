@@ -438,11 +438,14 @@ static int ft_ready;
 static uint64_t tile_hash(const uint8_t *t) {
     uint64_t h = 1469598103934665603ull;
     for (int i = 0; i < 32; i++) h = (h ^ t[i]) * 1099511628211ull;
-    return h | 1;
+    return h;
 }
 
+/* A hash's first slot in ft_index: from its high bits, which FNV mixes best. */
+static uint32_t ft_slot(uint64_t h) { return (uint32_t)(h >> 32) & (FT_INDEX - 1); }
+
 static uint32_t ft_lookup(const uint8_t *t, uint64_t h) {
-    for (uint32_t s = (uint32_t)h & (FT_INDEX - 1);; s = (s + 1) & (FT_INDEX - 1)) {
+    for (uint32_t s = ft_slot(h);; s = (s + 1) & (FT_INDEX - 1)) {
         uint32_t n = ft_index[s];
         if (!n) return 0;
         if (ft[n - 1].hash == h && !memcmp(ft[n - 1].bytes, t, 32)) return n;
@@ -450,7 +453,7 @@ static uint32_t ft_lookup(const uint8_t *t, uint64_t h) {
 }
 
 static void ft_place(uint32_t i) {
-    uint32_t s = (uint32_t)ft[i].hash & (FT_INDEX - 1);
+    uint32_t s = ft_slot(ft[i].hash);
     while (ft_index[s]) s = (s + 1) & (FT_INDEX - 1);
     ft_index[s] = i + 1;
 }
