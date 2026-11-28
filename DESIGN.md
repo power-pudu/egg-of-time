@@ -909,6 +909,22 @@ original bytes, and caches the result per region until the region is written.
   System Settings page types its fields with SDL text input (`display_text_input`, `sysmenu_text_event`); logged in, it
   lists the set's achievements (`cheevos_list`, a copy refreshed twice a second) with their badges, downloaded a few
   at a time when first shown and cached as the server's PNGs in the data folder's `cache/badges`.
+- **Egg of Time achievements** (`runtime/local_achievements.c`): 31 achievements of the runtime's own, active only
+  while RetroAchievements is logged out (`la_init` takes a callback from `main.c`, so the module knows nothing of
+  RetroAchievements). `la_frame` runs on the game thread at VBlank (`sched.c`) and checks each locked entry;
+  `la_poll` on the host thread writes `local_achievements.ini` (data folder, one `id = unix time` line each,
+  unknown ids dropped) and shows popups through `display_popup`. A mutex guards the unlock times and a small
+  popup queue: several unlocks in one frame (a save loaded far along) make one summary popup. Checks read the
+  DS copy of the SNES $7F0000 bank, whose address is the u32 at `GAME_ADDR(0x02072088, 0x020720a8)`:
+  - story: byte 0 is the storyline counter (0x1B Leene rescued, 0x30 escaped Guardia, 0x3C Robo repaired,
+    0x81 Masamune reforged, 0x8A Magus defeated, 0x99 Lavos falls, 0xB7 Mt. Woe falls, 0xCB Ocean Palace,
+    0xD2 Blackbird crashes, 0xD5 Crono revived, 0xD6 Black Omen destroyed);
+  - side quests: single bits set only by each quest's last scene (Fiona 0x19E/0x02, Rainbow Shell 0x0A7/0x40,
+    Sun Stone 0x13A/0x40, Northern Ruins 0x1F4/0x40, Ozzie 0x1F4/0x20, Geno Dome 0x13B/0x10, Lucca's mother
+    0x07C/0x80); `docs/save-flags.md` lists the others found in the event scripts;
+  - endings: the seen-endings u16 at `GAME_ADDR(0x02074558, 0x02074578)`, bit n-1 for ending n.
+  Badges (29 px) are averaged at start from the Extras gallery (`menu/Extra/illust/NNN`) and ending pictures
+  (`menu/Extra/ending/NNN_NEW`), read from the ROM before graphics mods load; the list greys locked ones.
 - **Save states** (F5 save, F7 load, or the inputs assigned under Controls; one slot: `<rom>.state` next to the ROM; `EGG_LOAD_STATE=<file>` starts
   from a state): `runtime/state.c`. A state holds emulated state only (memory, device state, and per game thread its
   ARM registers and the address it continues at), so it stays loadable after rebuilding, as long as the tagged

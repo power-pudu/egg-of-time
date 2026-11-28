@@ -197,6 +197,15 @@ into `retroachievements.ini`, beside `eggoftime.ini`: the next start logs in and
 Only the token is ever saved. Achievements count as softcore (save states and fast forward stay usable). Your ROM
 must be a dump the set knows; Egg of Time identifies it the way RetroAchievements' emulators do.
 
+### Egg of Time achievements
+
+While you are not logged in to RetroAchievements, Egg of Time keeps 31 achievements of its own, on this computer
+only: story milestones, the main side quests, the Black Omen and the 13 endings. They pop up like
+RetroAchievements' unlocks, with badges drawn from the game's own art. Loading a save that is already further
+along unlocks what it has done at once, in one summary popup. System Settings > **RetroAchievements** lists them
+while logged out; its Reset row forgets them all (A asks again first). They are kept in `local_achievements.ini`,
+beside `eggoftime.ini`. Logged in, only RetroAchievements counts, so a scene never shows two popups.
+
 ### Fast forward
 
 Hold **Left Shift** (or the gamepad's right trigger; remappable under Controls) to run the game at 2x speed. System Settings > Fast forward

@@ -17,7 +17,9 @@
  * (or the system's on-screen keyboard) after A on their row, Enter or Esc ending the typing, and Log in; once logged
  * in, the name, Log out and the game's achievements, unlocked ones first, each with its badge (cheevos_badge, blank
  * while it downloads), title, points and description; Left/Right turn a page. The password shows as stars and is
- * forgotten once sent. B or SELECT goes back.
+ * forgotten once sent. B or SELECT goes back. Logged out, Log in is followed by Egg of Time's own achievements
+ * (local_achievements.c): a heading with how many are unlocked, Reset (A, then A again to confirm; any other key
+ * keeps them) and the 31, drawn like RetroAchievements' (locked ones greyed here).
  *
  * A on Connect Steam version (after Language) opens its page: Steam version path, Connected! once a Steam copy of the
  * game is found (in Steam's libraries, or the folder eggoftime.ini names), else A opens the system's folder picker to
@@ -41,6 +43,7 @@
 #include "controls.h"
 #include "display.h"
 #include "gfx_dump.h"
+#include "local_achievements.h"
 #include "rt.h"
 #include "sound_dump.h"
 #include "single_screen.h"
@@ -182,8 +185,11 @@ static void controls_input(uint32_t act) {
     }
 }
 
-/* The RetroAchievements page's rows: name, password and Log in, or, logged in, the name and Log out. */
-enum { CH_NAME = 1, CH_PASSWORD, CH_LOGIN, CH_LOGOUT };
+/* The RetroAchievements page's rows: name, password and Log in, then Egg of Time's own achievements' heading and
+ * Reset; or, logged in, the name and Log out. */
+enum { CH_NAME = 1, CH_PASSWORD, CH_LOGIN, CH_LOGOUT, CH_LOCAL, CH_RESET };
+#define CH_ROWS 5
+static int reset_asked; /* A on Reset asked to confirm: A again resets, anything else does not */
 static int ch_rows(int *rows) {
     int n = 0;
     rows[n++] = CH_NAME;
@@ -192,15 +198,18 @@ static int ch_rows(int *rows) {
     } else {
         rows[n++] = CH_PASSWORD;
         rows[n++] = CH_LOGIN;
+        rows[n++] = CH_LOCAL;
+        rows[n++] = CH_RESET;
     }
     return n;
 }
 
-/* The page's rows: ch_rows', then, logged in, the game's achievements (*items, from row *fixed on). */
-static int ch_total(int *rows, int *fixed, const CheevosItem **items) {
+/* The page's rows: ch_rows', then, from row *fixed on, the game's achievements: RetroAchievements' (*items) when
+ * logged in, else Egg of Time's own (*local). */
+static int ch_total(int *rows, int *fixed, const CheevosItem **items, const LaItem **local) {
     *fixed = ch_rows(rows);
-    *items = NULL;
-    return *fixed + (cheevos_state() == CHEEVOS_LOGGED_IN ? cheevos_list(items) : 0);
+    *items = NULL, *local = NULL;
+    return *fixed + (cheevos_state() == CHEEVOS_LOGGED_IN ? cheevos_list(items) : la_list(local));
 }
 
 static void typing_end(void) {
@@ -235,10 +244,19 @@ int sysmenu_text_event(const SDL_Event *e) {
 }
 
 static void cheevos_input(uint32_t act) {
-    int rows[3], fixed;
+    int rows[CH_ROWS], fixed;
     const CheevosItem *items;
-    int n = ch_total(rows, &fixed, &items);
+    const LaItem *local;
+    int n = ch_total(rows, &fixed, &items, &local);
     ch_cursor = SDL_min(ch_cursor, n - 1); /* the rows change with logging in and out */
+    if (reset_asked && act) { /* the answer to "Reset?": A resets, any other key keeps them */
+        reset_asked = 0;
+        if ((act & KEY_A) && ch_cursor < fixed && rows[ch_cursor] == CH_RESET) {
+            la_reset();
+            display_message(ui_text("Egg of Time achievements reset"), 2500);
+        }
+        return;
+    }
     if (act & (KEY_B | KEY_SELECT)) cheevos_page = 0;
     if (act & KEY_UP) ch_cursor = (ch_cursor + n - 1) % n;
     if (act & KEY_DOWN) ch_cursor = (ch_cursor + 1) % n;
@@ -262,6 +280,7 @@ static void cheevos_input(uint32_t act) {
         cheevos_logout();
         ch_cursor = 0;
         break;
+    case CH_RESET: reset_asked = 1; break;
     }
 }
 
@@ -361,7 +380,7 @@ static uint32_t input(uint32_t keys) {
     } else if (cursor == ROW_CHEATS) {
         if (act & KEY_A) settings_cursor = cursor, settings_top = top, cheats_page = 1, cursor = SET_CHEATS, top = 0;
     } else if (cursor == ROW_CHEEVOS) {
-        if (act & KEY_A) cheevos_page = 1, ch_cursor = ch_top = 0;
+        if (act & KEY_A) cheevos_page = 1, ch_cursor = ch_top = reset_asked = 0;
     } else if (cursor == ROW_DUMP) {
         if (act & KEY_A) confirm = CONFIRM_DUMP, yes = 0;
     } else if (cursor == ROW_DUMP_AUDIO) {
@@ -668,15 +687,27 @@ static void draw_lines(uint32_t *s, const char *text, int x, int y, int w, uint3
 
 /* An achievement's slot: its badge (coloured once unlocked, greyed before), the title with its points or, locked,
  * how far along it is, and the description below. */
-static void draw_achievement(uint32_t *s, const CheevosItem *a, int y, int sel) {
+typedef struct Achievement {
+    const char *title, *description, *progress;
+    unsigned points;
+    int unlocked;
+    const uint32_t *badge; /* CHEEVOS_BADGE square, or NULL: a dark square */
+    int grey;              /* greyed here (Egg of Time's own, locked); RetroAchievements' come greyed */
+} Achievement;
+
+static void draw_achievement(uint32_t *s, const Achievement *a, int y, int sel) {
     Rect b = {6, y, 244, CH_SLOT * ROW_PITCH - 1};
     panel(s, b, sel ? &BUTTON_LIT : &BUTTON);
     if (sel) frame(s, b, TEAL);
     Rect img = {b.x + 3, y + 2, CHEEVOS_BADGE, CHEEVOS_BADGE};
-    const uint32_t *badge = cheevos_badge(a->image_url);
+    const uint32_t *badge = a->badge;
     for (int py = 0; py < img.h; py++) {
         for (int px = 0; px < img.w; px++) {
             uint32_t *d = &s[(img.y + py) * SCREEN_W + img.x + px], c = badge ? badge[py * img.w + px] : 0xFF101010u;
+            if (a->grey) { /* luma, darkened */
+                uint32_t l = ((c & 0xFF) * 77 + (c >> 8 & 0xFF) * 150 + (c >> 16 & 0xFF) * 29) >> 9;
+                c = (c & 0xFF000000u) | l << 16 | l << 8 | l;
+            }
             uint32_t al = c >> 24, out = 0xFF000000u;
             for (int k = 0; k < 24; k += 8) { /* over the panel by the badge's alpha */
                 out |= (((c >> k & 0xFF) * al + (*d >> k & 0xFF) * (255 - al)) / 255) << k;
@@ -707,27 +738,42 @@ static void ch_scroll(uint32_t *s, int n, int fixed) {
     if (ch_top > 0 || used > ROWS_SHOWN) scroll_arrow(s, -1, ch_top > 0), scroll_arrow(s, 1, used > ROWS_SHOWN);
 }
 
+/* Entry i of the page's achievements, either set's. */
+static Achievement ch_item(const CheevosItem *items, const LaItem *local, int i) {
+    if (local) return (Achievement){local[i].title, local[i].description, "", local[i].points, local[i].unlocked, local[i].badge, !local[i].unlocked};
+    return (Achievement){items[i].title, items[i].description, items[i].progress, items[i].points, items[i].unlocked, cheevos_badge(items[i].image_url), 0};
+}
+
 static void draw_cheevos(uint32_t *s) {
-    int rows[3], fixed;
+    int rows[CH_ROWS], fixed;
     const CheevosItem *items;
-    int n = ch_total(rows, &fixed, &items), unlocked = 0;
+    const LaItem *local;
+    int n = ch_total(rows, &fixed, &items, &local), unlocked = 0;
     char title[64] = "RetroAchievements";
-    for (int i = 0; i < n - fixed; i++) unlocked += items[i].unlocked;
-    if (n > fixed) SDL_snprintf(title, sizeof title, ui_text("Achievements: %d of %d"), unlocked, n - fixed);
+    for (int i = 0; i < n - fixed && items; i++) unlocked += items[i].unlocked;
+    if (items && n > fixed) SDL_snprintf(title, sizeof title, ui_text("Achievements: %d of %d"), unlocked, n - fixed);
     ui_draw_text(s, title, (SCREEN_W - ui_text_width(title)) / 2, 8, WHITE);
     ch_cursor = SDL_min(ch_cursor, n - 1);
     ch_scroll(s, n, fixed);
     for (int r = ch_top, used = 0; r < n && used + ch_height(r, fixed) <= ROWS_SHOWN; used += ch_height(r++, fixed)) {
         int y = ROW_Y + used * ROW_PITCH, sel = r == ch_cursor;
         if (r >= fixed) {
-            draw_achievement(s, &items[r - fixed], y, sel);
+            Achievement a = ch_item(items, local, r - fixed);
+            draw_achievement(s, &a, y, sel);
             continue;
         }
-        if (rows[r] == CH_LOGIN || rows[r] == CH_LOGOUT) {
+        if (rows[r] == CH_LOCAL) { /* the heading of Egg of Time's own */
+            char head[96];
+            SDL_snprintf(head, sizeof head, ui_text("Egg of Time achievements: %d of %d"), la_unlocked_count(), LA_COUNT);
+            ui_draw_text(s, head, (SCREEN_W - ui_text_width(head)) / 2, y + 4, sel ? YELLOW : WHITE);
+            continue;
+        }
+        if (rows[r] == CH_LOGIN || rows[r] == CH_LOGOUT || rows[r] == CH_RESET) {
             Rect b = {6, y, 244, ROW_H};
             panel(s, b, sel ? &BUTTON_LIT : &BUTTON);
             if (sel) frame(s, b, TEAL);
-            const char *label = rows[r] == CH_LOGOUT                       ? "Log out"
+            const char *label = rows[r] == CH_RESET                        ? (reset_asked && sel ? "Reset all? A: Yes  B: No" : "Reset Egg of Time achievements")
+                                : rows[r] == CH_LOGOUT                     ? "Log out"
                                 : cheevos_state() == CHEEVOS_LOGGING_IN ? "Logging in..."
                                                                         : "Log in";
             centered(s, ui_text(label), b, sel ? WHITE : GREY);
@@ -745,20 +791,24 @@ static void draw_cheevos(uint32_t *s) {
 }
 
 static const char *cheevos_footer(void) {
-    int rows[3], fixed;
+    int rows[CH_ROWS], fixed;
     const CheevosItem *items;
-    ch_total(rows, &fixed, &items);
+    const LaItem *local;
+    int n = ch_total(rows, &fixed, &items, &local);
+    if (ch_cursor >= n) return ""; /* the list changed under the cursor (a login just finished): clamped next frame */
     if (typing) return ui_text("Type, then Enter.");
     if (cheevos_state() == CHEEVOS_LOGGING_IN) return ui_text("Logging in...");
     if (ch_cursor >= fixed) {
-        const CheevosItem *a = &items[ch_cursor - fixed];
+        Achievement a = ch_item(items, local, ch_cursor - fixed);
         static char buf[96];
-        if (a->unlocked) return ui_text("Unlocked.");
-        if (!a->progress[0]) return ui_text("Not unlocked yet.");
-        SDL_snprintf(buf, sizeof buf, ui_text("Not unlocked yet: %s so far."), a->progress);
+        if (a.unlocked) return ui_text("Unlocked.");
+        if (!a.progress[0]) return ui_text("Not unlocked yet.");
+        SDL_snprintf(buf, sizeof buf, ui_text("Not unlocked yet: %s so far."), a.progress);
         return buf;
     }
     switch (rows[ch_cursor]) {
+    case CH_LOCAL: return ui_text("Kept on this computer, while logged out.");
+    case CH_RESET: return ui_text(reset_asked ? "A: forget them all. B: keep them." : "Forget every Egg of Time achievement.");
     case CH_NAME:
         return ui_text(cheevos_state() == CHEEVOS_LOGGED_IN ? "Achievements unlock as you play." : "Your retroachievements.org name.");
     case CH_PASSWORD: return ui_text("Only a login token is saved.");

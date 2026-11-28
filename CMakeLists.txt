@@ -94,6 +94,7 @@ set(RUNTIME_SOURCES
     runtime/state.c
     runtime/steam_edges.c
     runtime/steam_presence.c
+    runtime/local_achievements.c
     runtime/system_menu.c
     runtime/selftest.c
     runtime/shader.c

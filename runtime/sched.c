@@ -8,6 +8,7 @@
 
 #include "cheats.h"
 #include "cheevos.h"
+#include "local_achievements.h"
 #include "rt.h"
 #include "single_screen.h"
 #include "steam_presence.h"
@@ -107,6 +108,7 @@ static void video_line_start(uint64_t abs_line) {
         video_end_frame();
         cheevos_frame();
         sp_frame();
+        la_frame();
         cheats_frame();
         uint32_t keys = ss_game_keys(rt_keys);
         /* PAD_Read ORs this into KEYINPUT: X = bit 10, Y = bit 11, debug = bit 13 (1 = released);

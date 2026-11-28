@@ -11,6 +11,7 @@
 #include "controls.h"
 #include "display.h"
 #include "game_build.h"
+#include "local_achievements.h"
 #include "gfx_mod.h"
 #include "rt.h"
 #include "sound.h"
@@ -139,6 +140,9 @@ _Noreturn void rt_fatal(CPU *cpu, const char *fmt, ...) {
     fflush(stderr);
     exit(1);
 }
+
+/* RetroAchievements logged in or logging in: Egg of Time's own achievements wait meanwhile. */
+static int ra_active(void) { return cheevos_state() != CHEEVOS_LOGGED_OUT; }
 
 static int SDLCALL game_thread(void *arg) {
     (void)arg;
@@ -276,6 +280,7 @@ int main(int argc, char **argv) {
     controls_init();
     if (!game_build_prepare(argc > 1 ? argv[1] : NULL)) return 1; /* the ROM and the game code */
     cheevos_init(); /* RetroAchievements: logs in with the saved login */
+    la_init(ra_active); /* Egg of Time's own achievements, while RetroAchievements is logged out */
     if (display_setting_get(SET_MODS)) gfxmod_load(); /* graphics mods: into the ROM in memory, and HD art */
     spu_open_output();
 
@@ -383,6 +388,7 @@ int main(int argc, char **argv) {
             exit_since = 0;
         }
         cheevos_poll();
+        la_poll();
         /* Pressed, not held, and not in the menu, where a key can be typed or being assigned. F5 and F7 stay above. */
         int save_now = controls_held(pad, CTL_SAVE_STATE), load_now = controls_held(pad, CTL_LOAD_STATE);
         if (!sysmenu_is_open()) {
