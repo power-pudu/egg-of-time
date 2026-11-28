@@ -93,6 +93,7 @@ set(RUNTIME_SOURCES
     runtime/spu.c
     runtime/state.c
     runtime/steam_edges.c
+    runtime/steam_music.c
     runtime/steam_presence.c
     runtime/steam_text.c
     runtime/local_achievements.c

@@ -19,6 +19,7 @@
 #include "gfx_mod.h"
 #include "rt.h"
 #include "sound.h"
+#include "steam_music.h"
 #include "steam_presence.h"
 #include "steam_text.h"
 #include "system_menu.h"
@@ -324,6 +325,7 @@ int main(int argc, char **argv) {
     controls_init();
     if (!game_build_prepare(argc > 1 ? argv[1] : NULL)) return 1; /* the ROM and the game code */
     st_check(); /* EGG_STEAMTEXT_CHECK=1: the Steam text codec against the ROM, then exits */
+    steam_music_check(); /* EGG_STEAMMUSIC_CHECK=1: the Steam music tracks, then exits */
     cheevos_init(); /* RetroAchievements: logs in with the saved login */
     la_init(ra_active); /* Egg of Time's own achievements, while RetroAchievements is logged out */
     if (display_setting_get(SET_MODS)) gfxmod_load(); /* graphics mods: into the ROM in memory, and HD art */

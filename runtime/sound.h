@@ -61,6 +61,11 @@ void music_player(int pno, int running, int db); /* every driver frame: playing 
 /* Adds the replacements to float stereo output at SPU_RATE, the music's `speed` and the effects' effect_speed (1
  * or 2) times faster; muted effects play on silent. */
 void music_mix(float *out, uint32_t frames, int speed, int effect_speed, int effects_muted);
+/* EGG_STEAMMUSIC_CHECK: plays a Steam track (seq, its reference t, given up) as music_mix would, seeks to its loop
+ * start and reads one packet: 1 when the packet starts within a block (1024 samples) before the loop start, and
+ * *landed its first sample; 0 when the seek failed or landed elsewhere. */
+struct SteamTrack;
+int music_loop_check(const char *seq, struct SteamTrack *t, int64_t *landed);
 
 /* Sample mods (sound_mod.c): replacement files for single waves of the archive's wave archives. Game thread. */
 /* The mod for wave `index` of the wave archive at `arc` in game memory, of `rate` Hz, looping from loop_start (of

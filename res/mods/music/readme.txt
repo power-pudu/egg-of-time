@@ -130,7 +130,8 @@ If there are several files for one track, the first in the order above is used
 
 Playing
 -------
-- Replacements play while System Settings > Mods is On (the default).
+- Replacements play while System Settings > Mods is On (the default). With a Steam
+  copy connected and Override music on, a file here still comes first.
 - The game's fades and volume changes apply to them. A jingle (fanfare) stops when
   the game's own jingle would have ended.
 - Leave some headroom: a file mastered at full loudness will sound louder than the

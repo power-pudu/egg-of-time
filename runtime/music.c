@@ -14,7 +14,12 @@
  * player's volume relative to the sequence's own (so the game's fades and volume changes apply), and stops
  * with it. Which sequence a player loaded is found by comparing its data in RAM with the archive's BGM
  * sequences (the driver only gets the data's address). Decoding happens on the game thread, in step with the
- * mixer (spu.c). A save state restores the players; their replacements restart from the beginning. */
+ * mixer (spu.c). A save state restores the players; their replacements restart from the beginning.
+ *
+ * Override music (steammusic): without a mod file (or with Mods off), a BGM the player's Steam copy has plays the
+ * Steam release's version (steam_music.c), from memory through an AVIOContext (FFmpeg's HCA demuxer), with the
+ * track's own loop points; a track without them plays once. Its data is unpacked on a worker thread: until it is
+ * ready the player's source waits (pending), silent, with the sequence muted. */
 #include <stdio.h>
 #include <string.h>
 
@@ -28,9 +33,11 @@
 #include "rt.h"
 #include "sdat.h"
 #include "sound.h"
+#include "steam_music.h"
 
 #define PLAYERS 16
 #define MUSIC_GAIN 1.0f /* a replacement at full volume, against the game's mix */
+#define STEAM_MUSIC_GAIN 1.5f /* +3.5 dB: the Steam release's music is mastered quieter than the DS's mix */
 
 /* ---- the sound archive's music and effect sequences ---- */
 
@@ -76,6 +83,12 @@ typedef struct Source {
     int ref_db;                   /* the sequence's own volume (0.1 dB): the replacement's full level */
     int running, db;              /* set every driver frame: the player plays, at this volume (0.1 dB) */
     int once, effect, ended;      /* plays to its end (no loop tags); a sound effect's; it has ended */
+    float gain;                   /* at full volume */
+    SteamTrack *track;            /* a Steam track's data (a reference), read through avio */
+    AVIOContext *avio;
+    int64_t mem_pos;
+    int pending;                  /* waiting for the Steam track named seq to be unpacked: nothing else is open */
+    char seq[16];
 } Source;
 
 static Source *sources[PLAYERS];
@@ -89,7 +102,35 @@ static void close_source(Source *s) {
     av_packet_free(&s->pkt);
     avcodec_free_context(&s->dec);
     avformat_close_input(&s->fmt);
+    if (s->avio) av_freep(&s->avio->buffer);
+    avio_context_free(&s->avio);
+    steam_music_release(s->track);
     av_free(s);
+}
+
+/* A Steam track read from memory. */
+static int read_mem(void *opaque, uint8_t *buf, int n) {
+    Source *s = opaque;
+    int64_t left = (int64_t)s->track->len - s->mem_pos;
+    if (left <= 0) return AVERROR_EOF;
+    if (n > left) n = (int)left;
+    memcpy(buf, s->track->hca + s->mem_pos, (size_t)n);
+    s->mem_pos += n;
+    return n;
+}
+
+static int64_t seek_mem(void *opaque, int64_t offset, int whence) {
+    Source *s = opaque;
+    int64_t len = (int64_t)s->track->len, pos;
+    switch (whence & ~AVSEEK_FORCE) {
+    case AVSEEK_SIZE: return len;
+    case SEEK_SET: pos = offset; break;
+    case SEEK_CUR: pos = s->mem_pos + offset; break;
+    case SEEK_END: pos = len + offset; break;
+    default: return -1;
+    }
+    if (pos < 0 || pos > len) return -1;
+    return s->mem_pos = pos;
 }
 
 static int64_t tag(const AVFormatContext *fmt, int stream, const char *key) {
@@ -98,14 +139,32 @@ static int64_t tag(const AVFormatContext *fmt, int stream, const char *key) {
     return e ? strtoll(e->value, NULL, 10) : -1;
 }
 
-static Source *open_source(const char *path, int msu) {
+/* A file (path; msu: MSU-1 PCM) or a Steam track (track: its reference passes to the source, path names it). */
+static Source *open_source(const char *path, int msu, SteamTrack *track) {
     Source *s = av_mallocz(sizeof *s);
-    if (!s) return NULL;
+    if (!s) {
+        steam_music_release(track);
+        return NULL;
+    }
     AVDictionary *opts = NULL;
     const AVInputFormat *in = NULL;
     s->loop_start = 0;
     s->loop_end = -1;
-    if (msu) {
+    s->gain = MUSIC_GAIN;
+    if (track) {
+        uint8_t *buf = av_malloc(1 << 16);
+        s->track = track;
+        s->gain = STEAM_MUSIC_GAIN;
+        if (buf && !(s->avio = avio_alloc_context(buf, 1 << 16, 0, s, read_mem, NULL, seek_mem))) av_free(buf);
+        if (!s->avio || !(s->fmt = avformat_alloc_context())) {
+            rt_log("music: cannot play %s", path);
+            close_source(s);
+            return NULL;
+        }
+        s->fmt->pb = s->avio;
+        s->fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
+        in = av_find_input_format("hca");
+    } else if (msu) {
         uint8_t h[8] = {0};
         SDL_IOStream *f = SDL_IOFromFile(path, "rb");
         if (!f || SDL_ReadIO(f, h, 8) != 8 || memcmp(h, "MSU1", 4)) {
@@ -121,7 +180,7 @@ static Source *open_source(const char *path, int msu) {
         av_dict_set(&opts, "ch_layout", "stereo", 0);
         av_dict_set(&opts, "skip_initial_bytes", "8", 0);
     }
-    int ok = avformat_open_input(&s->fmt, path, in, &opts) == 0;
+    int ok = avformat_open_input(&s->fmt, track ? "" : path, in, &opts) == 0;
     av_dict_free(&opts);
     ok = ok && avformat_find_stream_info(s->fmt, NULL) >= 0;
     if (ok) s->stream = av_find_best_stream(s->fmt, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
@@ -142,7 +201,11 @@ static Source *open_source(const char *path, int msu) {
         return NULL;
     }
     s->rate = s->dec->sample_rate;
-    if (!msu) {
+    if (track) {
+        s->loop_start = track->loop_start;
+        s->loop_end = track->loop_end;
+        s->once = track->loop_end < 0;
+    } else if (!msu) {
         int64_t start = tag(s->fmt, s->stream, "LOOPSTART"), end = tag(s->fmt, s->stream, "LOOPEND");
         int64_t len = tag(s->fmt, s->stream, "LOOPLENGTH");
         if (start >= 0) {
@@ -223,6 +286,18 @@ static int fill(Source *s, int need) {
     return 1;
 }
 
+int music_loop_check(const char *seq, SteamTrack *t, int64_t *landed) {
+    Source *s = open_source(seq, 0, t);
+    if (!s) return 0;
+    int ok = fill(s, 1) && restart(s) && av_read_frame(s->fmt, s->pkt) >= 0 && s->pkt->pts != AV_NOPTS_VALUE;
+    if (ok) {
+        *landed = av_rescale_q(s->pkt->pts, s->fmt->streams[s->stream]->time_base, (AVRational){1, s->rate});
+        ok = *landed <= s->loop_start && s->loop_start - *landed < 1024;
+    }
+    close_source(s);
+    return ok;
+}
+
 /* ---- the driver's side (snd.c) ---- */
 
 static const char *const extensions[] = {"ogg", "opus", "flac", "mp3", "wav", "m4a", "aac", "pcm"};
@@ -236,7 +311,7 @@ static Source *open_replacement(const SdatSeq *q) {
         SDL_PathInfo info;
         if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) continue;
         int msu = !strcmp(extensions[i], "pcm");
-        Source *s = open_source(path, msu);
+        Source *s = open_source(path, msu, NULL);
         if (!s) return NULL;
         s->ref_db = q->volume ? (int)SDL_lround(400.0 * SDL_log10(q->volume / 127.0)) : 0;
         s->effect = is_effect(q);
@@ -252,9 +327,18 @@ void music_prepare(int pno, uint32_t seq_data) {
     const SdatSeq *found[4];
     int n = identify(seq_data, found, 4);
     is_bgm[pno] = n && !is_effect(found[0]);
-    if (!n || !display_setting_get(SET_MODS)) return;
-    for (int i = 0; i < n && !sources[pno]; i++) sources[pno] = open_replacement(found[i]);
-    if (!sources[pno] && !is_effect(found[0])) rt_log("music: %s (no replacement)", found[0]->name);
+    if (!n) return;
+    if (display_setting_get(SET_MODS)) {
+        for (int i = 0; i < n && !sources[pno]; i++) sources[pno] = open_replacement(found[i]);
+    }
+    for (int i = 0; i < n && !sources[pno] && is_bgm[pno] && display_setting_get(SET_STEAM_MUSIC); i++) {
+        if (is_effect(found[i]) || !steam_music_has(found[i]->name) || !(sources[pno] = av_mallocz(sizeof(Source)))) continue;
+        Source *s = sources[pno]; /* opened by music_mix once unpacked */
+        s->pending = 1;
+        SDL_strlcpy(s->seq, found[i]->name, sizeof s->seq);
+        s->ref_db = found[i]->volume ? (int)SDL_lround(400.0 * SDL_log10(found[i]->volume / 127.0)) : 0;
+    }
+    if (!sources[pno] && is_bgm[pno]) rt_log("music: %s (no replacement)", found[0]->name);
 }
 
 void music_stop(int pno) {
@@ -302,7 +386,7 @@ static int mix_source(Source *s, float *out, uint32_t frames, int speed) {
     float *p = buf;
     int got = av_audio_fifo_read(s->fifo, (void **)&p, (int)frames * speed) / speed;
     int db = SDL_min(s->db - s->ref_db, 60); /* up to 6 dB above the sequence's own volume */
-    float gain = db <= -723 ? 0.0f : MUSIC_GAIN * (float)SDL_pow(10.0, db / 200.0) / speed;
+    float gain = db <= -723 ? 0.0f : s->gain * (float)SDL_pow(10.0, db / 200.0) / speed;
     for (int k = 0; k < got; k++) { /* fast forward: each output frame averages `speed` of the file's */
         for (int j = 0; j < speed; j++) {
             out[k * 2] += buf[(k * speed + j) * 2] * gain;
@@ -318,6 +402,15 @@ void music_mix(float *out, uint32_t frames, int speed, int effect_speed, int eff
     for (int i = 0; i < PLAYERS * 2; i++) {
         Source **slot = i < PLAYERS ? &sources[i] : &tails[i - PLAYERS];
         Source *s = *slot;
+        if (s && s->pending) { /* a Steam track: opened once unpacked, dropped if it cannot be (the sequence plays) */
+            SteamTrack *t = NULL;
+            int r = steam_music_get(s->seq, &t);
+            if (r == 0) continue;
+            Source *o = r > 0 ? open_source(s->seq, 0, t) : NULL;
+            if (o) o->ref_db = s->ref_db, o->running = s->running, o->db = s->db;
+            close_source(s);
+            *slot = s = o;
+        }
         if (!s || !s->running) continue;
         int sp = SDL_clamp(s->effect ? effect_speed : speed, 1, 2);
         if (mix_source(s, s->effect && effects_muted ? silent : out, frames, sp)) continue;

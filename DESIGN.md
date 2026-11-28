@@ -142,8 +142,8 @@ original bytes, and caches the result per region until the region is written.
     once a Steam copy of the game is found, else A opens the system's folder picker (`SDL_ShowOpenFolderDialog`)
     and the folder chosen is tried and kept as `steampath` in eggoftime.ini. Once connected the page lists what the
     copy is used for, each Yes by default: Import extended maps (`steamedges`, below), Trigger Steam achievements,
-    Override cutscenes (Movie mods, below), music and sounds, Use Steam translation and, with it, Translation
-    language (the copy's `Localize/<code>/msg/` folders); music and sounds are still to come.
+    Override cutscenes (Movie mods, below), music (Music mods, below) and sounds, Use Steam translation and, with
+    it, Translation language (the copy's `Localize/<code>/msg/` folders); sounds are still to come.
   - Steam presence (`runtime/steam_presence.c`, Windows): with a Steam copy connected, Steam shows the player in
     the game while Egg of Time runs. The copy's `steam_api.dll` is 32-bit, so `egg-steam.exe`
     (`tools/steam_helper/egg_steam.c`, built 32-bit by the same llvm-mingw with `--target=i686-w64-mingw32`, shipped
@@ -850,6 +850,18 @@ original bytes, and caches the result per region until the region is written.
   `res/mods/music/readme.txt` come from the Music Box: titles in `/msg/big/bgm.msg` (one byte per character in
   the game's font order; English is every 4th entry from 1, French follows each) and the BGM numbers in the u32
   table at main 0x020558d4 (also in ov009); 28 of the 97 are not in the Music Box.
+  Without a mod file (or with Mods off), Override music (`steammusic`) plays the Steam release's version
+  (`runtime/steam_music.c`): `Sound/BGM/BGM_xx.sab` in the copy's `resources.bin`, 85 files (01-53, 61, 62; the
+  numbers are the DS's, checked by recording; DS BGM_00 and 54-60 have none, Steam's 61 and 62 replace nothing).
+  A `.sab` is a SEAD bank: a chunk table at 0x20 (`snd `, `seq `, `trk `, `mtrl`); the first material of `mtrl`
+  (codec 7 at +0x05) gives the loop (+0x0c, +0x10, samples, inclusive), the extradata id (+0x1c) and, from +0x30,
+  an HCA file (48 kHz stereo, CRI cipher 0) whose bytes after its header are XORed with the SEAD banks' 256-byte
+  key from key[id & 255]. FFmpeg's `hca` demuxer and decoder read it from memory through an `AVIOContext`; its
+  output counts from before the HCA encoder delay, so the delay is added to the loop points (they then equal the
+  HCA `loop` chunk's). 66 tracks loop; the 19 without loop points play once. Unpacking takes up to 52 ms
+  (BGM_62, 15 MB), so a worker thread does it: the player's source waits, silent with its sequence muted, until
+  the track is ready (`music_mix` asks each mix), and the last 4 tracks stay in memory. A gain of 1.5 (+3.5 dB)
+  brings them to the DS's level. `EGG_STEAMMUSIC_CHECK=1` unpacks every track, logs it and exits.
 - **Graphics dump** (`runtime/gfx_dump.c`, System Settings > Dump graphics): every tile sheet (`.NCGR`,
   `_ncg.bin`), every `.NCER` cell (a sprite frame) and every `_nsc.bin` screen of the ROM in memory, as indexed
   PNGs (`SDL_SavePNG`, palette indexes kept, colour 0 of each 16-colour row transparent) in

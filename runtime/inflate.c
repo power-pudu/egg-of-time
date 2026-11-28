@@ -94,16 +94,12 @@ static int codes(Inflate *s, const Huffman *lit, const Huffman *dist) {
 }
 
 static int fixed(Inflate *s) {
-    static Huffman lit, dist;
-    static int built;
-    if (!built) {
-        uint8_t l[288];
-        memset(l, 8, 144), memset(l + 144, 9, 112), memset(l + 256, 7, 24), memset(l + 280, 8, 8);
-        build(&lit, l, 288);
-        memset(l, 5, 30);
-        build(&dist, l, 30);
-        built = 1;
-    }
+    Huffman lit, dist; /* built each time (cheap): threads unpack at once (steam_music.c's worker, the game's) */
+    uint8_t l[288];
+    memset(l, 8, 144), memset(l + 144, 9, 112), memset(l + 256, 7, 24), memset(l + 280, 8, 8);
+    build(&lit, l, 288);
+    memset(l, 5, 30);
+    build(&dist, l, 30);
     return codes(s, &lit, &dist);
 }
 

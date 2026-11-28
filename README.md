@@ -137,6 +137,9 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 - **Steam cutscenes** (with your Steam copy connected): System Settings > Connect Steam version > Override
   cutscenes plays the Steam release's HD cutscenes in place of the DS movies it has (all but two), read from your
   copy as they play; nothing is copied or saved. Your own cutscene mods (`mods\cutscenes\`) still come first.
+- **Steam music** (with your Steam copy connected): System Settings > Connect Steam version > Override music plays
+  the Steam release's version of each music track it has (all but the DS-only ones), read from your copy into
+  memory; nothing is copied or saved. Your own music mods (`mods\music\`) still come first.
 - **Steam translations** (with your Steam copy connected): System Settings > Connect Steam version > Use Steam
   translation shows the game's text in a language of the Steam release (Translation language), Chinese, Japanese and
   Korean included. System Settings > Language lists them too, after the game's own languages, as "<language>
