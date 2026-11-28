@@ -142,8 +142,8 @@ original bytes, and caches the result per region until the region is written.
     once a Steam copy of the game is found, else A opens the system's folder picker (`SDL_ShowOpenFolderDialog`)
     and the folder chosen is tried and kept as `steampath` in eggoftime.ini. Once connected the page lists what the
     copy is used for, each Yes by default: Import extended maps (`steamedges`, below), Trigger Steam achievements,
-    Override cutscenes, music and sounds, Use Steam translation and, with it, Translation language (the copy's
-    `Localize/<code>/msg/` folders); cutscenes, music and sounds are still to come.
+    Override cutscenes (Movie mods, below), music and sounds, Use Steam translation and, with it, Translation
+    language (the copy's `Localize/<code>/msg/` folders); music and sounds are still to come.
   - Steam presence (`runtime/steam_presence.c`, Windows): with a Steam copy connected, Steam shows the player in
     the game while Egg of Time runs. The copy's `steam_api.dll` is 32-bit, so `egg-steam.exe`
     (`tools/steam_helper/egg_steam.c`, built 32-bit by the same llvm-mingw with `--target=i686-w64-mingw32`, shipped
@@ -818,7 +818,14 @@ original bytes, and caches the result per region until the region is written.
   the list of names). Every cutscene is played by ov017 0x02198d20 (r0 path, r1 per-frame callback; the in-game
   movies, main 0x02045c3c with the movie table at 0x02064968) or 0x02198da0 (also r1 start / r2 per-frame / r3 end
   callbacks with the scene's data at [sp]: the intro, the Extras theater, the ending variants); both are wrapped
-  and return after the replacement without running the game's player. The emulated machine pauses meanwhile (the
+  and return after the replacement without running the game's player. Without a mod file (or with Mods off),
+  Override cutscenes (`steammovies`) plays the Steam release's version from the player's copy: `001.dat` ...
+  `008.dat` beside its `resources.bin`, 1080p H.264 MP4s (29.97 fps, AAC 48 kHz) with each byte XORed with
+  0xFF - offset % 256, read through an `AVIOContext` whose callbacks unmask at the offset (the index is at the end,
+  so it seeks; nothing is written anywhere). Matched by picture: op_ds 001, m2_ds ... m7_ds 002 ... 007, enosp1_ds
+  008; m1_ds and enosp2_ds have none. `007-en.dat` is 007 with English subtitles under its Japanese text cards
+  (same audio): played unless the game's screens are Japanese (`ui_game_language`). The Steam versions run 1-6 s
+  longer, which a replacement allows. The emulated machine pauses meanwhile (the
   scheduler and sound driver skip the time, as after a host stall). The 0x02198da0 start callback must still run:
   the intro's sets the scene's result (data + 0x7a0 = 3), which the front end reads next (without it, a black
   screen); the end callback frees what it set up; the per-frame one (bottom-screen animation) is left out.

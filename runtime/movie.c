@@ -3,6 +3,12 @@
  * /movie/op_ds.mods -> mods/cutscenes/op_ds.mp4 (the list is in res/mods/cutscenes/readme.txt, copied there by
  * the build).
  *
+ * Override cutscenes (System Settings > Connect Steam version): without a mod for it, a movie the Steam release has
+ * plays that one, read from the player's copy (001.dat ... 008.dat beside its resources.bin: 1080p MP4s, each byte
+ * XORed with 0xFF - its offset % 256, unmasked as FFmpeg reads them; nothing is written anywhere). op_ds is 001,
+ * m2_ds ... m7_ds 002 ... 007, enosp1_ds 008; m1_ds and enosp2_ds have none. 007-en is 007 with English subtitles
+ * under its Japanese text cards: it plays unless the game's screens are in Japanese.
+ *
  * Every cutscene goes through one of two game functions that take the movie's path in r0 and return once it has
  * played (ov017 0x02198d20, and 0x02198da0 for the scenes that also draw on the bottom screen: the intro, the
  * Extras theater, the ending credits). Both are wrapped (tools/recomp/overrides.txt): with a replacement, the
@@ -34,6 +40,8 @@
 #include "display.h"
 #include "movie.h"
 #include "rt.h"
+#include "steam_edges.h"
+#include "ui_text.h"
 
 #define SKIPPED_FLAG GAME_ADDR(0x0207b3d0u, 0x0207b3f0u) /* set by the game's per-frame callbacks when the player skips */
 #define LATE_DROP 0.1            /* seconds: a frame this late is not shown (decoding is behind) */
@@ -127,8 +135,31 @@ int movie_draw(SDL_Renderer *ren) {
 
 /* ---- decoding (game thread) ---- */
 
+/* A Steam movie as FFmpeg reads it: the file, unmasked at each byte's offset. */
+typedef struct Masked { SDL_IOStream *io; int64_t pos, size; } Masked;
+
+static int read_masked(void *opaque, uint8_t *buf, int size) {
+    Masked *m = opaque;
+    size_t n = SDL_ReadIO(m->io, buf, (size_t)size);
+    if (n == 0) return AVERROR_EOF;
+    for (size_t i = 0; i < n; i++) buf[i] ^= (uint8_t)(0xFF - ((m->pos + (int64_t)i) & 0xFF));
+    m->pos += (int64_t)n;
+    return (int)n;
+}
+
+static int64_t seek_masked(void *opaque, int64_t offset, int whence) {
+    Masked *m = opaque;
+    if (whence & AVSEEK_SIZE) return m->size;
+    int64_t to = SDL_SeekIO(m->io, offset, (whence & ~AVSEEK_FORCE) == SEEK_CUR ? SDL_IO_SEEK_CUR
+                                        : (whence & ~AVSEEK_FORCE) == SEEK_END ? SDL_IO_SEEK_END : SDL_IO_SEEK_SET);
+    if (to < 0) return -1;
+    return m->pos = to;
+}
+
 typedef struct Player {
     AVFormatContext *fmt;
+    AVIOContext *avio;         /* a Steam movie's reader (fmt->pb), NULL for a plain file */
+    Masked masked;
     AVCodecContext *vdec, *adec;
     int vstream, astream;
     enum AVPixelFormat hw_fmt; /* AV_PIX_FMT_NONE: software decoding */
@@ -331,16 +362,37 @@ static void close_player(Player *p) {
     avcodec_free_context(&p->adec);
     av_buffer_unref(&p->hw_device);
     avformat_close_input(&p->fmt);
+    if (p->avio) av_freep(&p->avio->buffer);
+    avio_context_free(&p->avio);
+    if (p->masked.io) SDL_CloseIO(p->masked.io);
+}
+
+/* Opens the file for p->fmt: masked, a Steam movie read through read_masked. */
+static int open_input(Player *p, const char *path, int masked) {
+    if (!masked) return avformat_open_input(&p->fmt, path, NULL, NULL) >= 0;
+    enum { BUF = 64 << 10 };
+    uint8_t *buf = NULL;
+    if (!(p->masked.io = SDL_IOFromFile(path, "rb")) || (p->masked.size = SDL_GetIOSize(p->masked.io)) < 0 ||
+        !(buf = av_malloc(BUF)) ||
+        !(p->avio = avio_alloc_context(buf, BUF, 0, &p->masked, read_masked, NULL, seek_masked)) ||
+        !(p->fmt = avformat_alloc_context())) {
+        if (!p->avio) av_free(buf);
+        return 0;
+    }
+    p->fmt->pb = p->avio;
+    p->fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
+    return avformat_open_input(&p->fmt, NULL, NULL, NULL) >= 0; /* frees fmt on failure, not pb */
 }
 
 /* Plays the file to its end or until skipped (skip_keys or a touch); 0 if it cannot be played (the game then plays
  * its own movie). */
-static int play_file(const char *path, uint32_t skip_keys) {
+static int play_file(const char *path, int masked, uint32_t skip_keys) {
     Player p = {0};
     p.skip_keys = skip_keys;
     p.vstream = p.astream = -1;
-    if (avformat_open_input(&p.fmt, path, NULL, NULL) < 0) {
+    if (!open_input(&p, path, masked)) {
         rt_log("movie: cannot open %s", path);
+        close_player(&p);
         return 0;
     }
     if (avformat_find_stream_info(p.fmt, NULL) < 0) {
@@ -411,10 +463,20 @@ static int play_file(const char *path, uint32_t skip_keys) {
     return 1;
 }
 
-/* The replacement for the game movie at `path` (game memory, e.g. "/movie/op_ds.mods") when Mods is on and the
- * file exists: mods/cutscenes/op_ds.mp4. */
-static int replacement(uint32_t path, char *out, size_t n) {
-    if (!display_setting_get(SET_MODS)) return 0;
+/* The Steam release's movies, by the DS movie they replace. */
+static const struct { const char *ds, *steam; } steam_movies[] = {
+    {"op_ds", "001"}, {"m2_ds", "002"}, {"m3_ds", "003"}, {"m4_ds", "004"}, {"m5_ds", "005"}, {"m6_ds", "006"},
+    {"m7_ds", "007"}, {"enosp1_ds", "008"},
+};
+
+static int is_file(const char *path) {
+    SDL_PathInfo info;
+    return SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE;
+}
+
+/* The replacement for the game movie at `path` (game memory, e.g. "/movie/op_ds.mods"): with Mods on, the mod's
+ * file if it exists (mods/cutscenes/op_ds.mp4), else with Override cutscenes on, the Steam copy's (*masked = 1). */
+static int replacement(uint32_t path, char *out, size_t n, int *masked) {
     char name[64];
     size_t len = 0;
     for (uint8_t c; len < sizeof name - 1 && (c = rt_r8(path + (uint32_t)len)) != 0; len++) name[len] = (char)c;
@@ -422,9 +484,20 @@ static int replacement(uint32_t path, char *out, size_t n) {
     const char *base = strrchr(name, '/') ? strrchr(name, '/') + 1 : name;
     char *dot = strrchr(name, '.');
     if (dot && dot > base) *dot = 0;
+    *masked = 0;
     snprintf(out, n, "%smods/cutscenes/%s.mp4", rt_data_dir(), base);
-    SDL_PathInfo info;
-    return SDL_GetPathInfo(out, &info) && info.type == SDL_PATHTYPE_FILE;
+    if (display_setting_get(SET_MODS) && is_file(out)) return 1;
+    if (!display_setting_get(SET_STEAM_MOVIES) || !se_available() || !se_dir()) return 0;
+    for (size_t i = 0; i < SDL_arraysize(steam_movies); i++) {
+        if (strcmp(base, steam_movies[i].ds)) continue;
+        int subtitled = !strcmp(steam_movies[i].steam, "007") && ui_game_language() != LANGUAGE_ID_JAPANESE;
+        *masked = 1;
+        snprintf(out, n, "%s/%s%s.dat", se_dir(), steam_movies[i].steam, subtitled ? "-en" : "");
+        if (is_file(out)) return 1;
+        snprintf(out, n, "%s/%s.dat", se_dir(), steam_movies[i].steam); /* a copy without the subtitled one */
+        return subtitled && is_file(out);
+    }
+    return 0;
 }
 
 /* The game's movie players (overrides.txt), r0 = the movie's path: play the replacement if there is one. */
@@ -432,21 +505,24 @@ static void game_movie_play(CPU *cpu) { rt_call_wrapped(cpu, "ov017", 0x02198d20
 static void game_movie_play_scene(CPU *cpu) { rt_call_wrapped(cpu, "ov017", 0x02198da0u); }
 void rt_movie_play(CPU *cpu) {
     char path[1024];
-    if (cpu->resume_pc || !replacement(R[0], path, sizeof path) || !play_file(path, KEY_START)) game_movie_play(cpu);
+    int masked;
+    if (cpu->resume_pc || !replacement(R[0], path, sizeof path, &masked) || !play_file(path, masked, KEY_START))
+        game_movie_play(cpu);
 }
 /* This one also takes callbacks the game's player calls with the scene's data ([sp]) in r1: r1 when it starts (it
  * sets up the bottom screen and the scene's result, which the front end reads next), r2 every frame (left out:
  * the bottom screen's animation), r3 when it ends (frees what r1 set up). */
 void rt_movie_play_scene(CPU *cpu) {
     char path[1024];
-    if (cpu->resume_pc || !replacement(R[0], path, sizeof path)) {
+    int masked;
+    if (cpu->resume_pc || !replacement(R[0], path, sizeof path, &masked)) {
         game_movie_play_scene(cpu);
         return;
     }
     uint32_t args[4] = {R[0], R[1], R[2], R[3]}, data = rt_r32(R[13]);
     if (args[1]) rt_call_game(cpu, args[1], 0, data, 0);
     uint32_t skip_keys = args[2] == INTRO_FRAME ? 0xFFFu : KEY_START; /* 0xFFF: every button, A to Y */
-    int played = play_file(path, skip_keys);
+    int played = play_file(path, masked, skip_keys);
     if (args[3]) rt_call_game(cpu, args[3], 0, data, 0);
     if (!played) { /* the game's own movie, from the start */
         for (int i = 0; i < 4; i++) R[i] = args[i];

@@ -134,6 +134,9 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 - **Steam** (Windows, with your Steam copy connected and Steam running): Steam shows you playing Chrono Trigger
   while Egg of Time runs, and each ending you see unlocks its Steam achievement (Trigger Steam achievements).
   Endings your save had already seen unlock too, once it loads.
+- **Steam cutscenes** (with your Steam copy connected): System Settings > Connect Steam version > Override
+  cutscenes plays the Steam release's HD cutscenes in place of the DS movies it has (all but two), read from your
+  copy as they play; nothing is copied or saved. Your own cutscene mods (`mods\cutscenes\`) still come first.
 - **Steam translations** (with your Steam copy connected): System Settings > Connect Steam version > Use Steam
   translation shows the game's text in a language of the Steam release (Translation language), Chinese, Japanese and
   Korean included. System Settings > Language lists them too, after the game's own languages, as "<language>
