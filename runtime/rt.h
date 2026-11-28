@@ -126,6 +126,8 @@ typedef struct RtRom {
     char save_path[1024]; /* cartridge backup memory file: ROM path with .sav */
     char state_path[1024]; /* save state (F5/F7): ROM path with .state */
     char code[5];         /* game code of the dump as loaded (a translation's patched copy may change the header's) */
+    const uint8_t *more;  /* card addresses more_at.. past the ROM: files served from elsewhere (steam_text.c); NULL none */
+    uint32_t more_at, more_size;
 } RtRom;
 extern RtRom rt_rom;
 /* A game address the runtime uses: the USA and European one, and the Japanese one. Europe's code is the USA's but for

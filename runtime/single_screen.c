@@ -457,7 +457,7 @@ static void compose_title(uint32_t *main, const uint32_t *top, const uint32_t *b
         int f = (mb >> 14) == 2 ? (mb & 31) : 0;
         if (f > 16) f = 16;
         uint32_t v = 255u * (uint32_t)(16 - f) / 16;
-        const char *prompt = ui_text_in(rt_language(), "Press any button to start");
+        const char *prompt = ui_text_in(ui_game_language(), "Press any button to start");
         ui_draw_text(main, prompt, FREE_CX - ui_text_width(prompt) / 2, FREE_CY - 4, BLACK | v << 16 | v << 8 | v);
         return;
     }
@@ -518,7 +518,7 @@ static void relabel_select(uint32_t *main, int y) {
             row[x] = row[SELECT_FILL_X + (x - SELECT_LABEL_X0) % SELECT_FILL_W];
         }
     }
-    ui_draw_text(main, ui_text_in(rt_language(), "System settings"), SELECT_LABEL_X0 + 2, y + 6, 0xFFFFFFFFu);
+    ui_draw_text(main, ui_text_in(ui_game_language(), "System settings"), SELECT_LABEL_X0 + 2, y + 6, 0xFFFFFFFFu);
 }
 
 static void compose_settings(Scene sc, uint32_t *main, const uint32_t *top, const uint32_t *bottom) {
@@ -1644,7 +1644,7 @@ static int map_panel_shown(const uint32_t *bottom) {
 
 /* The field paused: how to open the System Settings menu, at the bottom of the main screen (w columns). */
 static void pause_hint(uint32_t *main, int w, int h) {
-    const char *hint = ui_text_in(rt_language(), "Press SELECT to open System Settings");
+    const char *hint = ui_text_in(ui_game_language(), "Press SELECT to open System Settings");
     ui_draw_text_in(main, w, hint, (w - ui_text_width(hint)) / 2, h - UI_FONT_H - 6, 0xFFFFFFFFu);
 }
 

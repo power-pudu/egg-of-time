@@ -114,13 +114,13 @@ void rt_menu_sounds(CPU *cpu) {
 
 void rt_ct_text_step(CPU *cpu) {
     uint32_t box = R[1], reader = R[2];
-    rt_call_wrapped(cpu, "main", 0x020380b8u);
+    rt_call_wrapped(cpu, "main", GAME_ADDR(0x020380b8u, 0x020380d8u));
     if (RT_JAPAN || R[0] || rt_r32(reader + 8) != TEXT_DEFAULTS || !ss_select_opens_menu()) return;
     uint32_t buf = rt_r32(box + 4), size = (uint32_t)(rt_r16(box + 0xc) * rt_r16(box + 0xe) * 32);
     uint8_t was[1024];
     if (size > sizeof was) return;
     for (uint32_t a = 0; a < size; a++) was[a] = rt_r8(buf + a), rt_w8(buf + a, 0);
-    int drawn = gfxfont_game_text(cpu, FONT_SMALL_SLOT, buf, rt_r16(box + 0xc), ui_text_in(rt_language(), "System settings"), 0, 2, 0);
+    int drawn = gfxfont_game_text(cpu, FONT_SMALL_SLOT, buf, rt_r16(box + 0xc), ui_text_in(ui_game_language(), "System settings"), 0, 2, 0);
     if (!drawn) for (uint32_t a = 0; a < size; a++) rt_w8(buf + a, was[a]); /* the small font cannot: "Defaults" */
     ss_set_select_drawn(drawn);
     R[0] = 0;

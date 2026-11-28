@@ -16,6 +16,7 @@
 #include "rt.h"
 #include "sound.h"
 #include "steam_presence.h"
+#include "steam_text.h"
 #include "system_menu.h"
 #include "ui_text.h"
 #include "video.h"
@@ -279,9 +280,11 @@ int main(int argc, char **argv) {
     sp_start(); /* Steam shows the game played, with a Steam copy connected */
     controls_init();
     if (!game_build_prepare(argc > 1 ? argv[1] : NULL)) return 1; /* the ROM and the game code */
+    st_check(); /* EGG_STEAMTEXT_CHECK=1: the Steam text codec against the ROM, then exits */
     cheevos_init(); /* RetroAchievements: logs in with the saved login */
     la_init(ra_active); /* Egg of Time's own achievements, while RetroAchievements is logged out */
     if (display_setting_get(SET_MODS)) gfxmod_load(); /* graphics mods: into the ROM in memory, and HD art */
+    st_init(); /* the Steam translation, when chosen: the game's text files rebuilt in the ROM in memory */
     spu_open_output();
 
     /* Deep C call chains (recompiled calls + tail calls) need a large host stack. */

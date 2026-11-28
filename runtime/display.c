@@ -164,7 +164,7 @@ static Setting settings[SET_COUNT] = {
     [SET_STEAM_MOVIES] = {"steammovies", "Override cutscenes", 2, 1, yesno_names, yesno_labels},
     [SET_STEAM_MUSIC] = {"steammusic", "Override music", 2, 1, yesno_names, yesno_labels},
     [SET_STEAM_SOUNDS] = {"steamsounds", "Override sounds", 2, 1, yesno_names, yesno_labels},
-    [SET_STEAM_TEXT] = {"steamtext", "Use Steam translation", 2, 1, yesno_names, yesno_labels},
+    [SET_STEAM_TEXT] = {"steamtext", "Use Steam translation", 2, 0, yesno_names, yesno_labels},
     [SET_STEAM_LANG] = {"steamlang", "Translation language", 1, 0, steam_lang_default, NULL}, /* the list: list_steam_languages */
     /* Cheats (cheats.c): EXP and TP won in battle multiplied, the party's HP and MP kept full, the gold at its most. */
     [SET_CHEAT_EXP] = {"cheatexp", "EXP multiplier", 5, 0, multiplier_names, multiplier_labels},
@@ -779,9 +779,10 @@ static void compose_hd(const HdJob *job) {
     for (int i = 0; i < hd_workers; i++) SDL_WaitSemaphore(hd_done);
 }
 
-/* The screen's sources, when the view draws it from HD art now (not through a shader, and Mods on). */
+/* The screen's sources, when the view draws it from HD art now (not through a shader; Mods on, or the letters of a
+ * Steam translation drawn from TrueType). */
 static const VideoHd *hd_source(const View *v, int tex) {
-    if (!hd_frame || !hd_frame->on || view_shader(v) || !SETTING(SET_MODS) || !gfxmod_hd_scale()) return NULL;
+    if (!hd_frame || !hd_frame->on || view_shader(v) || (!SETTING(SET_MODS) && !gfxfont_extras()) || !gfxmod_hd_scale()) return NULL;
     return tex == 0 ? hd_frame->top : tex == 1 ? hd_frame->bottom : tex == 2 ? hd_frame->main
            : tex == 3 ? hd_frame->party : tex == 4 ? hd_frame->still : hd_frame->ui;
 }
@@ -1349,8 +1350,16 @@ int display_key(SDL_Scancode sc) {
 }
 
 const char *display_setting_title(int id) { return settings[id].title; }
-int display_setting_count(int id) { return settings[id].count; }
-int display_setting_get(int id) { return settings[id].value; }
+/* The Language row (SET_LANGUAGE / SET_LANGUAGE_JP) lists the game's languages, then, with a Steam copy connected,
+ * its translations: choosing one turns Use Steam translation on in that Translation language. */
+static int is_language(int id) { return id == SET_LANGUAGE || id == SET_LANGUAGE_JP; }
+static int steam_languages(void) { return se_available() ? se_language_count() : 0; }
+
+int display_setting_count(int id) { return settings[id].count + (is_language(id) ? steam_languages() : 0); }
+int display_setting_get(int id) {
+    if (is_language(id) && *display_steam_text_language()) return settings[id].count + SETTING(SET_STEAM_LANG);
+    return settings[id].value;
+}
 int display_main_only(void) { return main_shown(&primary); }
 int display_setting_shown(int id) {
     switch (id) {
@@ -1378,6 +1387,16 @@ int display_setting_shown(int id) {
     }
 }
 
+const char *display_steam_text_language(void) {
+    int n = se_available() && SETTING(SET_STEAM_TEXT) ? se_language_count() : 0, v = SETTING(SET_STEAM_LANG);
+    return n ? se_language(v >= 0 && v < n ? v : 0) : "";
+}
+
+int display_ui_language(void) {
+    int l = ui_language_of(display_steam_text_language());
+    return l >= 0 ? l : display_language();
+}
+
 int display_language(void) {
     if (RT_JAPAN) return SETTING(SET_LANGUAGE_JP) == LANGUAGE_JP_ENGLISH ? LANGUAGE_ID_ENGLISH : LANGUAGE_ID_JAPANESE;
     return SETTING(SET_LANGUAGE) == LANGUAGE_FRENCH ? LANGUAGE_ID_FRENCH : LANGUAGE_ID_ENGLISH;
@@ -1385,19 +1404,17 @@ int display_language(void) {
 
 const char *display_shader_path(void) { return SETTING(SET_SHADER) ? settings[SET_SHADER].names[SETTING(SET_SHADER)] : NULL; }
 
-/* A Steam translation's name, by its folder's code. */
-static const char *steam_language_label(const char *code) {
-    static const char *const known[][2] = {
-        {"en", "English"}, {"ja", "Japanese"}, {"fr", "French"}, {"de", "German"}, {"it", "Italian"}, {"es", "Spanish"},
-        {"ko", "Korean"}, {"zh-Hans", "Chinese (Simplified)"}, {"zh-Hant", "Chinese (Traditional)"},
-    };
-    for (size_t i = 0; i < SDL_arraysize(known); i++) if (!strcmp(code, known[i][0])) return known[i][1];
-    return code;
-}
+/* A Steam translation's name, by its folder's code: in its own language, as the game's languages are listed. */
+static const char *steam_language_label(const char *code) { return ui_language_name(code); }
 
 const char *display_setting_label(int id, int v) {
     if (id == SET_SHADER) return v ? shader_label(v - 1) : "Off";
     if (id == SET_STEAM_LANG) return steam_language_label(settings[id].names[v]);
+    if (is_language(id) && v >= settings[id].count) {
+        static char buf[64];
+        snprintf(buf, sizeof buf, "%s (Steam)", ui_language_name(se_language(v - settings[id].count)));
+        return buf;
+    }
     if (id == SET_ZOOM && v == 3 && camera_smoothing()) return "80%"; /* the guard rows take 8 of its 248 (zoom_view) */
     if (id != SET_RESOLUTION) return settings[id].labels[v];
     if (v == 0) return "Auto";
@@ -1409,6 +1426,13 @@ const char *display_setting_label(int id, int v) {
 }
 
 void display_setting_set(int id, int v) {
+    if (is_language(id)) {
+        settings[SET_STEAM_TEXT].value = v >= settings[id].count;
+        if (v >= settings[id].count) settings[SET_STEAM_LANG].value = v - settings[id].count;
+        else settings[id].value = v;
+        save_settings();
+        return;
+    }
     settings[id].value = v;
     switch (id) {
     case SET_WINDOW:

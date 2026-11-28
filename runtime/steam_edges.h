@@ -15,6 +15,9 @@ const char *se_dir(void);
 /* The translations the copy holds (0 without one), by their folder's code (en, ja, zh-Hans...). */
 int se_language_count(void);
 const char *se_language(int i);
+/* A file of the copy's archive by its path (Localize/en/msg/kmes0.txt), unpacked and malloc'd; NULL when there is no
+ * copy or no such file. *len is its size. */
+uint8_t *se_read(const char *name, size_t *len);
 
 /* Game thread, each field frame: the room on screen. Its edges are built once the room has held for a few frames
  * (its tiles in VRAM): location (the game's id), the room's bounds left..right (metatile columns, inclusive), the

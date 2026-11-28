@@ -143,7 +143,7 @@ original bytes, and caches the result per region until the region is written.
     and the folder chosen is tried and kept as `steampath` in eggoftime.ini. Once connected the page lists what the
     copy is used for, each Yes by default: Import extended maps (`steamedges`, below), Trigger Steam achievements,
     Override cutscenes, music and sounds, Use Steam translation and, with it, Translation language (the copy's
-    `Localize/<code>/msg/` folders); cutscenes, music, sounds and translation are still to come.
+    `Localize/<code>/msg/` folders); cutscenes, music and sounds are still to come.
   - Steam presence (`runtime/steam_presence.c`, Windows): with a Steam copy connected, Steam shows the player in
     the game while Egg of Time runs. The copy's `steam_api.dll` is 32-bit, so `egg-steam.exe`
     (`tools/steam_helper/egg_steam.c`, built 32-bit by the same llvm-mingw with `--target=i686-w64-mingw32`, shipped
@@ -161,6 +161,58 @@ original bytes, and caches the result per region until the region is written.
     arrive (GetAchievement fails until then), then `SetAchievement` for each one not yet unlocked and `StoreStats`
     (Steam shows its notification), answering `unlocked <name>` to the log. Flat API (`SteamAPI_SteamUserStats_v012`
     and `SteamAPI_ISteamUserStats_*`) through GetProcAddress.
+  - Use Steam translation (`steamtext`, No by default) in Translation language (`steamlang`: a code of the copy's
+    `Localize/<code>/msg/` folders, every one listed), `runtime/steam_text.c`: the game's text in that language. The
+    game reads its 75 text files (`msg/big/*.msg`, `msg/small/*.msg`) once, at boot, and keeps them (a switch made
+    after boot left the title menu and the load screen in English), so it is applied before the game starts
+    (`st_init`, after the graphics mods) or when System Settings powers it on again (`st_power_on`, from
+    `threads_power_on` with every game thread dropped: the language served before is put back first, then the new one
+    built), else at the next start; changing the extra letters below under text already in RAM would also break it.
+    System Settings > Language lists the copy's languages after the game's own (`display_setting_count/get/set`):
+    choosing one sets `steamtext` and `steamlang`, and the restart prompt asks while the language chosen differs from
+    the one served (`st_served`). The menu's text follows the Steam language chosen (`display_ui_language`), the
+    game's screens' runtime texts the one served (`ui_game_language`); the firmware language stays the game's own.
+    A `.msg` file: `"\0\0\0\0TEXT"`, u8 slots, u24 strings, u32 file size, then a u32 offset per slot, string by
+    string (the last slot ends at the file's end). USA and Europe have 4 slots (1 English, 3 French, 0 and 2 empty:
+    their end code alone), Japan 2 (0 Japanese, 1 English). A slot is UTF-8 over the game's codes (decoder main
+    0x0203d800: 1-3 bytes, 16-bit codes), ended by the file's end code (2 big, 0 small). A code below the font's glyph
+    count (big 366, small 359, numbered differently: `e` 0 in the big one) is a glyph, 0x16E-0x19C are controls (0x11
+    line break, 0x16F number, 0x178-0x17E names, 0x17F page, 0x180 CT, 0x195/0x196 wait, 0x198 auto end), and any
+    other is passed to the glyph routines (draw main 0x0203d518, advance 0x0203d4fc) as a glyph number, unchecked
+    (0x800 reached them and drew blank).
+    The Steam text is `Localize/<code>/msg/<name>.txt` (BOM, CRLF), a line per string, some files keyed
+    (`MSG_...,`, `FLD_KMES0_002,`), with tags (`<CT>`, `<PAGE>`, `<NAME_LUC>`, `<WAIT>0a</WAIT>`, `\` a line
+    break). No table of the codes is kept: they are learned from the game's own files, each font apart, by lining up
+    the Steam lines of the game's languages with their slots (USA and Europe: English with 1, French with 3; Japan:
+    Japanese with 0, English with 1). Files with as many lines as strings first, then the others, paired by a longest
+    common subsequence of what they already encode to; a letter or tag takes the code that 90% of its votes give
+    (up to 2 codes in front of a line skipped: an item's icon). The English lines then encode to the ROM's own bytes
+    for 15859 of 15956 strings; `<BTN_CONF>` (3 lines) and `<ICON_DEF>` (1) have no DS code.
+    A file is rebuilt from the chosen language's lines (paired with the reference language's by key, else by place
+    when the counts match: Korean `start.txt` has 124 lines to English's 98), each slot holding text taking its
+    string's line, after the codes its own text has in front (icons). A string whose line is empty, or does not
+    encode (a tag with no code, Korean `<SHARP>`), keeps the game's text: de 132, ja 560, ko 528, zh-Hans 532. The
+    rebuilt files are copied to a buffer of their own (4-aligned) that card reads find past the ROM's end
+    (`rt_rom.more` from a 0x200-aligned address: `rt_rom.data` never moves, `sdat.c` keeps pointers into it) and their
+    FAT entries (header 0x48) pointed there, so the game's card reads find them: 190-280 ms in all
+    (learning included), the files 109 KB larger in German at most (both of the game's slots take the language: the
+    menus and the load screen checked), smaller in Chinese, Japanese and Korean. A file whose bytes differ from the
+    dump's (`rt_rom.path`: a translation patch changed it) keeps its own.
+    Letters the game's fonts lack get glyph numbers from 0x1000 (`gfxfont_extra`; the Japanese big font has 1501
+    glyphs): the character itself, or 0xE000 + it below 0x1000 (the private use characters get none), up to 0xFFFD,
+    three UTF-8 bytes. A fixed function of the character: the text in RAM, a save state's included, means the same
+    letters whatever order a session met them in. Both glyph hooks always take a number from 0x1000 up (the game's
+    own routines would read past its glyph table), and one this session has no letter for draws nothing. They are
+    drawn from TrueType (`gfx_font.c`): the font mod's .ttf when it has the letter, else the language's system font
+    (Windows: Yu Gothic, then MS Gothic for ja, Malgun Gothic ko, Microsoft YaHei zh-Hans, Microsoft JhengHei
+    zh-Hant; elsewhere Noto Sans CJK), then Segoe UI, YaHei and Malgun (DejaVu Sans). The glyph hooks run while any
+    extra letter exists, Mods on or off, and the screens draw in HD (`hd_source`): at 1x Korean was blobs. A
+    fullwidth letter (U+FF01-FF5E, U+3000) the font lacks is its plain one: Japanese and Chinese write digits and
+    Latin letters fullwidth, the tables the game builds numbers and names from included, and "Frog" and "199" came
+    out spaced in wide system-font letters. Nothing of the Steam text or the system fonts is written to disk.
+    `EGG_STEAMTEXT_CHECK=1` checks the codec against the ROM (every file rebuilt identical, every slot's codes round
+    trip, the alignment) and exits; `=<code>` also counts that language's letters the fonts can draw and its lines
+    that encode.
   - Import extended maps: beside a room, the tiles the game's Steam release draws there (`runtime/steam_edges.c`),
     in widescreen. It is read at start-up from the player's own copy (`steampath`, else `EGG_STEAM_DIR`, else Steam's
     registry key or home folders and every library in `libraryfolders.vdf`; a folder picked in the menu while none
@@ -655,7 +707,8 @@ original bytes, and caches the result per region until the region is written.
     again. The save memory stays as it is, as a cartridge's would. Verified from the title menu and mid-cutscene
     (autokey `REBOOT`): the logos, title and a loaded save play in the new language. The runtime's own texts in the game's screens (title prompt, relabelled
     SELECT, pause hint) follow the language in RAM (`rt_french`), so a save state keeps its own; the System
-    Settings menu stays English. `ui_font.c` reads UTF-8 and has è and é for them.
+    Settings menu stays English. `ui_font.c` reads UTF-8 and has è and é for them. (Since then: the menu and those
+    texts are in every language of the Steam release too, `ui_text.c`; see Use Steam translation.)
   - Mods: replacement cutscenes on (the default) or off (movie mods, below).
   - Skip intro logos / Skip intro movie (both Off by default; `patches.c`): the front end (main 0x0204bfcc, JP
     0x0204bffc) runs its scenes by a state in r0: 0 the save check (ov007, nothing shown unless the save needs a
@@ -893,7 +946,11 @@ original bytes, and caches the result per region until the region is written.
   another's ROM, so a developer build (`-DEGG_EXTRACT`) can't run a mismatched one. System Settings > Language offers each game's two languages
   (`SET_LANGUAGE`, or `SET_LANGUAGE_JP` on the Japanese game, its own ini key), given to the game as firmware language
   (0 Japanese, 1 English, 2 French) at power-on; the menu's own text follows the choice at once (`runtime/ui_text.c`,
-  English keys; Japanese glyphs from PixelMplus10, only those used, `tools/font/ui_font_ja.py`). Translations for other versions aren't carried over to it, as its text
+  English keys, a column per language: the game's three and the Steam release's de, it, es, ko, zh-Hans, zh-Hant;
+  Japanese glyphs from PixelMplus10, Korean and Chinese from Fusion Pixel Font 10px, a table per language as Simplified
+  and Traditional Chinese draw some characters apart, only those used, `tools/font/ui_font_ja.py` and
+  `ui_font_cjk.py`; 10 rows, a row above the Latin ones, which have the accented letters German, Italian and Spanish
+  use). Translations for other versions aren't carried over to it, as its text
   has 2 language slots against 4 and other fonts. Saves share `rom/CT.sav`; save states check the game code.
 - **RetroAchievements** (`runtime/cheevos.c`): rcheevos' `rc_client` (v12.5.0, fetched and built by CMake as a
   static library, cartridge hashes only) with libcurl for its server calls, each on a detached thread of its own.

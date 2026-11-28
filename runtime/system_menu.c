@@ -48,6 +48,7 @@
 #include "sound_dump.h"
 #include "single_screen.h"
 #include "steam_edges.h"
+#include "steam_text.h"
 #include "system_menu.h"
 #include "ui_font.h"
 #include "ui_text.h"
@@ -86,8 +87,8 @@ static const char *const descriptions[ROW_COUNT] = {
     [SET_STEAM_MOVIES] = "Coming in a later version.",
     [SET_STEAM_MUSIC] = "Coming in a later version.",
     [SET_STEAM_SOUNDS] = "Coming in a later version.",
-    [SET_STEAM_TEXT] = "Coming in a later version.",
-    [SET_STEAM_LANG] = "Coming in a later version.",
+    [SET_STEAM_TEXT] = "Steam release's text. Applies at next start.",
+    [SET_STEAM_LANG] = "Steam text language. Applies at next start.",
     [ROW_STEAM] = "Use your copy of the Steam release.",
     [ROW_STEAM_PATH] = "The folder of the Steam release.",
     [SET_MINIMAP] = "The bottom screen's map, at the top left.",
@@ -389,7 +390,8 @@ static uint32_t input(uint32_t keys) {
         int n = display_setting_count(cursor);
         display_setting_set(cursor, (display_setting_get(cursor) + ((act & KEY_RIGHT) ? 1 : n - 1)) % n);
         rt_menu_cursor_sound(); /* as the cursor moving: the option's value moves along */
-        if ((cursor == SET_LANGUAGE || cursor == SET_LANGUAGE_JP) && display_language() != rt_language()) {
+        if ((cursor == SET_LANGUAGE || cursor == SET_LANGUAGE_JP) &&
+            (display_language() != rt_language() || SDL_strcmp(display_steam_text_language(), st_served()))) {
             confirm = CONFIRM_LANGUAGE;
             yes = 0;
         }

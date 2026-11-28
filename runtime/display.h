@@ -55,6 +55,11 @@ enum { FF_MUSIC_FAST, FF_MUSIC_NORMAL };    /* SET_FF_MUSIC values */
 enum { FF_SOUND_ALL, FF_SOUND_MUSIC };      /* SET_FF_SOUND values */
 /* The language chosen for this ROM's game, by its DS firmware id (LANGUAGE_ID_*, ui_text.h). */
 int display_language(void);
+/* The menu's language: the Steam translation chosen (System Settings, Language or Connect Steam version), else
+ * display_language(). */
+int display_ui_language(void);
+/* The Steam translation chosen and available (a code of the copy's Localize folders), "" none. */
+const char *display_steam_text_language(void);
 const char *display_setting_title(int id);
 int display_setting_count(int id);
 int display_setting_get(int id);

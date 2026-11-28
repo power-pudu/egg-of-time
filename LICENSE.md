@@ -40,7 +40,10 @@ SOFTWARE.
   (SDL3, FFmpeg, librashader, dsd, xdelta3, llvm-mingw, Python). The Japanese glyphs in `runtime/ui_font_ja.inc` come
   from PixelMplus10, an M+ font: "These fonts are free software. Unlimited permission is granted to use, copy, and
   distribute them, with or without modification, either commercially or noncommercially." (Copyright (C) 2002-2013
-  M+ FONTS PROJECT; provided "as is", without warranty.)
+  M+ FONTS PROJECT; provided "as is", without warranty.) The Korean and Chinese glyphs in `runtime/ui_font_cjk.inc`
+  come from Fusion Pixel Font 10px (Copyright (c) 2022 TakWolf, with glyphs of Ark Pixel Font, BoutiqueBitmap9x9 and
+  Galmuri), under the SIL Open Font License 1.1: `res/licenses/fusion-pixel-font.txt`, in releases
+  `kit/licenses/fusion-pixel-font.txt`.
 
 Egg of Time is an unofficial fan project, not affiliated with or endorsed by Square Enix or Nintendo. Chrono Trigger
 is a trademark of Square Enix.

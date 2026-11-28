@@ -72,4 +72,4 @@ main 0203d518 rt_font_draw_glyph wrap jp=0203d548
 main 0203d4fc rt_font_advance wrap jp=0203d52c
 
 # The SELECT button labelled System settings where it opens the runtime menu (runtime/patches.c).
-main 020380b8 rt_ct_text_step wrap
+main 020380b8 rt_ct_text_step wrap jp=020380d8

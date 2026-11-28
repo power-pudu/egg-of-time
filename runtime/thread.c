@@ -15,6 +15,7 @@
 
 #define MINICORO_IMPL
 #define MCO_NO_DEBUG
+#include "steam_text.h"
 #include "third_party/minicoro.h"
 
 #include "dispatch.h"
@@ -218,6 +219,7 @@ static void threads_drop(void) {
 /* A reboot: memory as at power-on and a new boot thread (rt_boot sets the hardware up again). */
 static RtThread *threads_power_on(void) {
     threads_drop();
+    st_power_on(); /* the game's text files in the language now chosen, read again as it boots */
     memory_power_on();
     cpu_power_on();
     RtThread *t = thread_new();

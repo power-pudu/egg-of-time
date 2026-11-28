@@ -293,6 +293,7 @@ def main():
         with tempfile.TemporaryDirectory() as tmp:
             zig_probe(os.path.join(kit, "zig", "zig"), os.path.join(kit, "include"), tmp)
     copy(args.dsd_license, os.path.join(lic, "dsd.txt"))
+    copy(os.path.join(ROOT, "res", "licenses", "fusion-pixel-font.txt"), os.path.join(lic, "fusion-pixel-font.txt"))
     copy(os.path.join(args.sdl, "LICENSE.txt"), os.path.join(lic, "SDL3.txt"))
     copy(os.path.join(args.ffmpeg, "LICENSE.txt"), os.path.join(lic, "FFmpeg.txt"))
     copy(os.path.join(args.rcheevos, "LICENSE"), os.path.join(lic, "rcheevos.txt"))

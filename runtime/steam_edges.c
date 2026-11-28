@@ -94,6 +94,8 @@ static uint8_t *steam_file(const char *name, size_t *len) {
     return e ? unpack(archive, e->off, e->size, len) : NULL;
 }
 
+uint8_t *se_read(const char *name, size_t *len) { return se_available() ? steam_file(name, len) : NULL; }
+
 /* ---- the sheets ---- */
 
 /* A sheet's pixels set by a graphics mod, by its name. */

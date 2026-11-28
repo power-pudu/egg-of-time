@@ -1,8 +1,13 @@
-/* Small pixel font for the runtime's own texts (UTF-8): printable ASCII and the French accented letters they use,
- * variable width (mostly 4 pixels), 8 rows; and the Japanese characters of ui_text.c, 10 rows, starting a row higher. */
+/* Small pixel font for the runtime's own texts (UTF-8): printable ASCII and the accented letters they use (French,
+ * German, Italian, Spanish), variable width (mostly 4 pixels), 8 rows; and the Japanese, Korean and Chinese characters
+ * of ui_text.c, 10 rows, starting a row higher. */
 #include <string.h>
 
+#include <SDL3/SDL.h>
+
+#include "display.h"
 #include "ui_font.h"
+#include "ui_text.h"
 #include "video.h"
 
 typedef struct Glyph { unsigned c; const char *rows[UI_FONT_H]; } Glyph;
@@ -103,12 +108,42 @@ static const Glyph font[] = {
     {0xE9, {"..#.", ".#..", ".##.", "#..#", "####", "#...", ".###", "...."}}, /* é */
     {0xEA, {".##.", "#..#", ".##.", "#..#", "####", "#...", ".###", "...."}}, /* ê */
     {0xF4, {".##.", "#..#", ".##.", "#..#", "#..#", "#..#", ".##.", "...."}}, /* ô */
+    {0xA1, {".", "#", ".", "#", "#", "#", "#", "#"}}, /* ¡ */
+    {0xBF, {"....", ".#..", "....", ".#..", "#...", "#..#", ".##.", "...."}}, /* ¿ */
+    {0xDC, {"#..#", "....", "#..#", "#..#", "#..#", "#..#", ".##.", "...."}}, /* Ü */
+    {0xDF, {".##.", "#..#", "#.#.", "#..#", "#..#", "#..#", "#.#.", "...."}}, /* ß */
+    {0xE1, {"..#.", ".#..", ".###", "...#", ".###", "#..#", ".###", "...."}}, /* á */
+    {0xE4, {"#..#", "....", ".###", "...#", ".###", "#..#", ".###", "...."}}, /* ä */
+    {0xEC, {"#.", ".#", "#.", "#.", "#.", "#.", "#.", ".."}}, /* ì */
+    {0xED, {".#", "#.", ".#", ".#", ".#", ".#", ".#", ".."}}, /* í */
+    {0xF1, {".#.#", "#.#.", "###.", "#..#", "#..#", "#..#", "#..#", "...."}}, /* ñ */
+    {0xF2, {".#..", "..#.", ".##.", "#..#", "#..#", "#..#", ".##.", "...."}}, /* ò */
+    {0xF3, {"..#.", ".#..", ".##.", "#..#", "#..#", "#..#", ".##.", "...."}}, /* ó */
+    {0xF6, {"#..#", "....", ".##.", "#..#", "#..#", "#..#", ".##.", "...."}}, /* ö */
+    {0xF9, {".#..", "..#.", "#..#", "#..#", "#..#", "#..#", ".###", "...."}}, /* ù */
+    {0xFA, {"..#.", ".#..", "#..#", "#..#", "#..#", "#..#", ".###", "...."}}, /* ú */
+    {0xFC, {"#..#", "....", "#..#", "#..#", "#..#", "#..#", ".###", "...."}}, /* ü */
 };
 
 enum { JA_ROWS = 10 };
 typedef struct JaGlyph { unsigned c; int w; unsigned short rows[JA_ROWS]; } JaGlyph;
 static const JaGlyph ja_font[] = {
 #include "ui_font_ja.inc"
+};
+static const JaGlyph ko_font[] = {
+#define CJK_KO
+#include "ui_font_cjk.inc"
+#undef CJK_KO
+};
+static const JaGlyph hans_font[] = {
+#define CJK_ZH_HANS
+#include "ui_font_cjk.inc"
+#undef CJK_ZH_HANS
+};
+static const JaGlyph hant_font[] = {
+#define CJK_ZH_HANT
+#include "ui_font_cjk.inc"
+#undef CJK_ZH_HANT
 };
 
 /* The UTF-8 character at *p, advancing *p past it. */
@@ -133,13 +168,33 @@ static const Glyph *glyph(unsigned c) {
     return &font[0]; /* unknown characters: a space */
 }
 
-static const JaGlyph *ja_glyph(unsigned c) {
-    size_t lo = 0, hi = sizeof ja_font / sizeof ja_font[0];
+static const JaGlyph *find(const JaGlyph *t, size_t n, unsigned c) {
+    size_t lo = 0, hi = n;
     while (lo < hi) { /* the table is sorted */
         size_t mid = (lo + hi) / 2;
-        if (ja_font[mid].c == c) return &ja_font[mid];
-        if (ja_font[mid].c < c) lo = mid + 1;
+        if (t[mid].c == c) return &t[mid];
+        if (t[mid].c < c) lo = mid + 1;
         else hi = mid;
+    }
+    return NULL;
+}
+
+/* Character c from the menu language's own table first (a Chinese character drawn the Chinese way), then the
+ * others (the Language setting lists each language by its own name). */
+static const JaGlyph *ja_glyph(unsigned c) {
+    if (c < 0x3000) return NULL;
+    typedef struct Table { const JaGlyph *t; size_t n; } Table;
+    static const Table ja = {ja_font, SDL_arraysize(ja_font)},
+        ko = {ko_font, SDL_arraysize(ko_font)}, hans = {hans_font, SDL_arraysize(hans_font)},
+        hant = {hant_font, SDL_arraysize(hant_font)};
+    int l = display_ui_language();
+    const Table *order[4] = {&ja, &hans, &hant, &ko};
+    if (l == LANGUAGE_ID_KOREAN) order[0] = &ko, order[3] = &ja;
+    if (l == LANGUAGE_ID_CHINESE_S) order[0] = &hans, order[1] = &hant, order[2] = &ja;
+    if (l == LANGUAGE_ID_CHINESE_T) order[0] = &hant, order[1] = &hans, order[2] = &ja;
+    for (int i = 0; i < 4; i++) {
+        const JaGlyph *g = find(order[i]->t, order[i]->n, c);
+        if (g) return g;
     }
     return NULL;
 }

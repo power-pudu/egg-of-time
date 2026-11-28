@@ -134,6 +134,13 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 - **Steam** (Windows, with your Steam copy connected and Steam running): Steam shows you playing Chrono Trigger
   while Egg of Time runs, and each ending you see unlocks its Steam achievement (Trigger Steam achievements).
   Endings your save had already seen unlock too, once it loads.
+- **Steam translations** (with your Steam copy connected): System Settings > Connect Steam version > Use Steam
+  translation shows the game's text in a language of the Steam release (Translation language), Chinese, Japanese and
+  Korean included. System Settings > Language lists them too, after the game's own languages, as "<language>
+  (Steam)", and System Settings itself is in that language. It is read from your copy when the game boots, so the
+  menu asks whether to restart now or keep the change for the next start; nothing is copied or saved. Letters the game's font lacks are drawn from a font mod's font file when it has them, else from
+  your system's fonts (on Linux, install Noto Sans CJK for Chinese, Japanese and Korean). A few lines the Steam
+  release writes with its own button prompts keep the game's text, and so does a file a translation patch changed.
 - **Zoom out** (System Settings; Off by default, 85% or 77%, which is 80% above 60 fps): shows more of the world while exploring, in battle and
   on the world map, in single screen mode. Text boxes and battle menus keep their size and place. Very wide aspect
   ratios zoom out less. Pixel art looks best with a high internal resolution or the Sharp filter.
@@ -170,7 +177,8 @@ The DS shows the game on two screens. Egg of Time shows it on one by default:
 
 Open it with **SELECT** on the title menu or the Game Settings screen, or while the game is paused (START). Close
 it with B or SELECT. Changes apply immediately and are saved in `eggoftime.ini`. Language (English or French on the USA
-and European games, Japanese or English on the Japanese one) also sets the language of this menu, at once; the game
+and European games, Japanese or English on the Japanese one, then the Steam release's languages with your Steam copy
+connected) also sets the language of this menu, at once; the game
 needs a restart for it: the menu asks whether to restart now (unsaved progress is lost) or keep the change for the
 next start.
 

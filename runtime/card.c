@@ -42,7 +42,7 @@ void card_romctrl_written(void) {
         for (uint32_t i = 0; i < len; i++) {
             /* Reads wrap within a 4 KB page. */
             uint32_t a = (addr & ~0xFFFu) | ((addr + i) & 0xFFFu);
-            buf[i] = a < rt_rom.size ? rt_rom.data[a] : 0xFF;
+            buf[i] = a < rt_rom.size ? rt_rom.data[a] : rt_rom.more && a - rt_rom.more_at < rt_rom.more_size ? rt_rom.more[a - rt_rom.more_at] : 0xFF;
         }
         break;
     }

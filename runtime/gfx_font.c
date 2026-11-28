@@ -82,10 +82,21 @@ typedef struct Font {
     int small;                     /* the small font (msg/small): its own size setting */
     int size;                      /* font.ini's height of the letters, in half pixels; 0 none */
     int grid;                      /* TrueType: the pixel grid its outlines and advances keep, in units; 0 none */
+    uint32_t *extra;               /* letters past the font's own (gfxfont_extra): their characters */
+    Glyph *extra_glyphs;
+    int extra_count, extra_cap;
+    uint16_t *extra_of;            /* by character (BMP): its extra letter + 1, 0 none */
 } Font;
 
 static Font fonts[FONTS];
 static int font_count, any_ttf[2];
+
+/* TrueType fonts for letters past the fonts' own, tried in order after a font mod's own .ttf. */
+typedef struct Face { uint8_t *data; stbtt_fontinfo info; int ascent, descent; } Face;
+#define FACES 6
+static Face faces[FACES];
+static int face_count;
+static SDL_AtomicInt extras_on;
 static SDL_AtomicInt view_scale;
 
 static Font *font_for(const char *path) {
@@ -177,11 +188,84 @@ void gfxfont_set_size(const char *path, int half_px) {
     if (f && half_px > 0) f->size = half_px;
 }
 
+int gfxfont_fallback(const char *file) {
+    size_t n;
+    void *data = face_count < FACES ? SDL_LoadFile(file, &n) : NULL;
+    if (!data) return 0;
+    Face *fc = &faces[face_count];
+    int at = stbtt_GetFontOffsetForIndex(data, 0), gap;
+    if (at < 0 || !stbtt_InitFont(&fc->info, data, at)) {
+        SDL_free(data);
+        return 0;
+    }
+    fc->data = data;
+    stbtt_GetFontVMetrics(&fc->info, &fc->ascent, &fc->descent, &gap);
+    if (fc->ascent <= fc->descent) fc->ascent = fc->descent + 1;
+    face_count++;
+    return 1;
+}
+
+/* The glyph number of character c: the character itself from 0x1000 up, those below at 0xE000 + c (where the
+ * private use characters were, which get none); -1 none. A fixed function of the character, so the game's text in
+ * RAM (a save state's too) means the same letters whatever order a session met them in. */
+static int extra_number(uint32_t c) {
+    if (c >= 0xE000 && c <= 0xEFFF) return -1;
+    return c < 0x1000 ? 0xE000 + (int)c : c <= 0xFFFD ? (int)c : -1;
+}
+
+static Glyph *extra_glyph(Font *f, int i);
+
+/* Font f's extra letter for glyph number g (>= GFXFONT_EXTRA); NULL when this session has none. */
+static Glyph *extra_for(Font *f, int g) {
+    uint32_t c = g >= 0xE000 && g <= 0xEFFF ? (uint32_t)(g - 0xE000) : (uint32_t)g;
+    if (g > 0xFFFF || !f->extra_of || !f->extra_of[c]) return NULL;
+    return extra_glyph(f, f->extra_of[c] - 1);
+}
+
+int gfxfont_extra(int small, uint32_t c) {
+    Font *f = font_for(small ? "msg/small/msgcmn.fnt" : "msg/big/msgcmn.fnt");
+    int g = extra_number(c);
+    if (!f || g < 0) return -1;
+    if (!f->extra_of && !(f->extra_of = calloc(0x10000, sizeof *f->extra_of))) return -1;
+    if (f->extra_of[c]) return g;
+    int have = f->ttf && stbtt_FindGlyphIndex(&f->info, (int)c);
+    for (int k = 0; !have && k < face_count; k++) have = stbtt_FindGlyphIndex(&faces[k].info, (int)c) != 0;
+    if (!have || f->extra_count == 0xFFFF) return -1;
+    if (f->extra_count == f->extra_cap) {
+        int cap = f->extra_cap ? f->extra_cap * 2 : 256;
+        uint32_t *e = realloc(f->extra, (size_t)cap * sizeof *e);
+        if (e) f->extra = e;
+        Glyph *g = e ? realloc(f->extra_glyphs, (size_t)cap * sizeof *g) : NULL;
+        if (!g) return -1;
+        memset(g + f->extra_cap, 0, (size_t)(cap - f->extra_cap) * sizeof *g);
+        f->extra_glyphs = g, f->extra_cap = cap;
+    }
+    f->extra[f->extra_count] = c;
+    f->extra_of[c] = (uint16_t)(f->extra_count + 1);
+    f->extra_count++;
+    SDL_SetAtomicInt(&extras_on, 1);
+    return g;
+}
+
+void gfxfont_extra_reset(void) {
+    for (int i = 0; i < font_count; i++) {
+        Font *f = &fonts[i];
+        for (int k = 0; k < f->extra_count; k++) free(f->extra_glyphs[k].hd), f->extra_glyphs[k].hd = NULL, f->extra_glyphs[k].gen = 0;
+        f->extra_count = 0;
+        if (f->extra_of) memset(f->extra_of, 0, 0x10000 * sizeof *f->extra_of);
+    }
+    for (int k = 0; k < face_count; k++) SDL_free(faces[k].data);
+    face_count = 0;
+    SDL_SetAtomicInt(&extras_on, 0);
+}
+
 int gfxfont_has_ttf(int small) { return any_ttf[!!small]; }
+
+int gfxfont_extras(void) { return SDL_GetAtomicInt(&extras_on); }
 
 int gfxfont_hd_scale(void) {
     int s = 0;
-    for (int i = 0; i < font_count; i++) s = SDL_max(s, fonts[i].ttf ? TTF_SCALE_MAX : fonts[i].png_scale);
+    for (int i = 0; i < font_count; i++) s = SDL_max(s, fonts[i].ttf || fonts[i].extra_count ? TTF_SCALE_MAX : fonts[i].png_scale);
     return s;
 }
 
@@ -208,7 +292,7 @@ static float letter_px(const Font *f) {
 
 /* The scale a font's HD glyphs are drawn at (0: none). */
 static int font_scale(const Font *f) {
-    if (f->ttf) {
+    if (f->ttf || f->extra_count) {
         int s = SDL_GetAtomicInt(&view_scale);
         return s ? SDL_min(s, TTF_SCALE_MAX) : 2;
     }
@@ -216,18 +300,18 @@ static int font_scale(const Font *f) {
 }
 
 /* A TrueType glyph at `scale`, drawn into px (GLYPH_W * scale x height * scale, values 0-3); its advance. */
-static int ttf_glyph(const Font *f, int gi, int scale, uint8_t *px) {
+static int ttf_glyph(const Font *f, const stbtt_fontinfo *info, int ascent, int descent, int gi, int scale, uint8_t *px) {
     int h = f->height, w = GLYPH_W * scale, rows = h * scale;
-    float k = letter_px(f) / (float)(f->ascent - f->descent); /* pixels per unit */
-    float base = (1 + (float)(h - 2) / 2 + (float)(f->ascent + f->descent) / 2 * k) * (float)scale; /* the baseline */
+    float k = letter_px(f) / (float)(ascent - descent); /* pixels per unit */
+    float base = (1 + (float)(h - 2) / 2 + (float)(ascent + descent) / 2 * k) * (float)scale; /* the baseline */
     float sc = k * (float)scale, shift = base - floorf(base);
     int x0, y0, x1, y1;
-    stbtt_GetGlyphBitmapBoxSubpixel(&f->info, gi, sc, sc, 0, shift, &x0, &y0, &x1, &y1);
+    stbtt_GetGlyphBitmapBoxSubpixel(info, gi, sc, sc, 0, shift, &x0, &y0, &x1, &y1);
     uint8_t *letter = calloc((size_t)w, (size_t)rows);
     if (x1 > x0 && y1 > y0) {
         int bw = x1 - x0, bh = y1 - y0;
         uint8_t *bmp = malloc((size_t)bw * bh);
-        stbtt_MakeGlyphBitmapSubpixel(&f->info, bmp, bw, bh, bw, sc, sc, 0, shift, gi);
+        stbtt_MakeGlyphBitmapSubpixel(info, bmp, bw, bh, bw, sc, sc, 0, shift, gi);
         int top = (int)floorf(base) + y0;
         for (int j = 0; j < bh; j++) {
             for (int i = 0; i < bw; i++) {
@@ -254,7 +338,7 @@ static int ttf_glyph(const Font *f, int gi, int scale, uint8_t *px) {
     free(letter);
     free(right);
     int aw, lsb;
-    stbtt_GetGlyphHMetrics(&f->info, gi, &aw, &lsb);
+    stbtt_GetGlyphHMetrics(info, gi, &aw, &lsb);
     return SDL_clamp((int)lroundf((float)aw * k) + 1, 1, GLYPH_W);
 }
 
@@ -273,8 +357,34 @@ static void cover(Glyph *gl, int h) {
     }
 }
 
+/* Extra letter i of font f: from the font mod's .ttf if it has the character, else the first fallback face that
+ * does (gfxfont_extra only hands out letters one of them has). */
+static Glyph *extra_glyph(Font *f, int i) {
+    Glyph *gl = &f->extra_glyphs[i];
+    if (gl->gen == f->gen) return gl;
+    int scale = font_scale(f), h = f->height, w = GLYPH_W * scale, gi = 0;
+    const stbtt_fontinfo *info = NULL;
+    int ascent = 0, descent = 0;
+    if (f->ttf && (gi = stbtt_FindGlyphIndex(&f->info, (int)f->extra[i]))) info = &f->info, ascent = f->ascent, descent = f->descent;
+    for (int k = 0; !info && k < face_count; k++) {
+        if ((gi = stbtt_FindGlyphIndex(&faces[k].info, (int)f->extra[i]))) info = &faces[k].info, ascent = faces[k].ascent, descent = faces[k].descent;
+    }
+    gl->gen = f->gen, gl->scale = scale;
+    free(gl->hd);
+    gl->hd = scale > 1 ? calloc((size_t)w, (size_t)h * scale) : NULL;
+    memset(gl->native, 0, sizeof gl->native);
+    gl->adv = 0;
+    if (!info) return gl;
+    uint8_t px[GLYPH_W * HEIGHT_MAX];
+    gl->adv = ttf_glyph(f, info, ascent, descent, gi, 1, px);
+    for (int y = 0; y < h; y++) memcpy(gl->native[y], px + y * GLYPH_W, GLYPH_W);
+    if (gl->hd) ttf_glyph(f, info, ascent, descent, gi, scale, gl->hd), cover(gl, h);
+    return gl;
+}
+
 /* Glyph g of font f (its file in RAM at f->data), built for the current generation; NULL past its last glyph. */
 static Glyph *glyph(Font *f, int g) {
+    if (g >= GFXFONT_EXTRA) return extra_for(f, g);
     if (g < 0 || g >= f->count) return NULL;
     Glyph *gl = &f->glyphs[g];
     if (gl->gen == f->gen) return gl;
@@ -287,9 +397,9 @@ static Glyph *glyph(Font *f, int g) {
     int gi = f->ttf && f->chars[g] ? stbtt_FindGlyphIndex(&f->info, (int)f->chars[g]) : 0;
     if (gi) {
         uint8_t px[GLYPH_W * HEIGHT_MAX];
-        gl->adv = ttf_glyph(f, gi, 1, px);
+        gl->adv = ttf_glyph(f, &f->info, f->ascent, f->descent, gi, 1, px);
         for (int y = 0; y < h; y++) memcpy(gl->native[y], px + y * GLYPH_W, GLYPH_W);
-        if (gl->hd) ttf_glyph(f, gi, scale, gl->hd), cover(gl, h);
+        if (gl->hd) ttf_glyph(f, &f->info, f->ascent, f->descent, gi, scale, gl->hd), cover(gl, h);
         return gl;
     }
     /* The ROM's (as the game holds it), and its HD .png's or itself upscaled. */
@@ -500,7 +610,10 @@ static Font *font_at(uint32_t data) {
 }
 
 void rt_font_draw_glyph(CPU *cpu) {
-    Font *f = display_setting_get(SET_MODS) ? font_at(rt_r32(R[0])) : NULL;
+    /* an extra letter's number is always taken (a save state's text may hold one this session has not): past the
+     * game's glyph table, its own routine would draw whatever lies there */
+    int on = display_setting_get(SET_MODS) || SDL_GetAtomicInt(&extras_on) || (int)R[3] >= GFXFONT_EXTRA;
+    Font *f = on ? font_at(rt_r32(R[0])) : NULL;
     if (!f) {
         rt_call_wrapped(cpu, "main", DRAW_GLYPH);
         return;
@@ -610,8 +723,10 @@ int gfxfont_game_text(CPU *cpu, uint32_t slot, uint32_t buf, int wt, const char 
 }
 
 void rt_font_advance(CPU *cpu) {
-    Font *f = display_setting_get(SET_MODS) ? font_at(rt_r32(R[0])) : NULL;
-    Glyph *gl = f && f->ttf ? glyph(f, (int)R[1]) : NULL;
+    int extra = (int)R[1] >= GFXFONT_EXTRA, on = display_setting_get(SET_MODS) || SDL_GetAtomicInt(&extras_on) || extra;
+    Font *f = on ? font_at(rt_r32(R[0])) : NULL;
+    Glyph *gl = f && (f->ttf || extra) ? glyph(f, (int)R[1]) : NULL;
     if (gl) R[0] = (uint32_t)gl->adv;
+    else if (f && extra) R[0] = 0; /* an extra letter this session has not: nothing */
     else rt_call_wrapped(cpu, "main", ADVANCE);
 }
